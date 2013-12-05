@@ -4,9 +4,9 @@
 #include <iostream>
 #include <cassert>
 #include <memory>
-#include <json-c/json.h>
-#include <json-c/json_tokener.h>
-#include <json-c/json_object.h>
+#include <json/json.h>
+#include <json/json_tokener.h>
+#include <json/json_object.h>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -74,19 +74,18 @@ struct TruePositionT : std::enable_shared_from_this<TruePositionT>
 		TruePositionT(std::shared_ptr<TruePositionT> &&Parent, PositionPartT const &Part) : Parent(std::move(Parent)), Part(Part) {}
 };
 typedef std::shared_ptr<TruePositionT> PositionT;
-PositionT NewPosition(void) { return std::make_shared<TruePositionT>(void); }
+PositionT NewPosition(void) { return std::make_shared<TruePositionT>(); }
+
+typedef std::string ParseErrorMessageT;
 
 struct ParseErrorT
 {
 	PositionT Position;
-	std::string Message;
+	ParseErrorMessageT Message;
 	ParseErrorT(void) {}
 	ParseErrorT(PositionT const &Position, std::string const &Message) : Position(Position), Message(Message) {}
 	bool operator !(void) { return !Position; }
 };
-
-template <typename SpecificT> using SingleT = std::unique_ptr<SpecificT>;
-template <typename SpecificT> using MultipleT = std::vector<std::unique_ptr<SpecificT>>;
 
 // Element construction
 struct ElementT;
@@ -124,6 +123,7 @@ struct ElementT
 	std::list<std::unique_ptr<ParseStateT>> ParseStates;
 
 	ElementT(std::initializer_list<std::unique_ptr<ParseStateT>> DeepStates) : ParseStates(std::move(DeepStates)) {}
+	virtual ~ElementT(void) {}
 
 	Optional<ParseErrorT> Parse(ParseStackT &Stack)
 	{
@@ -138,15 +138,22 @@ struct ElementT
 			ParseStates.pop_front();
 		return {};
 	}
+	
+	virtual bool IsResultStatement(void) { return false; }
+	virtual bool IsResultExpression(void) { return false; }
+	virtual bool IsResultType(void) { return false; }
 };
 
-template <typename SpecificT> struct ParseSingleT : ParseStateT
+using SingleT = std::unique_ptr<ElementT>;
+using MultipleT = std::vector<SingleT>;
+
+template <Optional<ParseErrorMessageT> (*Check)(std::unique_ptr<ElementT> &Element)> struct ParseSingleT : ParseStateT
 {
 	PositionT const Position;
 	std::string const Field;
-	SingleT<SpecificT> &Output;
+	SingleT &Output;
 
-	ParseSingleT(PositionT const &Position, std::string const &Field, SingleT<SpecificT> &Output) :
+	ParseSingleT(PositionT const &Position, std::string const &Field, SingleT &Output) :
 		Position(Position), Field(Field), Output(Output) {}
 	ErrorOr<ParseErrorT, ParseStateResultT> Execute(ParseStackT &Stack) override
 	{
@@ -163,6 +170,8 @@ template <typename SpecificT> struct ParseSingleT : ParseStateT
 		std::string const Type{json_object_get_string(TypeJSON), json_object_get_string_len(TypeJSON)};
 		auto Element = Construct(Type, ElementPosition, ElementJSON);
 		if (!Element) return Element.Error;
+		auto CheckResult = Check(*Element);
+		if (CheckResult) return {ElementPosiiton, *CheckResult};
 		Output.reset(*Element);
 		Stack.emplace_back(ElementJSON, Element);
 
@@ -170,15 +179,15 @@ template <typename SpecificT> struct ParseSingleT : ParseStateT
 	}
 };
 
-template <typename SpecificT> struct ParseMultipleT : ParseStateT
+template <Optional<ParseErrorMessageT> (*Check)(std::unique_ptr<ElementT> &Element)> struct ParseMultipleT : ParseStateT
 {
 	PositionT const Position;
 	std::string const Field;
-	MultipleT<SpecificT> &Output;
+	MultipleT &Output;
 	json_object *FieldJSON;
 	int Index;
 
-	ParseMultipleT(PositionT Position, std::string const &Field, MultipleT<SpecificT> &Output) :
+	ParseMultipleT(PositionT Position, std::string const &Field, MultipleT &Output) :
 		Position(Position), Field(Field), Output(Output), Index(-1) {}
 	ErrorOr<ParseErrorT, ParseStateResultT> Execute(ParseStackT &Stack) override
 	{
@@ -202,6 +211,8 @@ template <typename SpecificT> struct ParseMultipleT : ParseStateT
 		std::string const Type{json_object_get_string(TypeJSON), json_object_get_string_len(TypeJSON)};
 		auto Element = Construct(Type, ElementPosition, ElementJSON);
 		if (!Element) return Element.Error;
+		auto CheckResult = Check(*Element);
+		if (CheckResult) return {ElementPosiiton, *CheckResult};
 		Output.push_back(*Element);
 		Stack.emplace_back(ElementJSON, Element);
 
@@ -209,10 +220,35 @@ template <typename SpecificT> struct ParseMultipleT : ParseStateT
 	}
 };
 
+Optional<ParseErrorMessageT> CheckStatement(std::unique_ptr<ElementT> &Element)
+{
+	
+}
+
+struct StatementT : ElementT
+{
+	using ElementT::ElementT;
+	bool IsResultStatement(void) { return true; }
+};
+
+struct BlockT : StatementT
+{
+	MultipleT Statements;
+	BlockT(PositionT const &Position, json_object *JSON) : StatementT{{make_unique<ParseMultipleT<CheckStatement>>(Position, "statements", Statements)}} {}
+};
+
+struct ExpressionT : ElementT
+{
+	using ElementT::ElementT;
+	bool IsResultStatement(void) { return true; }
+	bool IsResultExpression(void) { return true; }
+};
+
 struct TranslationUnitT : ElementT
 {
-	MultipleT<StatementT> Statements;
-	TranslationUnitT(void) : ElementT{{make_unique<ParseMultipleT<StatementT>>(Position, "statements", Statements)}} {}
+	MultipleT Statements;
+	TranslationUnitT(void) : ElementT{{make_unique<ParseMultipleT<CheckStatement>>(PositionT(), "statements", Statements)}} {}
+	bool IsResultStatement(void) { return false; }
 };
 
 int main(int ArgumentCount, char **Arguments)

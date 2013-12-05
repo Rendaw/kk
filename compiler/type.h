@@ -49,7 +49,7 @@ struct Fail {};
 template <typename ErrorType> bool ErrorOrDefaultCheckFunction(ErrorType const &Error) { return !!Error; }
 template <typename ErrorType, typename DataType, bool(*Check)(ErrorType const &) = ErrorOrDefaultCheckFunction<ErrorType>> struct ErrorOr
 {
-	ErrorOr(Fail, ErrorType &Message) : Error(Message) {}
+	ErrorOr(Fail, ErrorType const &Message) : Error(Message) {}
 	ErrorOr(Pass, DataType const &Data) : Data(Data) {}
 	ErrorOr(DataType const &Data) : Data(Data) {}
 	operator bool(void) const { return Check(Error); }
