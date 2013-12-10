@@ -1,3 +1,6 @@
+#include "type.h"
+#include "extrastandard.h"
+
 #include <string>
 #include <functional>
 #include <map>
@@ -11,9 +14,23 @@
 #include <sstream>
 #include <vector>
 #include <list>
-
-#include "type.h"
-#include "extrastandard.h"
+#include <llvm/Module.h>
+#include <llvm/Function.h>
+#include <llvm/Type.h>
+#include <llvm/DerivedTypes.h>
+#include <llvm/LLVMContext.h>
+#include <llvm/PassManager.h>
+#include <llvm/Instructions.h>
+#include <llvm/CallingConv.h>
+#include <llvm/Bitcode/ReaderWriter.h>
+#include <llvm/Analysis/Verifier.h>
+#include <llvm/Assembly/PrintModulePass.h>
+#include <llvm/Support/IRBuilder.h>
+#include <llvm/ModuleProvider.h>
+#include <llvm/Target/TargetSelect.h>
+#include <llvm/ExecutionEngine/GenericValue.h>
+#include <llvm/ExecutionEngine/JIT.h>
+#include <llvm/Support/raw_ostream.h>
 
 namespace
 {
@@ -55,11 +72,11 @@ struct PositionPartT
 	}
 };
 
-struct TruePositionT : std::enable_shared_from_this<TruePositionT>
+struct FullPositionT : std::enable_shared_from_this<FullPositionT>
 {
-	std::shared_ptr<TruePositionT> const Parent;
+	std::shared_ptr<FullPositionT> const Parent;
 	PositionPartT const Part;
-	std::shared_ptr<TruePositionT> operator +(PositionPartT const &NewPart) const { return std::make_shared<TruePositionT>(shared_from_this(), Part); }
+	std::shared_ptr<FullPositionT> operator +(PositionPartT const &NewPart) const { return std::make_shared<FullPositionT>(shared_from_this(), Part); }
 	std::string AsString(void) const
 	{
 		std::list<std::string> Parts;
@@ -69,12 +86,12 @@ struct TruePositionT : std::enable_shared_from_this<TruePositionT>
 		return Out;
 	}
 	private:
-		friend std::shared_ptr<TruePositionT> NewPosition(PositionPartT const &FirstPart);
-		TruePositionT(PositionPartT const &Part) : Part(Part) {}
-		TruePositionT(std::shared_ptr<TruePositionT> &&Parent, PositionPartT const &Part) : Parent(std::move(Parent)), Part(Part) {}
+		friend std::shared_ptr<FullPositionT> NewPosition(PositionPartT const &FirstPart);
+		FullPositionT(PositionPartT const &Part) : Part(Part) {}
+		FullPositionT(std::shared_ptr<FullPositionT> &&Parent, PositionPartT const &Part) : Parent(std::move(Parent)), Part(Part) {}
 };
-typedef std::shared_ptr<TruePositionT> PositionT;
-PositionT NewPosition(void) { return std::make_shared<TruePositionT>(); }
+typedef std::shared_ptr<FullPositionT> PositionT;
+PositionT NewPosition(void) { return std::make_shared<FullPositionT>(); }
 
 typedef std::string ParseErrorMessageT;
 
@@ -138,16 +155,12 @@ struct ElementT
 			ParseStates.pop_front();
 		return {};
 	}
-	
-	virtual bool IsResultStatement(void) { return false; }
-	virtual bool IsResultExpression(void) { return false; }
-	virtual bool IsResultType(void) { return false; }
 };
 
 using SingleT = std::unique_ptr<ElementT>;
 using MultipleT = std::vector<SingleT>;
 
-template <Optional<ParseErrorMessageT> (*Check)(std::unique_ptr<ElementT> &Element)> struct ParseSingleT : ParseStateT
+template <Optional<ParseErrorMessageT> (*Fail)(ElementT *Element)> struct ParseSingleT : ParseStateT
 {
 	PositionT const Position;
 	std::string const Field;
@@ -170,8 +183,8 @@ template <Optional<ParseErrorMessageT> (*Check)(std::unique_ptr<ElementT> &Eleme
 		std::string const Type{json_object_get_string(TypeJSON), json_object_get_string_len(TypeJSON)};
 		auto Element = Construct(Type, ElementPosition, ElementJSON);
 		if (!Element) return Element.Error;
-		auto CheckResult = Check(*Element);
-		if (CheckResult) return {ElementPosiiton, *CheckResult};
+		auto Failure = Fail(Element.get());
+		if (Failure) return {ElementPosiiton, *Failure};
 		Output.reset(*Element);
 		Stack.emplace_back(ElementJSON, Element);
 
@@ -179,7 +192,7 @@ template <Optional<ParseErrorMessageT> (*Check)(std::unique_ptr<ElementT> &Eleme
 	}
 };
 
-template <Optional<ParseErrorMessageT> (*Check)(std::unique_ptr<ElementT> &Element)> struct ParseMultipleT : ParseStateT
+template <Optional<ParseErrorMessageT> (*Fail)(ElementT *Element)> struct ParseMultipleT : ParseStateT
 {
 	PositionT const Position;
 	std::string const Field;
@@ -195,9 +208,15 @@ template <Optional<ParseErrorMessageT> (*Check)(std::unique_ptr<ElementT> &Eleme
 
 		if (Index == -1)
 		{
-			FieldJSON = json_object_object_get(Top.JSON, Field.c_str());
-			if (!FieldJSON) return {Position, String() << "Missing '" << Field << "'"};
-			if (!json_object_is_type(FieldJSON, json_type_array)) return {Position, String() << "Field '" << Field << "' is not an array"};
+			if (Field.empty())
+				FieldJSON = Top.JSON;
+			else
+			{
+				FieldJSON = json_object_object_get(Top.JSON, Field.c_str());
+				if (!FieldJSON) return {Position, String() << "Missing '" << Field << "'"};
+				if (!json_object_is_type(FieldJSON, json_type_array)) return {Position, String() << "Field '" << Field << "' is not an array"};
+			}
+			Index = 0;
 		}
 
 		PositionT FieldPosition = *Position + Field;
@@ -211,8 +230,8 @@ template <Optional<ParseErrorMessageT> (*Check)(std::unique_ptr<ElementT> &Eleme
 		std::string const Type{json_object_get_string(TypeJSON), json_object_get_string_len(TypeJSON)};
 		auto Element = Construct(Type, ElementPosition, ElementJSON);
 		if (!Element) return Element.Error;
-		auto CheckResult = Check(*Element);
-		if (CheckResult) return {ElementPosiiton, *CheckResult};
+		auto Failure = Fail(Element.get());
+		if (Failure) return {ElementPosition, *Failure};
 		Output.push_back(*Element);
 		Stack.emplace_back(ElementJSON, Element);
 
@@ -220,36 +239,113 @@ template <Optional<ParseErrorMessageT> (*Check)(std::unique_ptr<ElementT> &Eleme
 	}
 };
 
-Optional<ParseErrorMessageT> CheckStatement(std::unique_ptr<ElementT> &Element)
+Optional<ParseErrorMessageT> FailNotType(ElementT *Element);
+Optional<ParseErrorMessageT> FailNotExpression(ElementT *Element);
+Optional<ParseErrorMessageT> FailNotStatement(ElementT *Element);
+
+struct AnyTypeT : ElementT
 {
-	
+};
+
+struct IntegerTypeT : ElementT
+{
+};
+
+struct MemoryTypeT : ElementT
+{
+};
+
+struct RecordElementT : ElementT
+{
+	SingleT Name;
+	SingleT Type;
+};
+
+struct RecordTypeT : ElementT
+{
+	MultipleT Elements;
+};
+
+struct FunctionTypeT : ElementT
+{
+	SingleT ArgumentType;
+	SingleT ReturnType;
+};
+
+struct ValueT : ElementT
+{
+	SingleT Type;
+	SingleT Definition;
+};
+
+struct IntegerT : ElementT
+{
+};
+
+struct FunctionT : ElementT
+{
+	MultipleT Statements;
+	FunctionT(void) : ElementT{{make_unique<ParseMultipleT<FailNotStatement>>(PositionT(), "", Statements)}} {}
+};
+
+struct MainT : ValueT
+{
+	MainT(void) : ValueT{{make_unique<ParseSingleT
+	{
+		Type.reset(new FunctionTypeT
+		(
+			new RecordTypeT
+			({
+				new RecordElementT
+				(
+					new StringT("argc"),
+					new IntegerTypeT
+				),
+				new RecordElementT
+				(
+					new StringT("argv"),
+					new MemoryTypeT
+				)
+			}),
+			new IntegerTypeT
+		));
+		Definition.reset(new FunctionT);
+	}
+};
+
+bool Is(ElementT *Element) { return false; }
+template <typename... TypeT, typename... TypeTs> bool Is(ElementT *Element)
+{
+	if (typeid(*Element) == typeid(TypeT)) return true;
+	return Is<TypeTs...>(Element);
 }
 
-struct StatementT : ElementT
+Optional<ParseErrorMessageT> FailNotType(ElementT *Element)
 {
-	using ElementT::ElementT;
-	bool IsResultStatement(void) { return true; }
-};
+	if (Is<
+		IntegerTypeT,
+		MemoryTypeT,
+		RecordTypeT,
+		FunctionTypeT
+	>(Element)) return {};
+	return "Element must be a TYPE.";
+}
 
-struct BlockT : StatementT
+Optional<ParseErrorMessageT> FailNotExpression(ElementT *Element)
 {
-	MultipleT Statements;
-	BlockT(PositionT const &Position, json_object *JSON) : StatementT{{make_unique<ParseMultipleT<CheckStatement>>(Position, "statements", Statements)}} {}
-};
+	if (!FailType(Element)) return {};
+	if (Is<
+		ValueT,
+		FunctionT
+	>(Element)) return {};
+	return "Element must be an EXPRESSION.";
+}
 
-struct ExpressionT : ElementT
+Optional<ParseErrorMessageT> FailNotStatement(ElementT *Element)
 {
-	using ElementT::ElementT;
-	bool IsResultStatement(void) { return true; }
-	bool IsResultExpression(void) { return true; }
-};
-
-struct TranslationUnitT : ElementT
-{
-	MultipleT Statements;
-	TranslationUnitT(void) : ElementT{{make_unique<ParseMultipleT<CheckStatement>>(PositionT(), "statements", Statements)}} {}
-	bool IsResultStatement(void) { return false; }
-};
+	if (!FailExpression(Element)) return {};
+	return "Element must be a STATEMENT.";
+}
 
 int main(int ArgumentCount, char **Arguments)
 {
@@ -358,7 +454,7 @@ int main(int ArgumentCount, char **Arguments)
 
 	if (OptionsOnly) return 0;
 
-	// Execution
+	// Read source
 	std::unique_ptr<json_object, decltype(json_object_put)*> Root(&json_object_put);
 	{
 		std::unique_ptr<json_tokener, decltype(json_tokener_free)*> Tokener(json_tokener_new(), &json_tokener_free);
@@ -391,8 +487,9 @@ int main(int ArgumentCount, char **Arguments)
 
 	}
 
-	std::unique_ptr<Element> TopElement{new TranslationUnit};
-	Stack.emplace_back(TopElement.get(), Root);
+	// Parse
+	std::unique_ptr<MainT> TopElement{new MainT};
+	Stack.emplace_back(*TopElement->Definition, Root);
 
 	while (!Stack.empty())
 	{
@@ -403,6 +500,46 @@ int main(int ArgumentCount, char **Arguments)
 			return 1;
 		}
 	}
+
+	// Massage tree
+
+	// Generate IR
+	auto Module = llvm::makeLLVMModule();
+	auto TopIR = TopElement->Translate();
+
+	{
+		std::string Error;
+		if (!llvm::verifyModule(Module, llvm::AbortProcessAction, &Error))
+		{
+			std::cerr << "Error: Generated invalid llvm module.  " << Error << std::endl;
+			return 1;
+		}
+	}
+
+	// Optimize and output
+	llvm::PassManager OutputPasses;
+	OutputPasses.add(new llvm::TargetData(TopIR));
+	if (Output.empty())
+	{
+		if (!std::cout)
+		{
+			std::cerr << "Error: stdout is unwritable." << std::endl;
+			return 1;
+		}
+		OutputPasses.add(llvm::createPrintModulePass(&llvm::fouts()));
+	}
+	else
+	{
+		std::string Error;
+		llvm::tool_output_file *OutputStream = new llvm::tool_output_file(Output.c_str(), Error, 0);
+		if (!OutputStream)
+		{
+			std::cerr << "Error: Unable to open output file.  " << Error << std::endl;
+			return 1;
+		}
+		OutputPasses.add(llvm::createPrintModulePass(new llvm::formatted_raw_ostream(OutputStream->os())), true);
+	}
+	OutputPasses.run(*module);
 
 	return 0;
 }
