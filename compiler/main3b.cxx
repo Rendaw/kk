@@ -32,6 +32,15 @@
 #include <llvm/ExecutionEngine/JIT.h>
 #include <llvm/Support/raw_ostream.h>
 
+/* NOTS
+I missed the e key while writing notes.
+
+Pass by copy.  Values only changed through assignment by default.  Clone doesn't clone reference arguments cuz like they're references.  Make sure to clone before any operations that could modify stuff.
+
+Records can be rearranged freely when passed to functions.  Error if arrangement wrong on a struct?  Yes.  Struct inconsistencies may cause unnecessary performance penalties but only the user knows that.
+
+*/
+
 // Fucking standard
 struct ShareableT
 {
@@ -167,11 +176,14 @@ inline llvm::Type *LLVMInt(unsigned int Size) { return llvm::IntegerType::get(ll
 struct SingleT;
 struct AtomT : ShareableT
 {
+	AtomT *Context = nullptr;
+  
 	std::list<SingleT *> References;
 	void Replace(AtomT *Other);
 	
 	virtual AtomT *Type(void) { return nullptr; }
 	virtual void Simplify(void) {}
+	virtual AtomT *Clone(void) = 0;
 };
 
 struct SingleT
@@ -249,7 +261,10 @@ void AtomT::Replace(AtomT *Other)
 
 typedef std::list<SingleT> MultipleT;
 
-struct UndefinedT : AtomT {};
+struct UndefinedT : AtomT 
+{ 
+	AtomT *Clone(void) { return new UndefinedT; } 
+};
 
 enum struct ExistenceT { ConstantE, StaticE, DynamicE };
 bool IsConstant(ExistenceT const &Value) { return Value == ExistenceT::ConstantE; }
@@ -258,12 +273,11 @@ bool IsDynamic(ExistenceT const &Value) { return (Value == ExistenceT::StaticE) 
 struct TypeBaseT : AtomT
 {
 	ExistenceT Existence;
-	virtual TypeBaseT *Clone(void) = 0;
 	virtual llvm::Type *GenerateType(void) = 0;
 
 	bool operator == (TypeBaseT const &Other) const { return typeid(*this) == typeid(Other); }
 	bool operator != (TypeBaseT const &Other) const { return !(*this == Other); }
-
+	
 	TypeBaseT(ExistenceT const &Existence = ExistenceT::ConstantE) : Existence(Existence) {}
 };
 
@@ -310,6 +324,18 @@ struct DynamicT : ExpressionBaseT
 	}
 
 	DynamicT(AtomT *Type) : InternalType(Type) {}
+};
+
+struct DynamicArgumentT : ExpressionBaseT
+{
+	FunctionInstanceT *Parent;
+	size_t Index;
+	llvm::Value *GenerateLoad(llvm::BasicBlock *Block) 
+	{ 
+		auto Iterator = Parent->Target->getArgumentList().begin();
+		std::advance(Iterator, Index);
+		return *Iterator;
+	}
 };
 
 struct IntT : ExpressionBaseT
@@ -398,60 +424,85 @@ struct AssignmentT : AtomT
 		if (!Value) assert(0 && "Error");
 		Value->Simplify();
 
-		if (dynamic_cast<UndefinedT *>(*Target))
+		if (!Context)
 		{
-			auto ValueType = dynamic_cast<TypeBaseT *>(Value->Type());
-			if (!ValueType) assert(0 && "Error");
-
-			Undefined = true;
-
-			if (IsDynamic(ValueType->Existence) || (Existence != AllocExistenceT::AutoE))
+			assert(0 && "Error"); // TODO globals
+			// Note, only global constants should be supported, no dynamics
+		}
+		else if (dynamic_cast<FunctionT *>(Context))
+		{
+			if (dynamic_cast<UndefinedT *>(*Target))
 			{
-				if (Existence != AllocExistenceT::AutoE)
+				auto ValueType = dynamic_cast<TypeBaseT *>(Value->Type());
+				if (!ValueType) assert(0 && "Error");
+
+				Undefined = true;
+
+				if (IsDynamic(ValueType->Existence) || (Existence != AllocExistenceT::AutoE))
 				{
-					ValueType = ValueType->Clone();
-					if (Existence == AllocExistenceT::StaticE) 
-						ValueType->Existence = ExistenceT::StaticE;
-					else if (Existence == AllocExistenceT::DynamicE) 
-						ValueType->Existence = ExistenceT::DynamicE;
+					if (Existence != AllocExistenceT::AutoE)
+					{
+						ValueType = ValueType->Clone();
+						if (Existence == AllocExistenceT::StaticE) 
+							ValueType->Existence = ExistenceT::StaticE;
+						else if (Existence == AllocExistenceT::DynamicE) 
+							ValueType->Existence = ExistenceT::DynamicE;
+					}
+					auto Dynamic = new DynamicT(ValueType);
+					Target->Replace(Dynamic);
 				}
-				auto Dynamic = new DynamicT(ValueType);
-				Target->Replace(Dynamic);
+				else
+				{
+					Target->Replace(Value);
+					Replace(nullptr);
+					return;
+				}
 			}
 			else
 			{
-				Target->Replace(Value);
-				Replace(nullptr);
-				return;
+				auto TargetType = dynamic_cast<TypeBaseT *>(Target->Type());
+				if (!TargetType) assert(0 && "Error");
+
+				auto ValueType = dynamic_cast<TypeBaseT *>(Value->Type());
+				if (!ValueType) assert(0 && "Error");
+				
+				if (*TargetType != *ValueType) assert(0 && "Error");
+				if (TargetType->Existence == ExistenceT::StaticE) assert(0 && "Error");
+
+				if (IsConstant(TargetType->Existence) && (Existence == AllocExistenceT::AutoE))
+				{
+					if (!IsConstant(ValueType->Existence)) assert(0 && "Error");
+					Target->Replace(Value);
+					Replace(nullptr);
+					return;
+				}
 			}
 		}
-		else
+		else if (dynamic_cast<RecordT *>(Context))
 		{
-			auto TargetType = dynamic_cast<TypeBaseT *>(Target->Type());
-			if (!TargetType) assert(0 && "Error");
-
-			auto ValueType = dynamic_cast<TypeBaseT *>(Value->Type());
-			if (!ValueType) assert(0 && "Error");
-			
-			if (*TargetType != *ValueType) assert(0 && "Error");
-			if (TargetType->Existence == ExistenceT::StaticE) assert(0 && "Error");
-
-			if (IsConstant(TargetType->Existence) && (Existence == AllocExistenceT::AutoE))
-			{
-				if (!IsConstant(ValueType->Existence)) assert(0 && "Error");
-				Target->Replace(Value);
-				Replace(nullptr);
-				return;
-			}
+			assert(0 && "Error"); // TODO
 		}
+		else assert(0 && "Error"); // Unknown context
 	}
 	
 	void GenerateStatement(llvm::BasicBlock *Block)
 	{
-		auto Dynamic = dynamic_cast<DynamicT *>(*Target);
-		if (Undefined) Dynamic->GenerateAllocate(Block);
-		auto Expression = dynamic_cast<ExpressionBaseT *>(*Value);
-		Dynamic->GenerateStore(Block, Expression->GenerateLoad(Block));
+		if (!Context)
+		{
+			assert(0 && "Error"); // Unsupported
+		}
+		else if (dynamic_cast<FunctionT *>(Context))
+		{
+			auto Dynamic = dynamic_cast<DynamicT *>(*Target);
+			if (Undefined) Dynamic->GenerateAllocate(Block);
+			auto Expression = dynamic_cast<ExpressionBaseT *>(*Value);
+			Dynamic->GenerateStore(Block, Expression->GenerateLoad(Block));
+		}
+		else if (dynamic_cast<RecordT *>(Context))
+		{
+			// TODO
+		}
+		else assert(0 && "Error");
 	}
 
 	AssignmentT(AllocExistenceT Existence, AtomT *Target, AtomT *Value) : Existence(Existence), Target(Target), Value(Value) {}
@@ -517,6 +568,210 @@ struct MathAddT : ExpressionBaseT
 	MathAddT(AtomT *Left, AtomT *Right) : Left(Left), Right(Right) {}
 };
 
+struct SimpleAssignmentT : ExpressionBaseT
+{
+	SingleT Target; // Must simplify to const string
+	SingleT Value;
+	
+	void Simplify(void)
+	{
+		if (!Target) assert(0 && "Error");
+		Target->Simplify();
+		if (!Value) assert(0 && "Error");
+		Value->Simplify();
+	}
+};
+
+struct FunctionTypeT : TypeBaseT
+{
+	SingleT Input; // Simple assignment
+	SingleT Output; // ""
+	
+	void Simplify(void)
+	{
+		if (!Input) assert(0 && "Error");
+		Input->Simplify();
+		if (!Output) assert(0 && "Error");
+		Output->Simplify();
+	}
+	
+	void Refine(FunctionInstanceT *Instance, AtomT *Refinement)
+	{
+		/*auto RefinedType = new FunctionTypeT;
+		auto Input = dynamic_cast<SimpleAssignmentT *>(*Input);
+		auto InputValue = dynamic_cast<TypeBaseT *>(*Input->Value);*/
+		
+		std::function<void(AtomT *InputTemplate, AtomT *NewInput, AtomT *Refinement, RecordT *Scope)> Subrefine;
+		Subrefine = [&](SimpleAssignmentT *InputTemplate, AtomT *Refinement, SingleT &NewInput, SingleT &ScopeItem)
+		{
+			if (!InputTemplate) return;
+			if (auto Record = dynamic_cast<RecordT *>(InputTemplate))
+			{
+				// Scope item = new record
+				// New input = new record
+				// assert refinement is record or flip out
+				// For each element in inputtemplate
+				//	singlet tempscopeitem, tempnewinputitem
+				//	#scope->push_back(element->name, null)
+				//	#new input->push_back(element->name, null)
+				//	Subrefine(element->value, refinement->get(element->name), tempnewinputitem, tempscopeitem)
+				//	assert(tempscopeitem)
+				//	scope->add(element->name, tempscopeitem)
+				//	if tempnewinputitem
+				//		NewInput->add(element->name, tempnewinputitem)
+				for (auto &Element : Record)
+			}
+			else if (dynamic_cast<TypeBaseT *>(InputTemplate))
+			{
+				// If refinement && refinement is const
+				//	If refinement type != template error
+				//	Scope = refinement
+				// Else
+				//	Scope = new dynamicargument (next arg)
+				//	Create assign statement in instance?  Do something to copy dynamicarg // TODO
+				//	NewInput = input template->clone
+			}
+			else assert(0 && "Error"); // Only types and records of types ok
+		};
+		SingleT NewInput;
+		SingleT ScopeItem;
+		Subrefine(InputValue, Refinement, NewInput, ScopeItem);
+		// if input
+		//	if scopeitem
+		//		instance->scope->add(input->name, scopeitem)
+		// if newinput
+		//	new type->input = simpleassignment(input->name, newinput)
+		
+		RefinedType->Output = Output;
+		Instance->Type = RefinedType;
+	}
+	
+	llvm::Type *GenerateType(void)
+	{
+		// TODO
+	}
+	
+	llvm::Value *GenerateCall(llvm::Module *Module, llvm::BasicBlock *Block, llvm::Value *Target, AtomT *Input)
+	{
+		/*auto Input = dynamic_cast<TypeBaseT *>(*Input);
+		auto Arguments = Input->SplitDynamic()->Flatten();
+		std::vector<llvm::Value *> LLVMArguments;
+		for (auto &Argument : Arguments)
+			LLVMArguments.push_back(Argument->GenerateLoad(Block));*/
+		// TODO
+		return llvm::CallInst::Create(Target, LLVMArguments, "", Block);
+	}
+};
+
+struct FunctionT
+{
+	SingleT Type;
+	MultipleT Statements;
+	
+	void Simplify(void) 
+	{ 
+		if (!Type) assert(0 && "Error");
+		Type->Simplify();
+	}
+	
+	FunctionInstanceT *Refine(RecordT *Refinement)
+	{
+		SingleT Out = new FunctionInstanceT;
+		auto Type = dynamic_cast<FunctionTypeT *>(*this->Type);
+		if (!Type) assert(0 && "Error");
+		Type->Refine(Out, Refinement);
+		for (auto &Statement : Statements)
+			Out->Statements.push_back(Statement->Clone());
+		
+		Out->Simplfiy();
+		
+		return Out; // FIXME dangerous?
+	}
+};
+
+struct FunctionInstanceT : ExpressionBaseT
+{
+	// Cannot (must not) be assigned.  Created in-place when exporting, assigning a dynamic function, or calling
+	SingleT Type;
+	MultipleT Statements;
+	
+	SingleT Scope = new RecordT;
+	
+	void Simplify(void)
+	{
+		for (auto &Statement : Statements)
+			Statement->Simplify();
+		
+		// If all statements have been simplified out of existence (only possible for constants), replace the function with the result
+		auto FunctionType = dynamic_cast<FunctionTypeT *>(*Type);
+		if (auto Output = dynamic_cast<SimpleAssignmentT *>(*FunctionType->Output))
+		{
+			auto Name = dynamic_cast<StringT *>(*Output->Target);
+			bool TotallySimplified = true;
+			for (auto &Statement : Statements)
+				if (Statement) { TotallySimplified = false; break; }
+			if (TotallySimplified) 
+				Replace(Scope->Get(Name->Value));
+		}
+	}
+	
+	void GenerateTarget(llvm::Module *Module, llvm::BasicBlock *Block)
+	{
+		assert(!Target);
+		auto FunctionType = dynamic_cast<FunctionTypeT *>(*Type);
+		Target = llvm::Function::Create(
+			FunctionType->GenerateFunctionType(), 
+			LLVMFunctionType, 
+			llvm::Function::PrivateLinkage, 
+			"", 
+			Module);
+		auto *Entry = llvm::BasicBlock::Create(llvm::getGlobalContext(), "entrypoint", Target);
+		for (auto &Statement : Statements)
+			if (Statement) Statement->GenerateStatement(Entry);
+		FunctionType->GenerateReturn(Entry);
+	}
+	
+	void GenerateLoad(llvm::Module *Module, llvm::BasicBlock *Block)
+	{
+		if (!Target) GenerateTarget(Module, Block);
+		return Target;
+	}
+};
+
+struct CallT : ExpressionBaseT
+{
+	SingleT Target;
+	SingleT Input;
+	
+	void Simplify(void)
+	{
+		Target->Simplify();
+		Input->Simplify();
+		Input = Input->Clone();
+		auto Input = dynamic_cast<TypeBaseT *>(*Input);
+		auto Function = dynamic_cast<FunctionT *>(*Target);
+		Target = Function->Refine(Input);
+		Target->Simplify();
+		if (!dynamic_cast<FunctionInstanceT *>(*Target))
+			Replace(Target);
+	}
+	
+	void GenerateLoad(llvm::Module *Module, llvm::BasicBlock *Block)
+	{
+		auto Function = dynamic_cast<ExpressionBaseT *>(*Target);
+		auto Type = dynamic_cast<FunctionTypeT *>(Target->GetType());
+		Type->GenerateCall(Module, Block, Function->GenerateLoad(Block), Input);
+		/*auto Input = dynamic_cast<TypeBaseT *>(*Input);
+		auto Arguments = Input->SplitDynamic()->Flatten();
+		std::vector<llvm::Value *> LLVMArguments;
+		for (auto &Argument : Arguments)
+			LLVMArguments.push_back(Argument->GenerateLoad(Block));
+		return llvm::CallInst::Create(Target->GenerateFunction(Module, Block), LLVMArguments, "", Block);*/
+	}
+	
+	CallT(AtomT *Target, AtomT *Input) : Target(Target), Input(Input) {}
+}
+
 ///////////////////////////////////////////////
 int main(int, char **)
 {
@@ -530,6 +785,49 @@ int main(int, char **)
 	
 	MultipleT Statements;
 	SingleT Scope = new RecordT;
+	Statements.emplace_back(new AssignmentT(
+		AllocExistenceT::AutoE,
+		new ElementT
+		(
+			Scope,
+			nullptr,
+			new StringT("f")
+		),
+		new FunctionT
+		(
+			new FunctionTypeT
+			(
+				new SimpleAssignmentT
+				(
+					new StringT("in"),
+					new IntTypeT()
+				),
+				new SimpleAssignmentT
+				(
+					new StringT("out"),
+					new IntTypeT()
+				)
+			),
+			{
+				new AssignmentT
+				(
+					AllocExistenceT::AutoE,
+					new ElementT
+					(
+						Scope,
+						nullptr,
+						new String("out")
+					),
+					new ElementT
+					(
+						Scope,
+						nullptr,
+						new String("in")
+					)
+				)
+			}
+		)
+	));
 	Statements.emplace_back(new AssignmentT(
 		AllocExistenceT::AutoE,
 		new ElementT(
@@ -549,12 +847,32 @@ int main(int, char **)
 			nullptr, 
 			new StringT("a")
 		),
+		new CallT(
+			ElementT(
+				Scope,
+				nullptr,
+				new StringT("f")
+			),
+			ElementT(
+				Scope,
+				nullptr,
+				new String("z")
+			)
+		)
+	));
+	/*Statements.emplace_back(new AssignmentT(
+		AllocExistenceT::DynamicE,
+		new ElementT(
+			Scope,
+			nullptr, 
+			new StringT("a")
+		),
 		new ElementT(
 			Scope,
 			nullptr,
 			new StringT("z")
 		)
-	));
+	));*/
 	for (auto &Statement : Statements) Statement->Simplify();
 	for (auto &Statement : Statements) 
 		if (Statement) dynamic_cast<AssignmentT *>(static_cast<AtomT *>(Statement))->GenerateStatement(entry);

@@ -93,14 +93,14 @@ struct FullPositionT : std::enable_shared_from_this<FullPositionT>
 typedef std::shared_ptr<FullPositionT> PositionT;
 PositionT NewPosition(void) { return std::make_shared<FullPositionT>(); }
 
-typedef std::string ParseErrorMessageT;
+typedef std::string RecurseErrorMessageT;
 
-struct ParseErrorT
+struct RecurseErrorT
 {
 	PositionT Position;
-	ParseErrorMessageT Message;
-	ParseErrorT(void) {}
-	ParseErrorT(PositionT const &Position, std::string const &Message) : Position(Position), Message(Message) {}
+	RecurseErrorMessageT Message;
+	RecurseErrorT(void) {}
+	RecurseErrorT(PositionT const &Position, std::string const &Message) : Position(Position), Message(Message) {}
 	bool operator !(void) { return !Position; }
 };
 
@@ -111,15 +111,19 @@ std::map<std::string, std::function<std::unique_ptr<ElementT>(PositionT, json_ob
 template <typename SpecificT> void AddConstructor(std::string const &Type)
 	{ Constructors[Type] = [](PositionT const &Position, json_object *JSON) { return std::unique_ptr<ElementT>{new SpecificT(Position, JSON)}; }; }
 
-ErrorOr<ParseErrorT, std::unique_ptr<ElementT>> Construct(std::string const Type, PositionT const &Position, json_object *JSON)
+ErrorOr<RecurseErrorT, std::unique_ptr<ElementT>> Construct(std::string const Type, PositionT const &Position, json_object *JSON)
 {
 	auto Found = Constructors.find(Type);
 	if (Found == Constructors.end()) return {Fail{}, {Position, String() << "Unknown element type '" << Type << "'"}};
-	return Found->second(Position, JSON);
+	try { return Found->second(Position, JSON); }
+	catch (RecurseErrorT const &Error) { return {Fail{}, Error}; }
 }
 
 // Element tree construction
-enum struct ParseStateResultT { StopE, ContinueE };
+struct RecurseStopT {};
+struct RecurseStayT {};
+typedef RecurseReplaceT StrictType(ElementT *); // Only used for simplification?
+typedef RecursePushT StrictType(std::tuple<ElementT &, json_object *>);
 
 struct ParseStackElementT
 {
@@ -129,20 +133,26 @@ struct ParseStackElementT
 
 typedef std::list<ParseStackElementT> ParseStackT;
 
-struct ParseStateT
+typedef std::function<ErrorOr<RecurseErrorT, RecurseStateResultT>(ParseStackT &Stack)> RecurseStateT;
+
+template <typename StackT> Recurse(StackT &&Stack)
 {
-	virtual ~ParseStateT(void) {}
-	virtual ErrorOr<ParseErrorT, ParseStateResultT> Execute(ParseStackT &Stack) = 0;
-};
+	while (!Stack.empty())
+	{
+		auto Error = Stack.back().Element.Parse(Stack);
+		if (Error)
+		{
+			std::cerr << "Error (" << Error->Position << "): " << Error->Message << std::endl;
+			return 1;
+		}
+	}
+}
 
-struct ElementT
+struct RecursableT
 {
-	std::list<std::unique_ptr<ParseStateT>> ParseStates;
-
-	ElementT(std::initializer_list<std::unique_ptr<ParseStateT>> DeepStates) : ParseStates(std::move(DeepStates)) {}
-	virtual ~ElementT(void) {}
-
-	Optional<ParseErrorT> Parse(ParseStackT &Stack)
+	std::list<RecurseStateT> States;
+	RecursableT(std::list<RecurseStateT> &&States) : States(std::move(States)) {}
+	Optional<RecurseErrorT> operator(StackT &Stack)
 	{
 		if (ParseStates.empty())
 		{
@@ -151,24 +161,27 @@ struct ElementT
 		}
 		auto Result = ParseStates.front()->Execute(Stack);
 		if (!Result) return Result.Error;
-		if (*Result == ParseStateResultT::StopE)
+		if (*Result == RecurseStateResultT::StopE)
 			ParseStates.pop_front();
 		return {};
 	}
 };
 
+struct ElementT
+{
+	RecursableT<ParseStackT> Parse;
+	RecursableT<SimplifyStackT> Simplify;
+
+	ElementT(std::list<RecurseStateT> &&ParseStates, std::list<RecurseStateT> &&SimplifyStates) : Parse(std::move(ParseStates)), Simplify(std::move(SimplifyStates)) {}
+	virtual ~ElementT(void) {}
+};
+
 using SingleT = std::unique_ptr<ElementT>;
 using MultipleT = std::vector<SingleT>;
 
-template <Optional<ParseErrorMessageT> (*Fail)(ElementT *Element)> struct ParseSingleT : ParseStateT
+RecurseStateT ParseSingle(PositionT const &Position, std::string const &Field, SingleT &Output)
 {
-	PositionT const Position;
-	std::string const Field;
-	SingleT &Output;
-
-	ParseSingleT(PositionT const &Position, std::string const &Field, SingleT &Output) :
-		Position(Position), Field(Field), Output(Output) {}
-	ErrorOr<ParseErrorT, ParseStateResultT> Execute(ParseStackT &Stack) override
+	return [=, &Output](ParseStackT &Stack)
 	{
 		auto &Top = Stack.back();
 
@@ -183,26 +196,18 @@ template <Optional<ParseErrorMessageT> (*Fail)(ElementT *Element)> struct ParseS
 		std::string const Type{json_object_get_string(TypeJSON), json_object_get_string_len(TypeJSON)};
 		auto Element = Construct(Type, ElementPosition, ElementJSON);
 		if (!Element) return Element.Error;
-		auto Failure = Fail(Element.get());
-		if (Failure) return {ElementPosiiton, *Failure};
 		Output.reset(*Element);
 		Stack.emplace_back(ElementJSON, Element);
 
-		return ParseStateResultT::StopE;
-	}
-};
+		return RecurseStateResultT::StopE;
+	};
+}
 
-template <Optional<ParseErrorMessageT> (*Fail)(ElementT *Element)> struct ParseMultipleT : ParseStateT
+RecurseStateT ParseMultiple(PositionT Position, std::string const &Field, MultipleT &Output)
 {
-	PositionT const Position;
-	std::string const Field;
-	MultipleT &Output;
-	json_object *FieldJSON;
-	int Index;
-
-	ParseMultipleT(PositionT Position, std::string const &Field, MultipleT &Output) :
-		Position(Position), Field(Field), Output(Output), Index(-1) {}
-	ErrorOr<ParseErrorT, ParseStateResultT> Execute(ParseStackT &Stack) override
+	json_object *FieldJSON = nullptr;
+	int Index = -1;
+	return [=, &Output](ParseStackT &Stack)
 	{
 		auto &Top = Stack.back();
 
@@ -221,7 +226,7 @@ template <Optional<ParseErrorMessageT> (*Fail)(ElementT *Element)> struct ParseM
 
 		PositionT FieldPosition = *Position + Field;
 		auto ElementJSON = json_object_array_get_idx(FieldJSON, Index);
-		if (!ElementJSON) return ParseStateResultT::StopE;
+		if (!ElementJSON) return RecurseStateResultT::StopE;
 		if (!json_object_is_type(ElementJSON, json_type_object)) return {FieldPosition, String() << "Index " << Index << " is not an object."};
 		PositionT ElementPosition = *FieldPosition + Index;
 		auto TypeJSON = json_object_object_get(ElementJSON, "type");
@@ -230,89 +235,200 @@ template <Optional<ParseErrorMessageT> (*Fail)(ElementT *Element)> struct ParseM
 		std::string const Type{json_object_get_string(TypeJSON), json_object_get_string_len(TypeJSON)};
 		auto Element = Construct(Type, ElementPosition, ElementJSON);
 		if (!Element) return Element.Error;
-		auto Failure = Fail(Element.get());
-		if (Failure) return {ElementPosition, *Failure};
 		Output.push_back(*Element);
 		Stack.emplace_back(ElementJSON, Element);
 
-		return ParseStateResultT::ContinueE;
-	}
-};
+		return RecurseStateResultT::ContinueE;
+	};
+}
 
-Optional<ParseErrorMessageT> FailNotType(ElementT *Element);
-Optional<ParseErrorMessageT> FailNotExpression(ElementT *Element);
-Optional<ParseErrorMessageT> FailNotStatement(ElementT *Element);
+Optional<RecurseErrorMessageT> FailNotType(ElementT *Element);
+Optional<RecurseErrorMessageT> FailNotExpression(ElementT *Element);
+Optional<RecurseErrorMessageT> FailNotStatement(ElementT *Element);
 
-struct AnyTypeT : ElementT
-{
-};
+// Types
+struct StringTypeT : ElementT { IntegerTypeT(PositionT const &Position, json_object *JSON) {} };
 
-struct IntegerTypeT : ElementT
-{
-};
+struct IntegerTypeT : ElementT { IntegerTypeT(PositionT const &Position, json_object *JSON) {} };
 
-struct MemoryTypeT : ElementT
-{
-};
+struct MemoryTypeT : ElementT { MemoryTypeT(PositionT const &Position, json_object *JSON) {} };
 
-struct RecordElementT : ElementT
+struct RecordTypeElementT : ElementT
 {
 	SingleT Name;
 	SingleT Type;
+	RecordTypeElementT(PositionT const &Position, json_object *JSON) : ElementT
+	{
+		ParseSingle(Position, "name", Name),
+		ParseSingle(Position, "type", Type)
+	} {}
 };
 
 struct RecordTypeT : ElementT
 {
 	MultipleT Elements;
+	RecordTypeT(PositionT const &Position, json_object *JSON) : ElementT
+	{
+		ParseMultiple(Position, "elements", Elements)
+	} {}
 };
 
 struct FunctionTypeT : ElementT
 {
-	SingleT ArgumentType;
-	SingleT ReturnType;
+	SingleT Input;
+	SingleT Output;
+	FunctionTypeT(PositionT const &Position, json_object *JSON) : ElementT
+	{
+		ParseSingle(Position, "input", Input),
+		ParseSingle(Position, "output", Output)
+	} {}
 };
 
-struct ValueT : ElementT
-{
-	SingleT Type;
-	SingleT Definition;
-};
-
+// Type values
 struct IntegerT : ElementT
 {
+	int Value;
+	IntegerT(PositionT const &Position, json_object *JSON)
+	{
+		auto JSONValue = json_object_object_get(JSON, "value");
+		if (!JSONValue) throw RecurseErrorT{Position, "'value' missing."};
+		if (!json_object_is_type(Value, json_type_int)) throw RecurseErrorT{Position, "'value' is not an integer."};
+		Value = json_object_get_int(JSONValue);
+	}
+};
+
+struct StringT : ElementT
+{
+	std::string Value;
+	StringT(PositionT const &Position, json_object *JSON)
+	{
+		auto JSONValue = json_object_object_get(JSON, "value");
+		if (!JSONValue) throw RecurseErrorT{Position, "'value' missing."};
+		if (!json_object_is_type(Value, json_type_string)) throw RecurseErrorT{Position, "'value' is not an string."};
+		Value = {json_object_get_string(JSONValue), json_object_get_string_len(JSONValue)};
+	}
+};
+
+struct RecordElementT : ElementT
+{
+	SingleT Name;
+	SingleT Value;
+	RecordElementT(PositionT const &Position, json_object *JSON) : ElementT
+	{
+		ParseSingle(Position, "name", Name),
+		ParseSingle(Position, "value", Value)
+	} {}
+};
+
+struct RecordT : ElementT
+{
+	MultipleT Elements; // Assignments
+	RecordT(PositionT const &Position, json_object *JSON) : ElementT
+	{
+		ParseMultiple(Position, "elements", Elements)
+	} {}
+
 };
 
 struct FunctionT : ElementT
 {
 	MultipleT Statements;
-	FunctionT(void) : ElementT{{make_unique<ParseMultipleT<FailNotStatement>>(PositionT(), "", Statements)}} {}
-};
-
-struct MainT : ValueT
-{
-	MainT(void) : ValueT{{make_unique<ParseSingleT
+	FunctionT(PositionT const &Position, json_object *JSON) : ElementT
 	{
-		Type.reset(new FunctionTypeT
-		(
-			new RecordTypeT
-			({
-				new RecordElementT
-				(
-					new StringT("argc"),
-					new IntegerTypeT
-				),
-				new RecordElementT
-				(
-					new StringT("argv"),
-					new MemoryTypeT
-				)
-			}),
-			new IntegerTypeT
-		));
-		Definition.reset(new FunctionT);
-	}
+		ParseMultiple(Position, "statements", Statements)
+	} {}
 };
 
+// General Expressions
+struct NameT : ElementT
+{
+	SingleT Name;
+	NameT(PositionT const &Position, json_object *JSON) : ElementT
+	{
+		ParseSingle(Position, "name", Name)
+	} {}
+};
+
+struct ValueT : ElementT
+{
+	SingleT Type;
+	SingleT Value;
+	ValueT(PositionT const &Position, json_object *JSON) : ElementT
+	{
+		ParseSingle(Position, "type", Type),
+		ParseSingle(Position, "value", Value)
+	} {}
+};
+
+struct AddT : ElementT
+{
+	SingleT Left;
+	SingleT Right;
+	
+	template <typename PrimitiveT> auto AddHelper(ElementT *Left, ElementT *Right) -> PrimitiveT *
+	{
+		auto ActualLeft = dynamic_cast<PrimitiveT *>(Left->Inner);
+		auto ActualRight = dynamic_cast<PrimitiveT *>(Right->Inner);
+		return new PrimitiveT(ActualLeft->Value + ActualRight->Value);
+	}
+	
+	ValueT(PositionT const &Position, json_object *JSON) : ElementT
+	(
+		{
+			ParseSingle(Position, "left", Left),
+			ParseSingle(Position, "right", Right)
+		},
+		{
+			SimplifySingle(Left),
+			SimplifySingle(Right),
+			[this](SimplifyStack &Stack)
+			{
+				if (IsPrimitive(Left) && IsPrimitive(Right))
+				{
+					auto LeftType = Type(Left);
+					auto RightType = Type(Right);
+					if (LeftType == RightType)
+					{
+						switch (LeftType.BaseID())
+						{
+							case IntegerT::ID: return RecurseReplaceT(AddHelper<IntegerT>(Left, Right));
+							default: return RecurseErrorT(Position, String() << "Add is undefined on arguments of type " << LeftType.Name());
+						}
+					}
+					return RecurseStopT{};
+				}
+			}
+		}
+	), Position(Position) {}
+};
+
+// Statements
+struct AssignT : ElementT
+{
+	SingleT Name;
+	SingleT Value;
+	AssignT(PositionT const &Position, json_object *JSON) : ElementT
+	(
+		{ 
+			make_unique<ParseSingleT(Position, "name", Name),
+			make_unique<ParseSingleT(Position, "value", Value) 
+		},
+		{}
+	) {}
+};
+
+// Program
+struct ModuleT : ElementT
+{
+	MultipleT Statements;
+	ModuleT(void) : ElementT
+	(
+		{ ParseMultiple(PositionT(), "statements", Statements) },
+		{ SimplifyMultiple(Statements) }
+	) {}
+};
+
+// Element classification
 bool Is(ElementT *Element) { return false; }
 template <typename... TypeT, typename... TypeTs> bool Is(ElementT *Element)
 {
@@ -320,7 +436,7 @@ template <typename... TypeT, typename... TypeTs> bool Is(ElementT *Element)
 	return Is<TypeTs...>(Element);
 }
 
-Optional<ParseErrorMessageT> FailNotType(ElementT *Element)
+Optional<RecurseErrorMessageT> FailNotType(ElementT *Element)
 {
 	if (Is<
 		IntegerTypeT,
@@ -331,7 +447,7 @@ Optional<ParseErrorMessageT> FailNotType(ElementT *Element)
 	return "Element must be a TYPE.";
 }
 
-Optional<ParseErrorMessageT> FailNotExpression(ElementT *Element)
+Optional<RecurseErrorMessageT> FailNotExpression(ElementT *Element)
 {
 	if (!FailType(Element)) return {};
 	if (Is<
@@ -341,7 +457,7 @@ Optional<ParseErrorMessageT> FailNotExpression(ElementT *Element)
 	return "Element must be an EXPRESSION.";
 }
 
-Optional<ParseErrorMessageT> FailNotStatement(ElementT *Element)
+Optional<RecurseErrorMessageT> FailNotStatement(ElementT *Element)
 {
 	if (!FailExpression(Element)) return {};
 	return "Element must be a STATEMENT.";
@@ -488,7 +604,7 @@ int main(int ArgumentCount, char **Arguments)
 	}
 
 	// Parse
-	std::unique_ptr<MainT> TopElement{new MainT};
+	std::unique_ptr<ModuleT> TopElement{new ModuleT};
 	Stack.emplace_back(*TopElement->Definition, Root);
 
 	while (!Stack.empty())
@@ -502,6 +618,7 @@ int main(int ArgumentCount, char **Arguments)
 	}
 
 	// Massage tree
+	TopElement->Simplify();
 
 	// Generate IR
 	auto Module = llvm::makeLLVMModule();
