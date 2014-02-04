@@ -199,6 +199,52 @@ struct DynamicT : RealBaseT
 };
 
 // Record
+struct RecordT : RealBaseT
+{
+	bool Struct;
+	MultipleT Statements;
+	
+	std::vector<std::pair<std::string, SingleT>>> Elements;
+	
+	llvm::Value *StructTarget;
+	
+	NucleusT *Simplify(ContextT Context)
+	{
+		for (auto &Statement : Statements)
+			Statement->Simplify(Context);
+		return this;
+	}
+	
+	void Allocate(ContextT Context, AllocExistenceT Existence, AtomT *Other)
+	{
+		auto Record = new RecordT(Struct, {});
+		if (Existence != AllocExistenceT::Auto) COMPILEERROR;
+		for (auto &Element : Elements)
+		{
+			auto OtherElement = Record->Add(Element.first);
+			Element->second->Allocate(Context, Existence, OtherElement);
+		}
+	}
+	
+	void Assign(ContextT Context, AtomT *Value)
+	{
+		auto Record = dynamic_cast<RecordT *>(*Value);
+		if (Existence != AllocExistenceT::Auto) COMPILEERROR;
+		for (auto &Element : Elements)
+		{
+			auto OtherElement = Record->Get(Element.first);
+			Element->second->Assign(Context, OtherElement);
+		}
+	}
+	
+	llvm::Value *GenerateLoad(llvm::BasicBlock *Block) 
+	{
+		assert(Struct);
+	}
+	
+	RecordT(bool Struct, std::list<SingleT> Statements) : Struct(Struct), Statements(Statements.begin(), Statements.end()) { }
+};
+
 // Assignment + access
 struct AssignmentT : NucleusT
 {
