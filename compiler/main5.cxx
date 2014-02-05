@@ -69,12 +69,7 @@ struct ContextT
 	llvm::BasicBlock *Block;
 };
 
-struct NucleusT
-{
-	virtual ~NucleusT(void) {}
-	virtual NucleusT *Simplify(ContextT Context) { return this; }
-};
-
+struct NucleusT;
 struct AtomT : ShareableT
 {
 	unique_ptr<NucleusT> Nucleus;
@@ -84,39 +79,72 @@ struct AtomT : ShareableT
 	NucleusT *operator *(void) { return Nucleus; }
 	NucleusT const *operator *(void) const { return Nucleus; }
 	
-	NucleusT *Simplify(ContextT Context) { Nucleus.replace(Nucleus->Simplify(Context)); }
+	void Simplify(ContextT Context) { Nucleus.replace(Nucleus->Simplify(Context)); }
+	AtomT *GetType(void) { Nucleus->GetType(); }
 };
 
 typedef SharedPointerT<AtomT> SingleT;
 typedef std::list<SharedPointerT<AtomT>> MultipleT;
 
-// Interfaces
-struct RealBaseT : NucleusT
+struct NucleusT
 {
-	virtual void Allocate(ContextT Context, AllocExistenceT Existence, AtomT *Other) = 0;
+	virtual ~NucleusT(void) {}
+	
+	virtual NucleusT *Simplify(ContextT Context) { return this; }
+	
+	SingleT Type;
+	AtomT *GetType(void) { if (!Type) InitializeType(); return Type; }
+	virtual void InitializeType(void) {}
+};
+
+// Interfaces
+struct RealBaseT
+{
 	virtual void Assign(ContextT Context, AtomT *Value) = 0;
-	virtual llvm::Value *GenerateLoad(llvm::BasicBlock *Block) = 0;
+	virtual llvm::Value *GenerateLoad(ContextT Context) = 0;
+};
+
+struct TypeBaseT
+{
+	virtual NucleusT *Allocate(ContextT Context, AllocExistenceT Existence) = 0;
+};
+
+struct SimpleTypeBaseT : TypeBaseT
+{
+	ExistenceT Existence;
+	
+	SimpleTypeBaseT(ExistenceT Existence) : Existence(Existence) {}
 };
 
 // Basic types + values
-struct IntTypeT
+template <typename ConstT> struct SimpleTypeCommonT : NucleusT, SimpleTypeBaseT
 {
+	AtomT *Allocate(ContextT Context, AllocExistenceT AllocExistence) override
+	{
+		auto EffectiveExistence = Existence;
+		if (AllocExistence == AllocExistenceT::Dynamic) EffectiveExistence = ExistenceT::Dynamic;
+		if (AllocExistence == AllocExistenceT::Static) EffectiveExistence = ExistenceT::Static;
+		if (EffectiveExistence == ExistenceT::Constant) 
+			return new ConstT;
+		else if ((EffectiveExistence == ExistenceT::Dynamic) || (EffectiveExistence == ExistenceT::Static))
+			return new DynamicT(Context, false, new decltype(*this)(EffectiveExistence));
+		else { assert(0); return nullptr; }
+	}
+	
+	using SimpleTypeBaseT::SimpleTypeBaseT;
 };
 
-template <typename BaseT> ConstantBaseT : RealBaseT
+typedef SimpleTypeCommonT<IntT> IntTypeT;
+
+template <typename BaseT, typename TypeT> ConstantCommonT : NucleusT, RealBaseT
 {
 	BaseT Value;
 	
 	bool Assigned = false;
 	
-	void Allocate(ContextT Context, AllocExistenceT Existence, AtomT *Other) override
+	void InitializeType(void) override
 	{
-		if (Existence == AllocExistenceT::Auto) 
-			Other->Replace(Clone());
-		else if (Existence == AllocExistenceT::Dynamic) 
-			Other->Replace(new DynamicT(Context, false, Type()));
-		else if (Existence == AllocExistenceT::Static) 
-			Other->Replace(new DynamicT(Context, true, Type()));
+		Type = new TypeT(ExistenceT::Constant);
 	}
 	
 	void Assign(ContextT Context, AtomT *Value) override
@@ -126,26 +154,12 @@ template <typename BaseT> ConstantBaseT : RealBaseT
 		Value = Value->Value;
 		Assigned = true;
 	}
+	
 };
-// TODO
-// Put generateload in type?
-// Make intT typedef of constantbaset
-// Clone + type functions in ConstantBaseT
-// Make type a ConstantBaseT template argument
 
-struct IntT : RealBaseT
+struct IntT : ConstantCommonT<int, IntTypeT>
 {
 	int Value;
-	
-	void Allocate(ContextT Context, AllocExistenceT Existence, AtomT *Other) override
-	{
-		if (Existence == AllocExistenceT::Auto) 
-			Other->Replace(Clone());
-		else if (Existence == AllocExistenceT::Dynamic) 
-			Other->Replace(new DynamicT(Context, false, Type()));
-		else if (Existence == AllocExistenceT::Static) 
-			Other->Replace(new DynamicT(Context, true, Type()));
-	}
 	
 	void Assign(ContextT Context, AtomT *Value) override
 	{
@@ -159,27 +173,17 @@ struct IntT : RealBaseT
 };
 
 // Dynamic
-struct DynamicT : RealBaseT
+struct DynamicT : NucleusT, RealBaseT
 {
-	bool const Static;
-	SingleT Type;
 	llvm::Value *Target;
 	
 	// State
 	bool Assigned = false;
 	
-	void Allocate(ContextT Context, AllocExistenceT Existence, AtomT *Other) override
-	{
-		bool Static = this->Static;
-		if (Existence == AllocExistenceT::Dynamic) Static = false;
-		else if (Existence == AllocExistenceT::Static) Static = true;
-		Other->Replace(new DynamicT(Context, Static, Type));
-	}
-
 	void Assign(ContextT Context, AtomT *Value) override
 	{
-		if (Static && Assigned) COMPILEERROR;
-		if (!Type->Equals(Value->Type())) COMPILEERROR;
+		if ((Type->Existence == ExistenceT::Static) && Assigned) COMPILEERROR;
+		if (!Type->Equals(Value->GetType())) COMPILEERROR;
 		auto Value = dynamic_cast<RealBaseT *>(Value);
 		new llvm::StoreInst(Value->GenerateLoad(), Target, Context.Block);
 		Assigned = true;
@@ -188,58 +192,85 @@ struct DynamicT : RealBaseT
 	llvm::Value *GenerateLoad(ContextT Context) override
 		{ return new llvm::LoadInst(Target, "", Context.Block); }
 		
-	DynamicT(ContextT Context, bool Static, AtomT *Type, llvm::Value *Target = nullptr) : Static(Static), Type(Type), Target(Target)
+	DynamicT(ContextT Context, AtomT *Type, llvm::Value *Target = nullptr) : Static(Type->Existence == ExistenceT::Static), Target(Target)
 	{
+		this->Type = Type;
 		if (!Target)
 		{
-			auto Type = dynamic_cast<TypeBaseT *>(*Type);
+			auto Type = dynamic_cast<TypeBaseT *>(**Type);
 			Target = new llvm::AllocaInst(Type->GenerateType(), "", Block);
 		}
 	}
 };
 
 // Record
-struct RecordT : RealBaseT
+struct RecordT : NucleusT, RealBaseT, TypeBaseT
 {
+	// Structure
 	bool Struct;
 	MultipleT Statements;
 	
+	// State
 	std::vector<std::pair<std::string, SingleT>>> Elements;
 	
 	llvm::Value *StructTarget;
 	
-	NucleusT *Simplify(ContextT Context)
+	NucleusT *Simplify(ContextT Context) override
 	{
 		for (auto &Statement : Statements)
 			Statement->Simplify(Context);
 		return this;
 	}
 	
-	void Allocate(ContextT Context, AllocExistenceT Existence, AtomT *Other)
+	void InitializeType(void) override
 	{
-		auto Record = new RecordT(Struct, {});
-		if (Existence != AllocExistenceT::Auto) COMPILEERROR;
+		auto Type = new RecordT(Struct);
 		for (auto &Element : Elements)
 		{
-			auto OtherElement = Record->Add(Element.first);
-			Element->second->Allocate(Context, Existence, OtherElement);
+			Type->Add(Element.first, Element.second->Type()->Clone());
 		}
+		this->Type = new AtomT(Type);
 	}
 	
-	void Assign(ContextT Context, AtomT *Value)
+	void Assign(ContextT Context, AtomT *Value) override
 	{
-		auto Record = dynamic_cast<RecordT *>(*Value);
-		if (Existence != AllocExistenceT::Auto) COMPILEERROR;
+		auto Record = dynamic_cast<RecordT *>(**Value);
 		for (auto &Element : Elements)
 		{
 			auto OtherElement = Record->Get(Element.first);
-			Element->second->Assign(Context, OtherElement);
+			Element.second->Assign(Context, OtherElement);
 		}
 	}
 	
-	llvm::Value *GenerateLoad(llvm::BasicBlock *Block) 
+	llvm::Value *GenerateLoad(ContextT Context) override
 	{
 		assert(Struct);
+		return new llvm::LoadInst(StructTarget, "", Context.Block);
+	}
+
+	NucleusT *Allocate(ContextT Context, AllocExistenceT Existence) override
+	{
+		auto Record = new RecordT(Struct, {});
+		for (auto &Element : Elements)
+		{
+			if (Type = dynamic_cast<TypeBaseT *>(**Element.second))
+				Record->Add(Element.first, Type->Allocate(Context, Existence));
+			else Record->Add(Element.first, Element.second->Clone());
+		}
+		return Record;
+	}
+	
+	void Add(std::string const &Name, AtomT *Item) 
+	{
+		if (Type) COMPILEERROR; // Can't add elements after type determination
+		for (auto &Element : Elements) assert(Element.first() != Name);
+		Elements.emplace_back(Name, Item);
+	}
+	
+	AtomT *Get(std::string const &Name)
+	{
+		for (auto &Element : Elements) if (Element.first() == Name) return Element.second();
+		return nullptr;
 	}
 	
 	RecordT(bool Struct, std::list<SingleT> Statements) : Struct(Struct), Statements(Statements.begin(), Statements.end()) { }
@@ -256,10 +287,12 @@ struct AssignmentT : NucleusT
 	{
 		Target->Simplify(Context);
 		Value->Simplify(Context);
-		auto Value = dynamic_cast<RealBaseT *>(*Value);
-		if (dynamic_cast<UndefinedT *>(*Target))
-			Value->Allocate(Context, Target);
-		auto Target = dynamic_cast<RealBaseT *>(*Target);
+		if (Target->To<UndefinedT>()) 
+		{
+			auto Type = Value->Type();
+			Target->Replace(Type->Allocate(Context, Existence));
+		}
+		auto Target = Target->To<RealBaseT>();
 		Target->Assign(Context, this->Value);
 		return nullptr;
 	}

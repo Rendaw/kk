@@ -362,6 +362,20 @@ struct StringT : ExpressionBaseT
 	StringT(std::string const &Value) : Value(Value) {}
 };
 
+struct SimpleAssignmentT : ExpressionBaseT
+{
+	SingleT Target; // Must simplify to const string
+	SingleT Value;
+	
+	void Simplify(void)
+	{
+		if (!Target) assert(0 && "Error");
+		Target->Simplify();
+		if (!Value) assert(0 && "Error");
+		Value->Simplify();
+	}
+};
+
 struct RecordT : AtomT
 {
 	std::vector<std::pair<std::string, SingleT>> Elements;
@@ -377,6 +391,21 @@ struct RecordT : AtomT
 		for (auto &Element : Elements) if (Element.first() == Name) return Element.second();
 		return nullptr;
 	}
+	
+	void Simplify(void)
+	{
+		for (auto &Statement : Statements)
+		{
+			auto Assignment = dynamic_cast<SimpleAssignmentT *>(*Statement);
+			if (!Assignment) assert(0 && "Error");
+			Assignment->Target->Simplify();
+			auto Name = dynamic_cast<StringT *>(*Assignment->Target);
+			if (!Name) assert(0 && "Error");
+			Elements.push_back(Name, Assignment->Value);
+		}
+	}
+	
+	RecordT(std::vector<AtomT *> const &Statements) : Statements(Statements) {}
 };
 
 struct ElementT : AtomT
@@ -576,21 +605,7 @@ struct MathAddT : ExpressionBaseT
 	MathAddT(AtomT *Left, AtomT *Right) : Left(Left), Right(Right) {}
 };
 
-struct SimpleAssignmentT : ExpressionBaseT
-{
-	SingleT Target; // Must simplify to const string
-	SingleT Value;
-	
-	void Simplify(void)
-	{
-		if (!Target) assert(0 && "Error");
-		Target->Simplify();
-		if (!Value) assert(0 && "Error");
-		Value->Simplify();
-	}
-};
-
-struct FunctionTypeT : TypeBaseT
+/*struct FunctionTypeT : TypeBaseT
 {
 	SingleT Input; // Simple assignment
 	SingleT Output; // ""
@@ -758,7 +773,7 @@ struct FunctionTypeT : TypeBaseT
 	}
 };
 
-struct FunctionT
+struct FunctionT : ExpressionBaseT
 {
 	SingleT Type;
 	MultipleT Statements;
@@ -798,14 +813,17 @@ struct FunctionInstanceT : ExpressionBaseT
 		
 		// If all statements have been simplified out of existence (only possible for constants), replace the function with the result
 		auto FunctionType = dynamic_cast<FunctionTypeT *>(*Type);
-		if (auto Output = dynamic_cast<SimpleAssignmentT *>(*FunctionType->Output))
+		bool TotallySimplified = true;
+		for (auto &Statement : Statements)
+			if (Statement) { TotallySimplified = false; break; }
+		if (TotallySimplified)
 		{
-			auto Name = dynamic_cast<StringT *>(*Output->Target);
-			bool TotallySimplified = true;
-			for (auto &Statement : Statements)
-				if (Statement) { TotallySimplified = false; break; }
-			if (TotallySimplified) 
+			if (auto Output = dynamic_cast<SimpleAssignmentT *>(*FunctionType->Output))
+			{
+				auto Name = dynamic_cast<StringT *>(*Output->Target);
 				Replace(Scope->Get(Name->Value));
+			}
+			else Replace(nullptr);
 		}
 	}
 	
@@ -856,7 +874,7 @@ struct CallT : ExpressionBaseT
 	}
 	
 	CallT(AtomT *Target, AtomT *Input) : Target(Target), Input(Input) {}
-}
+}*/
 
 ///////////////////////////////////////////////
 int main(int, char **)
@@ -871,7 +889,103 @@ int main(int, char **)
 	
 	MultipleT Statements;
 	SingleT Scope = new RecordT;
-	Statements.emplace_back(new AssignmentT(
+	
+	// Const record test
+	Statements.emplace_back(new AssignmentT
+	(
+		AllocExistenceT::AutoE,
+		new ElementT(
+			Scope,
+			nullptr, 
+			new StringT("a")
+		),
+		new IntT(4)
+	);
+	Statements.emplace_back(new AssignmentT
+	(
+		AllocExistenceT::DynamicE,
+		new ElementT(
+			Scope,
+			nullptr, 
+			new StringT("b")
+		),
+		new IntT(17)
+	);
+	Statements.emplace_back(new AssignmentT
+	(
+		AllocExistenceT::AutoE,
+		new ElementT
+		(
+			Scope,
+			nullptr,
+			new StringT("f")
+		),
+		new RecordT
+		(
+			new SimpleAssignmentT
+			(
+				new StringT("m1"),
+				new IntT(47)
+			),
+			new SimpleAssignmentT
+			(
+				new StringT("m2"),
+				new ElementT
+				(
+					Scope,
+					nullptr,
+					new StringT("a")
+				)
+			),
+			new SimpleAssignmentT
+			(
+				new StringT("m3"),
+				new ElementT
+				(
+					Scope,
+					nullptr,
+					new StringT("b")
+				)
+			)
+		)
+	));
+	Statements.emplace_back(new AssignmentT
+	(
+		AllocExistenceT::DynamicE,
+		new ElementT(
+			Scope,
+			new ElementT(
+				Scope,
+				nullptr, 
+				new StringT("f")
+			),
+			new StringT("m4")
+		),
+		new IntT(39)
+	));
+	Statements.emplace_back(new AssignmentT
+	(
+		AllocExistenceT::DynamicE,
+		new ElementT(
+			Scope,
+			nullptr,
+			new StringT("z")
+		),
+		new ElementT(
+			Scope,
+			new ElementT(
+				Scope,
+				nullptr, 
+				new StringT("f")
+			),
+			new StringT("m4")
+		)
+	));
+	
+	// Dynamic record test
+	
+	// Function test
+	/*Statements.emplace_back(new AssignmentT(
 		AllocExistenceT::AutoE,
 		new ElementT
 		(
@@ -945,7 +1059,7 @@ int main(int, char **)
 				new String("z")
 			)
 		)
-	));
+	));*/
 	/*Statements.emplace_back(new AssignmentT(
 		AllocExistenceT::DynamicE,
 		new ElementT(
