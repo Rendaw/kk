@@ -91,10 +91,12 @@ template <typename BaseT> struct SharedPointerT
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #define COMPILEERROR assert(0)
 
-struct SturctParentIndexT : ShareableT
+struct StructParentIndexT : ShareableT
 {
 	// I would just not copy contextT when recursing, but I can't mix r-value references and references in the same function because c++ sucks
 	size_t Count;
+	
+	StructParentIndexT(size_t Count) : Count(Count) {}
 };
 
 struct AtomT;
@@ -109,7 +111,7 @@ struct ContextT
 	AtomT *Scope;
 	
 	// Allocation
-	AtomT *StructParent; // Optional
+	llvm::Value *StructParent; // Optional
 	SharedPointerT<StructParentIndexT> StructParentIndex;
 	
 	// Assignment
@@ -121,7 +123,7 @@ struct ContextT
 		llvm::Function *Memcpy,
 		llvm::BasicBlock *Block,
 		AtomT *Scope,
-		AtomT *StructParent = 0,
+		llvm::Value *StructParent = 0,
 		SharedPointerT<StructParentIndexT> StructParentIndex = nullptr,
 		bool Memcopied = false
 	) :
@@ -135,26 +137,6 @@ struct ContextT
 		Memcopied(Memcopied)
 	{
 	}
-	
-	#define DERIVE {LLVM, Module, Memcpy, Block, Scope, StructParent, StructParentIndex, Memcopied}
-	ContextT WithBlock(llvm::BasicBlock *Block)
-		{ return DERIVE; }
-
-	ContextT WithScope(AtomT *Scope)
-		{ return DERIVE; }
-		
-	ContextT WithAllocStruct(AtomT *StructParent, SharedPointerT<StructParentIndexT> StructParentIndex)
-		{ return DERIVE; }
-	ContextT WithoutAllocStruct(void)
-	{
-		AtomT *StructParent = nullptr;
-		SharedPointerT<StructParentIndexT> StructParentIndex;
-		return DERIVE;
-	}
-	
-	ContextT WithAssignMemcopied(bool Memcopied)
-		{ return DERIVED; }
-	#undef DERIVE
 };
 
 struct SingleT
@@ -360,8 +342,23 @@ template <typename ConstT> struct SimpleTypeCommonT : AtomT, SimpleTypeBaseT
 			llvm::Value *Target;
 			if (Context.StructParent)
 			{
-				auto StructParent = Context.StructParent->To<ValueBaseT>();
-				Target = new llvm::GetElementPtrInst(StructParent->GenerateLLVMLoad(Context), Context.StructParentIndex->Count++);
+				Target = llvm::GetElementPtrInst::CreateInBounds(
+					Context.StructParent, 
+					std::vector<llvm::Value *>
+					{
+						llvm::ConstantInt::get
+						(
+							llvm::IntegerType::get(Context.LLVM, 32), 
+							0, false
+						),
+						llvm::ConstantInt::get
+						(
+							llvm::IntegerType::get(Context.LLVM, 32), 
+							Context.StructParentIndex->Count++, false
+						)
+					},
+					"", 
+					Context.Block);
 			}
 			else Target = new llvm::AllocaInst(GenerateLLVMType(Context), "", Context.Block);
 			return new DynamicT(Clone(), Target);
@@ -371,16 +368,8 @@ template <typename ConstT> struct SimpleTypeCommonT : AtomT, SimpleTypeBaseT
 	
 	void GenerateLLVMTypes(ContextT Context, std::vector<llvm::Type *> &Types) override
 	{
-		auto Type = GenerateLLVMType(Context);
-		if (Type) Types.push_back(Type); 
-	}
-	
-	virtual llvm::Type *GenerateLLVMTypeInternal(ContextT Context) = 0;
-	
-	llvm::Type *GenerateLLVMType(ContextT Context) override
-	{
-		if ((Existence != ExistenceT::Dynamic) && (Existence != ExistenceT::Dynamic)) return nullptr;
-		return GenerateLLVMTypeInternal(Context);
+		if ((Existence != ExistenceT::Dynamic) && (Existence != ExistenceT::Static)) return;
+		Types.push_back(GenerateLLVMType(Context)); 
 	}
 	
 	void Autotype(void) { Type = new TypeTypeT; }
@@ -393,7 +382,7 @@ struct IntTypeT : SimpleTypeCommonT<IntT>
 {
 	AtomT *Clone(void) const override { return new IntTypeT(Existence); }
 	
-	llvm::Type *GenerateLLVMTypeInternal(ContextT Context) override
+	llvm::Type *GenerateLLVMType(ContextT Context) override
 		{ return llvm::IntegerType::get(Context.LLVM, 32); }
 	
 	IntTypeT(ExistenceT Existence) : SimpleTypeCommonT<IntT>(Existence) {}
@@ -404,7 +393,7 @@ struct StringTypeT : SimpleTypeCommonT<StringT>
 {
 	AtomT *Clone(void) const override { return new StringTypeT(Existence); }
 	
-	llvm::Type *GenerateLLVMTypeInternal(ContextT Context) override 
+	llvm::Type *GenerateLLVMType(ContextT Context) override 
 		{ return llvm::PointerType::getUnqual(llvm::IntegerType::get(Context.LLVM, 8)); }
 	
 	StringTypeT(ExistenceT Existence) : SimpleTypeCommonT<StringT>(Existence) {}
@@ -439,7 +428,9 @@ struct IntT : ConstantCommonT<int, IntTypeT>
 	{ 
 		assert(Assigned); 
 		auto Type = this->GetType()->To<SimpleTypeBaseT>();
-		return llvm::ConstantInt::get(Type->GenerateLLVMType(Context), Value, true); 
+		auto Temp = Type->GenerateLLVMType(Context);
+		return llvm::ConstantInt::get(Temp, Value, true); 
+		//return llvm::ConstantInt::get(Type->GenerateLLVMType(Context), Value, true); 
 	}
 		
 	IntT(AtomT *Type) : ConstantCommonT<int, IntTypeT>(Type) {}
@@ -540,9 +531,10 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 	{
 		auto RecordValue = Value->To<RecordT>();
 		auto NewContext = Context;
-		if (Struct && !NewContext.Memcopied)
+		/*if (Struct && !NewContext.Memcopied && GetType()->Equals(RecordValue->GetType()))
 		{
-			auto Source = RecordValue->GenerateCustomLLVMLoad(Context, this);
+			auto Source = RecordValue->GenerateLLVMLoad(Context);
+			if (!Source) Source = RecordValue->GenerateConstLLVMLoad(Context);
 			auto Dest = GenerateLLVMLoad(Context);
 			if (Source && Dest)
 			{
@@ -555,7 +547,7 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 				llvm::CallInst::Create(Context.Memcpy, Params, "", Context.Block);
 				NewContext.Memcopied = true;
 			}
-		}
+		}*/
 		for (auto &Element : Elements)
 		{
 			auto Source = RecordValue->Get(Element.Name);
@@ -564,11 +556,45 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 		}
 	}
 	
-	llvm::Value *GenerateCustomLLVMLoad(ContextT Context, RecordT *Template)
+	/*void GenerateConstLLVMLoadsInternal(ContextT Context, std::vector<llvm::Value *> &Values)
 	{
-		// if dynamic order + count matches, StructTarget
-		// if all template dynamic are in this and const, make const struct and return it
+		auto Type = GetType()->To<RecordT>();
+		for (auto &Element : Type->Elements)
+		{
+			if (auto SimpleType = Element.Value->To<SimpleTypeBaseT>())
+			{
+				if ((SimpleType->Existence == ExistenceT::Static) ||
+					(SimpleType->Existence == ExistenceT::Dynamic))
+				{
+					auto Value = Get(Element.Name)->To<ValueBaseT>();
+					Values.push_back(Value->GenerateLLVMLoad(Context));
+				}
+			}
+			else if (auto RecordType = Element.Value->To<RecordT>())
+			{
+				auto Value = Get(Element.Name)->To<RecordT>();
+				Value->GenerateConstLLVMLoads(Context, Values);
+			}
+		}
 	}
+	
+	void GenerateConstLLVMLoads(ContextT Context, std::vector<llvm::Value *> &Values)
+	{
+		if (Struct) Values.push_back(GenerateConstLLVMLoad(Context));
+		else GenerateConstLLVMLoadsInternal(Context, Values);
+	}
+	
+	llvm::Value *GenerateConstLLVMLoad(ContextT Context)
+	{
+		if (!ConstStructTarget)
+		{
+			auto Type = GetType()->To<RecordT>();
+			std::vector<llvm::Value *> Values;
+			GenerateConstLLVMLoadsInternal(Context, Values);
+			ConstStructTarget = llvm::ConstantStruct::get(Type->GenerateLLVMType(Context), Values);
+		}
+		return ConstStructTarget;
+	}*/
 
 	llvm::Value *GenerateLLVMLoad(ContextT Context) override
 	{
@@ -584,10 +610,26 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 		if (Struct)
 		{
 			if (Context.StructParent)
-				StructTarget = llvm::GetElementPtrInst::Create(Context.StructParent, Context.StructParentIndex.Count++);
+				StructTarget = llvm::GetElementPtrInst::CreateInBounds(
+					Context.StructParent, 
+					std::vector<llvm::Value *>
+					{
+						llvm::ConstantInt::get
+						(
+							llvm::IntegerType::get(Context.LLVM, 32), 
+							0, false
+						),
+						llvm::ConstantInt::get
+						(
+							llvm::IntegerType::get(Context.LLVM, 32), 
+							Context.StructParentIndex->Count++, false
+						)
+					},
+					"", 
+					Context.Block);
 			else StructTarget = new llvm::AllocaInst(GenerateLLVMType(Context), "", Context.Block);
 			NewContext.StructParent = StructTarget;
-			NewContext.StructParentIndex = new StructParentIndexT{0};
+			NewContext.StructParentIndex = new StructParentIndexT(0);
 		}
 		
 		for (auto &Element : Elements)
@@ -609,9 +651,11 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 			for (auto &Element : Elements)
 			{
 				auto Type = Element.Value->To<TypeBaseT>();
-				if (Type) Type->GenerateTypes(Types);
+				assert(Type); // TEMP
+				if (Type) Type->GenerateLLVMTypes(Context, Types);
 			}
-			StructTargetType = llvm::StructType::create(Types);
+			assert(Types.size() > 0); // TEMP
+			StructTargetType = llvm::StructType::create(Context.LLVM, Types);
 		}
 		return StructTargetType;
 	}
@@ -624,7 +668,7 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 			for (auto &Element : Elements)
 			{
 				auto Type = Element.Value->To<TypeBaseT>();
-				if (Type) Type->GenerateTypes(Types);
+				if (Type) Type->GenerateLLVMTypes(Context, Types);
 			}
 		}
 	}
@@ -881,7 +925,7 @@ int main(int argc, char **argv)
 	{
 		SingleT Local1 = new UndefinedT;
 		SingleT Local2 = new UndefinedT;
-		Statements.emplace_back(new AssignmentT
+		SingleT Statement1 = new AssignmentT
 		(
 			Local1,
 			new RecordT
@@ -918,8 +962,9 @@ int main(int argc, char **argv)
 					)
 				}
 			)
-		));
-		Statements.emplace_back(new AssignmentT
+		);
+		Statement1->Simplify(Context);
+		SingleT Statement2 = new AssignmentT
 		(
 			Local2,
 			new RecordT
@@ -956,19 +1001,21 @@ int main(int argc, char **argv)
 					)
 				}
 			)
-		));
-		Statements.emplace_back(new AssignmentT
+		);
+		Statement2->Simplify(Context);
+		SingleT Statement3 = new AssignmentT
 		(
 			Local1,
 			nullptr,
 			Local2
-		));
+		);
+		Statement3->Simplify(Context);
 	}
 	
 	// TODO unpacking example
 	
-	for (auto &Statement : Statements) 
-		Statement->Simplify({LLVM, Module, Block});
+	/*for (auto &Statement : Statements) 
+		Statement->Simplify(Context);*/
 	
 	llvm::ReturnInst::Create(LLVM, Block);
 	Module->dump();

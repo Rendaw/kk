@@ -96,6 +96,8 @@ declare
 strict
 coerce
 
+coerce only works on simple types
+
 ---------------
 OKAY ACTUAL FINAL I GOT IT
 
