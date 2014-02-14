@@ -1,3 +1,15 @@
+// TODO
+/*
+
+] temporarily remove recordt
+] cast
+] remove type from assignment
+] const more stuff - non-state variables
+] strict type (takes static typet, if typet is record all elements must be static too)
+] reintroduce record, as per idea1
+
+*/
+
 #include "type.h"
 #include "extrastandard.h"
 
@@ -253,21 +265,22 @@ struct TypeBaseT
 {
 	virtual AtomT *Allocate(ContextT Context) = 0;
 	virtual llvm::Type *GenerateLLVMType(ContextT Context) { COMPILEERROR; return nullptr; }
-	virtual void GenerateLLVMTypes(ContextT Context, std::vector<llvm::Type *> &Types) { COMPILEERROR; }
+	virtual void GenerateDynamicLLVMTypes(ContextT Context, std::vector<llvm::Type *> &Types) { COMPILEERROR; }
+	
+	enum class StrictIDT
+	{
+		General
+	} const StrictID;
+	
+	TypeBaseT(StrictIDT StrictID) : StrictID(StrictID) {}
 };
 
-enum struct ExistenceT
+struct PrimitiveTypeBaseT : TypeBaseT
 {
-	Constant,
-	Static,
-	Dynamic
-};
+	bool const Dynamic; // true = dynamic, false = static
+	bool const Variable; // true = variable, false = constant (compile vs run-time)
 
-struct SimpleTypeBaseT : TypeBaseT
-{
-	ExistenceT Existence;
-
-	SimpleTypeBaseT(ExistenceT Existence) : Existence(Existence) {}
+	PrimitiveTypeBaseT(StrictIDT StrictID, bool Dynamic, bool Variable) : TypeBaseT(StrictID), Dynamic(Dynamic), Variable(Variable) {}
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -277,9 +290,34 @@ struct UndefinedT : AtomT
 	AtomT *Clone(void) const { return new UndefinedT; }
 };
 
-struct TypeTypeT : AtomT
+struct TypeT : AtomT, ValueBaseT
 {
-	AtomT *Clone(void) const { return new TypeTypeT; }
+	SingleT Value;
+	
+	// State
+	bool Assigned = false;
+	
+	void Simplify(ContextT Context) {}
+	
+	void Assign(ContextT Context, AtomT *Value) override
+	{
+		if (Assigned && !GetType()->Dynamic) COMPILEERROR;
+		auto TypeValue = Value->To<TypeT>();
+		Value = TypeValue->Value;
+	}
+	
+	llvm::Value *GenerateLLVMLoad(ContextT Context) override { COMPILEERROR; return nullptr; }
+
+	TypeT(AtomT *Type) : AtomT(Type) {}
+};
+
+struct TypeTypeT : AtomT, PrimitiveTypeBaseT
+{
+	AtomT *Clone(void) const { return new TypeTypeT(Dynamic); }
+
+	AtomT *Allocate(ContextT Context) { return new TypeT(Clone()); }
+	
+	TypeTypeT(bool Dynamic) : PrimitiveTypeBaseT(Dynamic, false) {}
 };
 
 struct SubAssignmentT : AtomT
@@ -313,10 +351,10 @@ struct DynamicT : AtomT, ValueBaseT
 			return;
 		}
 		
-		auto Type = this->Type->To<SimpleTypeBaseT>();
+		auto Type = this->Type->To<PrimitiveTypeBaseT>();
 		if ((Type->Existence == ExistenceT::Static) && Assigned) COMPILEERROR;
-		auto SimpleValue = Value->To<ValueBaseT>();
-		new llvm::StoreInst(SimpleValue->GenerateLLVMLoad(Context), Target, Context.Block);
+		auto PrimitiveValue = Value->To<ValueBaseT>();
+		new llvm::StoreInst(PrimitiveValue->GenerateLLVMLoad(Context), Target, Context.Block);
 		Assigned = true;
 	}
 	
@@ -331,7 +369,7 @@ struct DynamicT : AtomT, ValueBaseT
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Constants
-template <typename ConstT> struct SimpleTypeCommonT : AtomT, SimpleTypeBaseT
+template <typename ConstT> struct PrimitiveTypeCommonT : AtomT, PrimitiveTypeBaseT
 {
 	AtomT *Allocate(ContextT Context) override
 	{
@@ -366,7 +404,7 @@ template <typename ConstT> struct SimpleTypeCommonT : AtomT, SimpleTypeBaseT
 		else { assert(0); return nullptr; }
 	}
 	
-	void GenerateLLVMTypes(ContextT Context, std::vector<llvm::Type *> &Types) override
+	void GenerateDynamicLLVMTypes(ContextT Context, std::vector<llvm::Type *> &Types) override
 	{
 		if ((Existence != ExistenceT::Dynamic) && (Existence != ExistenceT::Static)) return;
 		Types.push_back(GenerateLLVMType(Context)); 
@@ -374,29 +412,29 @@ template <typename ConstT> struct SimpleTypeCommonT : AtomT, SimpleTypeBaseT
 	
 	void Autotype(void) { Type = new TypeTypeT; }
 	
-	SimpleTypeCommonT(ExistenceT Existence) : SimpleTypeBaseT(Existence) {}
+	PrimitiveTypeCommonT(ExistenceT Existence) : PrimitiveTypeBaseT(Existence) {}
 };
 
 struct IntT;
-struct IntTypeT : SimpleTypeCommonT<IntT>
+struct IntTypeT : PrimitiveTypeCommonT<IntT>
 {
 	AtomT *Clone(void) const override { return new IntTypeT(Existence); }
 	
 	llvm::Type *GenerateLLVMType(ContextT Context) override
 		{ return llvm::IntegerType::get(Context.LLVM, 32); }
 	
-	IntTypeT(ExistenceT Existence) : SimpleTypeCommonT<IntT>(Existence) {}
+	IntTypeT(ExistenceT Existence) : PrimitiveTypeCommonT<IntT>(Existence) {}
 };
 
 struct StringT;
-struct StringTypeT : SimpleTypeCommonT<StringT>
+struct StringTypeT : PrimitiveTypeCommonT<StringT>
 {
 	AtomT *Clone(void) const override { return new StringTypeT(Existence); }
 	
 	llvm::Type *GenerateLLVMType(ContextT Context) override 
 		{ return llvm::PointerType::getUnqual(llvm::IntegerType::get(Context.LLVM, 8)); }
 	
-	StringTypeT(ExistenceT Existence) : SimpleTypeCommonT<StringT>(Existence) {}
+	StringTypeT(ExistenceT Existence) : PrimitiveTypeCommonT<StringT>(Existence) {}
 };
 
 template <typename BaseT, typename TypeT> struct ConstantCommonT : AtomT, ValueBaseT
@@ -427,7 +465,7 @@ struct IntT : ConstantCommonT<int, IntTypeT>
 	llvm::Value *GenerateLLVMLoad(ContextT Context) override
 	{ 
 		assert(Assigned); 
-		auto Type = this->GetType()->To<SimpleTypeBaseT>();
+		auto Type = this->GetType()->To<PrimitiveTypeBaseT>();
 		auto Temp = Type->GenerateLLVMType(Context);
 		return llvm::ConstantInt::get(Temp, Value, true); 
 		//return llvm::ConstantInt::get(Type->GenerateLLVMType(Context), Value, true); 
@@ -468,8 +506,15 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 	};
 	std::vector<PairT> Elements;
 	
-	llvm::Type *StructTargetType;
-	llvm::Value *StructTarget;
+	llvm::Type *StructTargetType = nullptr;
+	llvm::Value *StructTarget = nullptr;
+	
+	struct ConstTargetPair
+	{
+		RecordT *Type;
+		llvm::Value *Target;
+	};
+	std::vector<RecordT *> ConstTargets;
 	
 	void Add(std::string const &Name, AtomT *Value)
 	{
@@ -495,6 +540,18 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 	{
 		if (Index >= Elements.size()) return nullptr;
 		return Elements[Index].Value;
+	}
+	
+	bool EqualsStruct(AtomT *Type)
+	{
+		auto OtherType = Type->To<RecordT>();
+		assert(Struct);
+		if (!OtherType->Struct) return false;
+		if (Elements.size() != OtherType->Elements.size()) return false;
+		for (size_t ElementIndex = 0; ElementIndex < Elements.size(); ++ElementsIndex)
+		{
+			
+		}
 	}
 	
 	AtomT *Clone(void) const override
@@ -531,23 +588,36 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 	{
 		auto RecordValue = Value->To<RecordT>();
 		auto NewContext = Context;
-		/*if (Struct && !NewContext.Memcopied && GetType()->Equals(RecordValue->GetType()))
+		if (Struct && !NewContext.Memcopied)
 		{
-			auto Source = RecordValue->GenerateLLVMLoad(Context);
-			if (!Source) Source = RecordValue->GenerateConstLLVMLoad(Context);
+			llvm::Value *Source = nullptr;
+			auto Type = GetType()->To<RecordT>();
+			if (Type->EqualsStruct(RecordValue->GetType()))
+				Source = RecordValue->GenerateLLVMLoad(Context);
+			else Source = RecordValue->GenerateConstLLVMLoad(Context, GetType());
 			auto Dest = GenerateLLVMLoad(Context);
 			if (Source && Dest)
 			{
+				auto CastSource = new llvm::BitCastInst(
+					Source, 
+					llvm::PointerType::get(llvm::IntegerType::get(Context.LLVM, 8), nullptr), 
+					"", 
+					Context.Block);
+				auto CastDest = new llvm::BitCastInst(
+					Dest, 
+					llvm::PointerType::get(llvm::IntegerType::get(Context.LLVM, 8), nullptr), 
+					"", 
+					Context.Block);
 				std::vector<llvm::Value *> Params;
-				Params.push_back(Dest);
-				Params.push_back(Source);
+				Params.push_back(CastDest);
+				Params.push_back(CastSource);
 				Params.push_back(llvm::ConstantExpr::getSizeOf(GenerateLLVMType(Context)));
 				Params.push_back(llvm::ConstantInt::get(llvm::IntegerType::get(Context.LLVM, 32), 0, true); 
 				Params.push_back(llvm::ConstantInt::get(llvm::IntegerType::get(Context.LLVM, 1), 0, true); 
 				llvm::CallInst::Create(Context.Memcpy, Params, "", Context.Block);
 				NewContext.Memcopied = true;
 			}
-		}*/
+		}
 		for (auto &Element : Elements)
 		{
 			auto Source = RecordValue->Get(Element.Name);
@@ -556,15 +626,14 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 		}
 	}
 	
-	/*void GenerateConstLLVMLoadsInternal(ContextT Context, std::vector<llvm::Value *> &Values)
+	void GenerateConstLLVMLoadsInternal(ContextT Context, std::vector<llvm::Value *> &Values, RecordT *Type)
 	{
-		auto Type = GetType()->To<RecordT>();
 		for (auto &Element : Type->Elements)
 		{
-			if (auto SimpleType = Element.Value->To<SimpleTypeBaseT>())
+			if (auto PrimitiveType = Element.Value->To<PrimitiveTypeBaseT>())
 			{
-				if ((SimpleType->Existence == ExistenceT::Static) ||
-					(SimpleType->Existence == ExistenceT::Dynamic))
+				if ((PrimitiveType->Existence == ExistenceT::Static) ||
+					(PrimitiveType->Existence == ExistenceT::Dynamic))
 				{
 					auto Value = Get(Element.Name)->To<ValueBaseT>();
 					Values.push_back(Value->GenerateLLVMLoad(Context));
@@ -573,32 +642,37 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 			else if (auto RecordType = Element.Value->To<RecordT>())
 			{
 				auto Value = Get(Element.Name)->To<RecordT>();
-				Value->GenerateConstLLVMLoads(Context, Values);
+				Value->GenerateConstLLVMLoads(Context, Values, RecordType);
 			}
 		}
 	}
 	
-	void GenerateConstLLVMLoads(ContextT Context, std::vector<llvm::Value *> &Values)
+	void GenerateConstLLVMLoads(ContextT Context, std::vector<llvm::Value *> &Values, RecordT *Type)
 	{
-		if (Struct) Values.push_back(GenerateConstLLVMLoad(Context));
-		else GenerateConstLLVMLoadsInternal(Context, Values);
+		if (Struct) Values.push_back(GenerateConstLLVMLoad(Context, Type));
+		else GenerateConstLLVMLoadsInternal(Context, Values, Type);
 	}
 	
-	llvm::Value *GenerateConstLLVMLoad(ContextT Context)
+	llvm::Value *GenerateConstLLVMLoad(ContextT Context, AtomT *Type)
 	{
-		if (!ConstStructTarget)
-		{
-			auto Type = GetType()->To<RecordT>();
-			std::vector<llvm::Value *> Values;
-			GenerateConstLLVMLoadsInternal(Context, Values);
-			ConstStructTarget = llvm::ConstantStruct::get(Type->GenerateLLVMType(Context), Values);
-		}
-		return ConstStructTarget;
-	}*/
+		auto RecordType = Type->To<RecordT>();
+		auto Found = std::find_if(
+			ConstTargets.begin(), 
+			ConstTargets.end(), 
+			[&RecordType](RecordT *Candidate)
+				{ return RecordType->Equals(Candidate); });
+		if (Found != ConstTargets.end()) return *Found;
+		std::vector<llvm::Value *> Values;
+		GenerateConstLLVMLoadsInternal(Context, Values, RecordType);
+		auto NewConst = llvm::ConstantStruct::get(RecordType->GenerateLLVMType(Context), Values);
+		ConstTargets.push_back(ConstTargetPair{RecordType, NewConst});
+		return NewConst;
+	}
 
 	llvm::Value *GenerateLLVMLoad(ContextT Context) override
 	{
 		if (!Struct) COMPILEERROR;
+		assert(StructTarget);
 		return StructTarget;
 	}
 	
@@ -652,7 +726,7 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 			{
 				auto Type = Element.Value->To<TypeBaseT>();
 				assert(Type); // TEMP
-				if (Type) Type->GenerateLLVMTypes(Context, Types);
+				if (Type) Type->GenerateDynamicLLVMTypes(Context, Types);
 			}
 			assert(Types.size() > 0); // TEMP
 			StructTargetType = llvm::StructType::create(Context.LLVM, Types);
@@ -660,7 +734,7 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 		return StructTargetType;
 	}
 	
-	void GenerateLLVMTypes(ContextT Context, std::vector<llvm::Type *> &Types) override
+	void GenerateDynamicLLVMTypes(ContextT Context, std::vector<llvm::Type *> &Types) override
 	{
 		if (Struct) Types.push_back(GenerateLLVMType(Context));
 		else
@@ -668,7 +742,7 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 			for (auto &Element : Elements)
 			{
 				auto Type = Element.Value->To<TypeBaseT>();
-				if (Type) Type->GenerateLLVMTypes(Context, Types);
+				if (Type) Type->GenerateDynamicLLVMTypes(Context, Types);
 			}
 		}
 	}
@@ -678,6 +752,24 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Glue
+static uint64_t StrictIDCount = 0;
+struct StrictT : AtomT
+{
+	SingleT Value;
+	
+	void Simplify(ContextT Context) override
+	{
+		Value->Simplify(Context);
+		Replace(Value->
+	}
+};
+
+struct CastT : AtomT
+{
+	SingleT Type;
+	SingleT Value;
+};
+
 struct AssignmentT : AtomT
 {
 	SingleT Target;
@@ -767,7 +859,7 @@ int main(int argc, char **argv)
 	
 	MultipleT Statements;
 	/*
-	// Simple assignment
+	// Primitive assignment
 	{
 		SingleT Local1 = new UndefinedT;
 		Statements.emplace_back(new AssignmentT

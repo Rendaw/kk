@@ -1,0 +1,74 @@
+-- assignable means assignable (by any interpretation, even dissimilar records)
+-- equals means strictly equal or assignable
+-- strictness requires all elements static + constant
+
+primitive types
+	assignable other
+		other->to this type
+		if other return true else false
+		
+	strictlyassignable other
+		if ! assignable(other) return false
+		if strictness != 0
+			if other->strictness != strictness return false
+		return true
+
+record types
+	assignable other
+		other->to recordt
+		if !other return false
+		for element
+			otherval = other->get(name)
+			if !otherval return false
+			if !element.value.assignable(otherval->type) return false
+		return true
+
+	strictlyassignable other
+		other->to recordt
+		if !other return false
+		if strictness != 0
+			if other->strictness != strictness return false
+		for element
+			otherval = other->get(name)
+			if !otherval return false
+			if !element.value.strictlyassignable(otherval->type) return false
+		return true
+
+	structequals other
+		// just make all structs strict
+		return strictness == other.strictness
+		// ---
+		// same number of dynamic elements
+		// for each dynamic element pair, types must be the same + same size + same signedness
+		if strictness and other->strictness == strictness return true
+		otherwise
+			count dynamic elements in both
+			if not equal return false
+			for each element
+				if struct record
+					otherval = other->get(name)->to record
+					if !otherval return false
+					if !element->val.structequals(otherval) return false
+				else if dynamic
+					otherval = other->get(name)->to dynamic
+					if !otherval return false
+
+cast
+	type
+	value
+
+	simplify
+		simplify type, value
+		if !type->isassignable(value) error
+
+assign
+	simplify
+		type = value->type
+		if target is undefined
+			type->alloc
+		else
+			if !target->type->equals(type) compileerror
+		if value is cast
+			value = cast->value
+		target->assign(value)
+			
