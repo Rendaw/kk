@@ -263,14 +263,19 @@ struct ValueBaseT
 
 struct TypeBaseT
 {
-	virtual AtomT *Allocate(ContextT Context) = 0;
-	virtual llvm::Type *GenerateLLVMType(ContextT Context) { COMPILEERROR; return nullptr; }
-	virtual void GenerateDynamicLLVMTypes(ContextT Context, std::vector<llvm::Type *> &Types) { COMPILEERROR; }
-	
 	enum class StrictIDT
 	{
 		General
 	} const StrictID;
+	
+	virtual TypeBaseT *StrictClone(StrictIDT NewStrictID) = 0;
+	
+	virtual bool Assignable(AtomT *Other) const = 0;
+	virtual bool StrictlyAssignable(AtomT *Other) const = 0;
+	
+	virtual AtomT *Allocate(ContextT Context) = 0;
+	virtual llvm::Type *GenerateLLVMType(ContextT Context) { COMPILEERROR; return nullptr; }
+	virtual void GenerateDynamicLLVMTypes(ContextT Context, std::vector<llvm::Type *> &Types) { COMPILEERROR; }
 	
 	TypeBaseT(StrictIDT StrictID) : StrictID(StrictID) {}
 };
@@ -279,15 +284,15 @@ struct PrimitiveTypeBaseT : TypeBaseT
 {
 	bool const Dynamic; // true = dynamic, false = static
 	bool const Variable; // true = variable, false = constant (compile vs run-time)
-
+	
 	PrimitiveTypeBaseT(StrictIDT StrictID, bool Dynamic, bool Variable) : TypeBaseT(StrictID), Dynamic(Dynamic), Variable(Variable) {}
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Basics
-struct UndefinedT : AtomT
+struct PlaceholderT : AtomT
 {
-	AtomT *Clone(void) const { return new UndefinedT; }
+	AtomT *Clone(void) const { return new PlaceholderT; }
 };
 
 struct TypeT : AtomT, ValueBaseT
@@ -315,9 +320,20 @@ struct TypeTypeT : AtomT, PrimitiveTypeBaseT
 {
 	AtomT *Clone(void) const { return new TypeTypeT(Dynamic); }
 
+	TypeBaseT *StrictClone(StrictIDT NewStrictID) { return new TypeTypeT(NewStrictID, Dynamic); }
+
+	bool Assignable(AtomT *Other) const { return typeid(Other) == this; }
+	bool StrictlyAssignable(AtomT *Other) const
+	{
+		if (typeid(Other) != this) return false;
+		auto Type = Other->To<TypeBaseT>();
+		return (StrictID == StrictIDT::General) || (StrictID == Type->StrictID);
+	}
+
 	AtomT *Allocate(ContextT Context) { return new TypeT(Clone()); }
 	
-	TypeTypeT(bool Dynamic) : PrimitiveTypeBaseT(Dynamic, false) {}
+	TypeTypeT(bool Dynamic) : PrimitiveTypeBaseT(0, Dynamic, false) {}
+	TypeTypeT(StrictIDT StrictID, bool Dynamic) : PrimitiveTypeBaseT(StrictID, Dynamic, false) {}
 };
 
 struct SubAssignmentT : AtomT
@@ -371,6 +387,17 @@ struct DynamicT : AtomT, ValueBaseT
 /// Constants
 template <typename ConstT> struct PrimitiveTypeCommonT : AtomT, PrimitiveTypeBaseT
 {
+	
+  
+	bool Assignable(AtomT *Other) const { return typeid(Other) == this; }
+	
+	bool StrictlyAssignable(AtomT *Other) const
+	{
+		if (typeid(Other) != this) return false;
+		auto Type = Other->To<TypeBaseT>();
+		return (StrictID == StrictIDT::General) || (StrictID == Type->StrictID);
+	}
+	
 	AtomT *Allocate(ContextT Context) override
 	{
 		if (Existence == ExistenceT::Constant) 
@@ -412,29 +439,35 @@ template <typename ConstT> struct PrimitiveTypeCommonT : AtomT, PrimitiveTypeBas
 	
 	void Autotype(void) { Type = new TypeTypeT; }
 	
-	PrimitiveTypeCommonT(ExistenceT Existence) : PrimitiveTypeBaseT(Existence) {}
+	PrimitiveTypeCommonT(StrictIDT StrictID, bool Dynamic, bool Variable) : PrimitiveTypeBaseT(StrictID, Dynamic, Variable) {}
 };
 
 struct IntT;
 struct IntTypeT : PrimitiveTypeCommonT<IntT>
 {
-	AtomT *Clone(void) const override { return new IntTypeT(Existence); }
+	AtomT *Clone(void) const override { return new IntTypeT(Dynamic, Variable); }
+
+	TypeBaseT *StrictClone(StrictIDT NewStrictID) { return new IntTypeT(NewStrictID, Dynamic, Variable); }
 	
 	llvm::Type *GenerateLLVMType(ContextT Context) override
 		{ return llvm::IntegerType::get(Context.LLVM, 32); }
 	
-	IntTypeT(ExistenceT Existence) : PrimitiveTypeCommonT<IntT>(Existence) {}
+	IntTypeT(bool Dynamic, bool Variable) : PrimitiveTypeCommonT<IntT>(StrictID, Dynamic, Variable) {}
+	IntTypeT(StrictIDT StrictID, bool Dynamic, bool Variable) : PrimitiveTypeCommonT<IntT>(StrictID, Dynamic, Variable) {}
 };
 
 struct StringT;
 struct StringTypeT : PrimitiveTypeCommonT<StringT>
 {
 	AtomT *Clone(void) const override { return new StringTypeT(Existence); }
+
+	TypeBaseT *StrictClone(StrictIDT NewStrictID) { return new StringTypeT(NewStrictID, Dynamic, Variable); }
 	
 	llvm::Type *GenerateLLVMType(ContextT Context) override 
 		{ return llvm::PointerType::getUnqual(llvm::IntegerType::get(Context.LLVM, 8)); }
 	
-	StringTypeT(ExistenceT Existence) : PrimitiveTypeCommonT<StringT>(Existence) {}
+	StringTypeT(bool Dynamic, bool Variable) : PrimitiveTypeCommonT<StringT>(StrictID, Dynamic, Variable) {}
+	StringTypeT(StrictIDT StrictID, bool Dynamic, bool Variable) : PrimitiveTypeCommonT<StringT>(StrictID, Dynamic, Variable) {}
 };
 
 template <typename BaseT, typename TypeT> struct ConstantCommonT : AtomT, ValueBaseT
@@ -445,11 +478,14 @@ template <typename BaseT, typename TypeT> struct ConstantCommonT : AtomT, ValueB
 	bool Assigned;
 	
 	void Autotype(void) override
-		{ Type = new TypeT(ExistenceT::Constant); }
+		{ Type = new TypeT(true, false); }
 	
 	void Assign(ContextT Context, AtomT *Value) override
 	{
+		auto Type = GetType()->To<PrimitiveTypeBaseT>();
+		if (Assigned && !Type->Dynamic) COMPILEERROR;
 		auto ConstValue = Value->To<typename std::remove_reference<decltype(*this)>::type>();
+		if (!ConstValue) COMPILEERROR;
 		this->Value = ConstValue->Value;
 		Assigned = true;
 	}
@@ -466,9 +502,7 @@ struct IntT : ConstantCommonT<int, IntTypeT>
 	{ 
 		assert(Assigned); 
 		auto Type = this->GetType()->To<PrimitiveTypeBaseT>();
-		auto Temp = Type->GenerateLLVMType(Context);
-		return llvm::ConstantInt::get(Temp, Value, true); 
-		//return llvm::ConstantInt::get(Type->GenerateLLVMType(Context), Value, true); 
+		return llvm::ConstantInt::get(Type->GenerateLLVMType(Context), Value, true); 
 	}
 		
 	IntT(AtomT *Type) : ConstantCommonT<int, IntTypeT>(Type) {}
@@ -491,7 +525,7 @@ struct StringT : ConstantCommonT<std::string, StringTypeT>
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Record
-struct RecordT : AtomT, ValueBaseT, TypeBaseT
+/*struct RecordT : AtomT, ValueBaseT, TypeBaseT
 {
 	bool Struct;
 	MultipleT Assignments; // Must be simple assignments
@@ -531,7 +565,7 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 	AtomT *GetOrCreate(std::string const &Name)
 	{
 		for (auto &Element : Elements) if (Element.Name == Name) return Element.Value;
-		auto Out = new UndefinedT;
+		auto Out = new PlaceholderT;
 		Add(Name, Out);
 		return Out;
 	}
@@ -748,7 +782,7 @@ struct RecordT : AtomT, ValueBaseT, TypeBaseT
 	}
 	
 	RecordT(bool Struct, AtomT *Type, MultipleT const &Assignments) : AtomT(Type), Struct(Struct), Assignments(Assignments) {}
-};
+};*/
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Glue
@@ -757,53 +791,70 @@ struct StrictT : AtomT
 {
 	SingleT Value;
 	
+	AtomT *Clone(void) const override { return new StrictT(Value->Clone()); }
+	
 	void Simplify(ContextT Context) override
 	{
 		Value->Simplify(Context);
-		Replace(Value->
+		auto Type = Value->To<TypeBaseT>();
+		if (!Type) COMPILEERROR;
+		Replace(Type->StrictClone(reinterpret_cast<StrictIDT>(++StrictIDCount)));
 	}
 };
 
 struct CastT : AtomT
 {
-	SingleT Type;
 	SingleT Value;
+
+	AtomT *Clone(void) const override { return new StrictT(Type->Clone(), Value->Clone()); }
+	
+	void Simplify(ContextT Context) override
+	{
+		Type->Simplify();
+		Value->Simplify();
+	}
+	
+	CastT(AtomT *Type, AtomT *Value) : AtomT(Type), Value(Value) 
+	{
+		if (!Type) COMPILEERROR;
+		if (!Value) COMPILEERROR;
+	}
 };
 
 struct AssignmentT : AtomT
 {
 	SingleT Target;
-	SingleT Type; // Optional
 	SingleT Value;
 
-	AtomT *Clone(void) const override { return new AssignmentT(Target->Clone(), Type->Clone(), Value->Clone()); }
+	AtomT *Clone(void) const override { return new AssignmentT(Target->Clone(), Value->Clone()); }
 	
 	void Simplify(ContextT Context) override
 	{
 		Target->Simplify(Context);
-		if (Type) Type->Simplify(Context);
+		if (!Target) COMPILEERROR;
+		
 		Value->Simplify(Context);
-		if (Target->To<UndefinedT>())
+		if (!Value) COMPILEERROR;
+		
+		if (Target->To<PlaceholderT>())
 		{
-			if (Type) 
-			{
-				auto Type = this->Type->To<TypeBaseT>();
-				Target->Replace(Type->Allocate(Context));
-			}
-			else 
-			{
-				auto Type = Value->GetType()->To<TypeBaseT>();
-				Target->Replace(Type->Allocate(Context));
-			}
+			auto Type = Value->GetType()->To<TypeBaseT>();
+			Target->Replace(Type->Allocate(Context));
 		}
+		
+		if (auto Cast = Value->To<CastT>()) Value = Cast->Value;
 		auto Target = this->Target->To<ValueBaseT>();
 		Target->Assign(Context, Value);
 	}
 	
-	AssignmentT(AtomT *Target, AtomT *Type, AtomT *Value) : Target(Target), Type(Type), Value(Value) {}
+	AssignmentT(AtomT *Target, AtomT *Value) : Target(Target), Value(Value) 
+	{
+		if (!Target) COMPILEERROR;
+		if (!Value) COMPILEERROR;
+	}
 };
 
-struct ElementT : AtomT
+/*struct ElementT : AtomT
 {
 	SingleT Base;
 	SingleT Name;
@@ -812,6 +863,7 @@ struct ElementT : AtomT
 	
 	void Simplify(ContextT Context) override
 	{
+		// TODO Only create if using scope, otherwise error
 		if (!Base) Base = Context.Scope;
 		Base->Simplify(Context);
 		auto Base = this->Base->To<RecordT>();
@@ -841,7 +893,7 @@ struct IndexT : AtomT
 	}
 	
 	IndexT(AtomT *Base, AtomT *Index) : Base(Base), Index(Index) {}
-};
+};*/
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 int main(int argc, char **argv)
@@ -858,27 +910,31 @@ int main(int argc, char **argv)
 	ContextT Context{LLVM, Module, Memcpy, Block, Scope};
 	
 	MultipleT Statements;
-	/*
+	
 	// Primitive assignment
 	{
-		SingleT Local1 = new UndefinedT;
-		Statements.emplace_back(new AssignmentT
+		SingleT Local1 = new PlaceholderT;
+		SingleT Statement1 = new AssignmentT
 		(
 			Local1,
-			new IntTypeT(ExistenceT::Dynamic),
+			new StrictT
+			(
+				new IntTypeT(true, true)
+			),
 			new IntT(nullptr, 3)
-		));
-		Statements.emplace_back(new AssignmentT
+		);
+		Statement1->Simplify(Context);
+		SingleT Statement2 = new AssignmentT
 		(
 			Local1,
 			nullptr,
 			new IntT(nullptr, 7)
-		));
-	}*/
+		);
+	}
 	/*
 	// Record assignment
 	{
-		SingleT Local1 = new UndefinedT;
+		SingleT Local1 = new PlaceholderT;
 		Statements.emplace_back(new AssignmentT
 		(
 			Local1,
@@ -1014,9 +1070,9 @@ int main(int argc, char **argv)
 	*/
 	
 	// Struct assignment
-	{
-		SingleT Local1 = new UndefinedT;
-		SingleT Local2 = new UndefinedT;
+	/*{
+		SingleT Local1 = new PlaceholderT;
+		SingleT Local2 = new PlaceholderT;
 		SingleT Statement1 = new AssignmentT
 		(
 			Local1,
@@ -1102,7 +1158,7 @@ int main(int argc, char **argv)
 			Local2
 		);
 		Statement3->Simplify(Context);
-	}
+	}*/
 	
 	// TODO unpacking example
 	
