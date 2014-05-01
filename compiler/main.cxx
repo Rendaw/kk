@@ -1,5 +1,9 @@
+/*NOTE NOTE NOTE NOTe
+] test
+
+*/
+
 #include "type.h"
-#include "extrastandard.h"
 
 #include <string>
 #include <functional>
@@ -7,658 +11,743 @@
 #include <iostream>
 #include <cassert>
 #include <memory>
-#include <json/json.h>
-#include <json/json_tokener.h>
-#include <json/json_object.h>
 #include <fstream>
 #include <sstream>
 #include <vector>
 #include <list>
-#include <llvm/Module.h>
-#include <llvm/Function.h>
-#include <llvm/Type.h>
-#include <llvm/DerivedTypes.h>
-#include <llvm/LLVMContext.h>
+#define __STDC_CONSTANT_MACROS 
+#define __STDC_LIMIT_MACROS
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/Type.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/LLVMContext.h>
 #include <llvm/PassManager.h>
-#include <llvm/Instructions.h>
-#include <llvm/CallingConv.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/CallingConv.h>
 #include <llvm/Bitcode/ReaderWriter.h>
 #include <llvm/Analysis/Verifier.h>
 #include <llvm/Assembly/PrintModulePass.h>
-#include <llvm/Support/IRBuilder.h>
-#include <llvm/ModuleProvider.h>
-#include <llvm/Target/TargetSelect.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/Support/TargetSelect.h>
 #include <llvm/ExecutionEngine/GenericValue.h>
 #include <llvm/ExecutionEngine/JIT.h>
 #include <llvm/Support/raw_ostream.h>
 
-namespace
+namespace Core
 {
 
-// Common types
-struct PositionPartT
+#define ERROR assert(false)
+
+//================================================================================================================
+// Core
+struct ContextT;
+struct AtomT;
+struct NucleusT
 {
-	std::string Key;
-	int Index;
+	private:
+		friend struct AtomT;
+		std::vector<AtomT *> Atoms;
+	protected:
+		void Replace(NucleusT *Replacement);
+	public:
+		virtual ~NucleusT(void);
+		virtual void Simplify(ContextT Context);
+		virtual AtomT GetType(void);
+};
 
-	PositionPartT(void) : Index(-1) {}
-
-	bool operator !(void) const { return Key.empty() && (Index < 1); }
-
-	PositionPartT(std::string const &Key) : Key(Key), Index(-1) { assert(!Key.empty()); }
-
-	PositionPartT(int const &Index) : Index(Index) { assert(Index >= 0); }
-
-	json_object *Get(json_object *Source) const
-	{
-		if (!*this) { assert(false); return nullptr; }
-		if (Key.empty())
+struct ContextT;
+struct AtomT
+{
+	private:
+		NucleusT *Nucleus;
+	
+	public:
+		void Set(NucleusT *Nucleus)
 		{
-			assert(json_object_is_type(Source, json_type_array));
-			return json_object_array_get_idx(Source, Index);
+			Clear();
+			this->Nucleus = Nucleus;
+			if (Nucleus)
+				Nucleus->Atoms.push_back(this);
+		}
+		
+		void Clear(void)
+		{
+			if (Nucleus) 
+			{
+				Nucleus->Atoms.erase(std::find(Nucleus->Atoms.begin(), Nucleus->Atoms.end(), this));
+				if (Nucleus->Atoms.empty())
+					delete Nucleus;
+				Nucleus = nullptr;
+			}
+		}
+		
+		AtomT(void) : Nucleus(nullptr) {}
+		AtomT(NucleusT *Nucleus) { Set(Nucleus); }
+		AtomT(AtomT const &Other) { Set(Other.Nucleus); }
+		~AtomT(void) { Clear(); }
+		
+		AtomT &operator =(NucleusT *Nucleus) { Set(Nucleus); return *this; }
+		AtomT &operator =(AtomT &Other) { Set(Other.Nucleus); return *this; }
+	
+		operator NucleusT *(void) { return Nucleus; }
+		operator bool(void) { return Nucleus; }
+		
+		template <typename AsT> OptionalT<AsT *> As(void) 
+		{ 
+			auto Out = dynamic_cast<AsT *>(Nucleus);
+			if (!Out) return {};
+			return {Out};
+		}
+		
+		NucleusT *operator ->(void) { return Nucleus; }
+};
+
+struct ContextT
+{
+	llvm::LLVMContext &LLVM;
+	llvm::Module *Module;
+	
+	llvm::BasicBlock *Block;
+	AtomT Scope;
+	
+	ContextT(
+		llvm::LLVMContext &LLVM, 
+		llvm::Module *Module, 
+		llvm::BasicBlock *Block, 
+		AtomT Scope) : 
+		LLVM(LLVM), 
+		Module(Module),
+		Block(Block),
+		Scope(Scope)
+		{}
+		
+	ContextT(ContextT const &Context) : 
+		LLVM(Context.LLVM), 
+		Module(Context.Module),
+		Block(Context.Block),
+		Scope(Context.Scope)
+		{}
+		
+	ContextT EnterScope(AtomT Scope)
+	{
+		return ContextT(
+			LLVM,
+			Module,
+			Block,
+			Scope);
+	}
+};
+
+void NucleusT::Replace(NucleusT *Replacement)
+{
+	auto OldAtoms = Atoms;
+	for (auto Atom : OldAtoms)
+		*Atom = Replacement;
+}
+NucleusT::~NucleusT(void) {}
+void NucleusT::Simplify(ContextT Context) {}
+AtomT NucleusT::GetType(void) { return {nullptr}; }
+
+//================================================================================================================
+// Interfaces
+struct ValueT
+{
+	virtual ~ValueT(void) {}
+	virtual AtomT Allocate(ContextT Context) { ERROR; }
+};
+
+struct AssignableT
+{
+	virtual ~AssignableT(void) {}
+	virtual void Assign(ContextT Context, AtomT Other) { ERROR; }
+};
+
+// LLVM
+struct LLVMLoadableT
+{
+	virtual ~LLVMLoadableT(void) {}
+	virtual llvm::Value *GenerateLLVMLoad(ContextT Context) = 0;
+};
+
+struct LLVMLoadableTypeT
+{
+	virtual ~LLVMLoadableTypeT(void) {}
+	virtual llvm::Type *GenerateLLVMType(ContextT Context) = 0;
+};
+
+//================================================================================================================
+// Basics
+struct UndefinedT : NucleusT, AssignableT
+{
+	void Assign(ContextT Context, AtomT Other) override
+	{
+		auto Source = Other.As<ValueT>();
+		if (!Source) ERROR;
+		auto DestAtom = Source->Allocate(Context);
+		auto Dest = DestAtom.As<AssignableT>();
+		assert(Dest);
+		Dest->Assign(Context, Other);
+		Replace(DestAtom);
+	}
+};
+
+struct ImplementT : NucleusT, ValueT
+{
+	AtomT Type, Value;
+	
+	AtomT Allocate(ContextT Context) override
+	{
+		auto Value = this->Value.As<ValueT>();
+		if (!Value) ERROR;
+		return Value->Allocate(Context);
+	}
+	
+	void Simplify(ContextT Context) override
+	{
+		Type->Simplify(Context);
+		Value->Simplify(Context);
+	}
+};
+
+//================================================================================================================
+// Primitives
+struct PrimitiveTypeT 
+{
+	virtual ~PrimitiveTypeT(void) {}
+	virtual AtomT Allocate(ContextT Context) = 0;
+	virtual void Assign(ContextT Context, llvm::Value *Target, AtomT Other) = 0;
+};
+
+template <typename TypeT> struct PrimitiveMixinT : virtual NucleusT, virtual ValueT
+{
+	AtomT Type;
+	
+	AtomT GetType(void) override
+	{
+		if (!Type) Type = new TypeT;
+		return Type;
+	}
+	
+	AtomT Allocate(ContextT Context) override
+	{
+		auto Type = GetType().template As<PrimitiveTypeT>();
+		if (!Type) ERROR;
+		return Type->Allocate();
+	}
+};
+
+struct StringTypeT;
+struct StringT : virtual NucleusT, virtual ValueT, virtual AssignableT, PrimitiveMixinT<StringTypeT>
+{
+	std::string Data;
+	
+	void Assign(ContextT Context, AtomT Other) override
+	{
+		GetType().As<StringTypeT>().Assign(Data, Other);
+	}
+};
+
+struct StringTypeT : NucleusT, PrimitiveTypeT
+{
+	uint16_t ID;
+	// No dynamic strings, for now at least
+	bool Static;
+
+	void CheckType(bool Defined, AtomT Other)
+	{
+		if (Static && Defined) ERROR;
+		auto OtherType = Other.GetType().As<StringTypeT>();
+		if (!OtherType) ERROR;
+		if (OtherType.ID != ID) ERROR;
+	}
+	
+	AtomT Allocate(ContextT Context) override
+	{
+		return {new StringT(*this)};
+	}
+	
+	void Assign(ContextT Context, std::string &Data, AtomT Other)
+	{
+		CheckType(Defined, Other);
+		if (auto &Implementation = Other->As<ImplementT>())
+		{
+			auto String = Implementation.Value.As<StringT>();
+			if (!String) ERROR;
+			Data = String.Data;
 		}
 		else
 		{
-			assert(json_object_is_type(Source, json_type_object));
-			return json_object_object_get(Source, Key.c_str());
+			auto String = Other.As<StringT>();
+			if (!String) ERROR;
+			Data = String.Data;
 		}
+		Defined = true;
 	}
+	
+	void Assign(ContextT Context, llvm::Value *Target, AtomT Other) override { assert(false); }
+};
 
-	std::string AsString(void) const
+struct NumericTypeT;
+template <typename DataT> struct NumericT : 
+	virtual NucleusT, 
+	virtual ValueT, 
+	virtual AssignableT, 
+	virtual LLVMLoadableT, 
+	PrimitiveMixinT<NumericTypeT>
+{
+	DataT Data;
+	
+	void Assign(ContextT Context, AtomT Other) override
 	{
-		if (!*this) return "(invalid)";
-		else if (Key.empty()) return String() << Index;
-		else return Key;
-	}
-};
-
-struct FullPositionT : std::enable_shared_from_this<FullPositionT>
-{
-	std::shared_ptr<FullPositionT> const Parent;
-	PositionPartT const Part;
-	std::shared_ptr<FullPositionT> operator +(PositionPartT const &NewPart) const { return std::make_shared<FullPositionT>(shared_from_this(), Part); }
-	std::string AsString(void) const
-	{
-		std::list<std::string> Parts;
-		for (auto Part = this; Part; Part = Part->Parent.get()) Parts.push_front(Part->Part.AsString());
-		String Out;
-		for (auto const &Part : Parts) Out << "/" << Part;
-		return Out;
-	}
-	private:
-		friend std::shared_ptr<FullPositionT> NewPosition(PositionPartT const &FirstPart);
-		FullPositionT(PositionPartT const &Part) : Part(Part) {}
-		FullPositionT(std::shared_ptr<FullPositionT> &&Parent, PositionPartT const &Part) : Parent(std::move(Parent)), Part(Part) {}
-};
-typedef std::shared_ptr<FullPositionT> PositionT;
-PositionT NewPosition(void) { return std::make_shared<FullPositionT>(); }
-
-typedef std::string RecurseErrorMessageT;
-
-struct RecurseErrorT
-{
-	PositionT Position;
-	RecurseErrorMessageT Message;
-	RecurseErrorT(void) {}
-	RecurseErrorT(PositionT const &Position, std::string const &Message) : Position(Position), Message(Message) {}
-	bool operator !(void) { return !Position; }
-};
-
-// Element construction
-struct ElementT;
-std::map<std::string, std::function<std::unique_ptr<ElementT>(PositionT, json_object *)>> Constructors;
-
-template <typename SpecificT> void AddConstructor(std::string const &Type)
-	{ Constructors[Type] = [](PositionT const &Position, json_object *JSON) { return std::unique_ptr<ElementT>{new SpecificT(Position, JSON)}; }; }
-
-ErrorOr<RecurseErrorT, std::unique_ptr<ElementT>> Construct(std::string const Type, PositionT const &Position, json_object *JSON)
-{
-	auto Found = Constructors.find(Type);
-	if (Found == Constructors.end()) return {Fail{}, {Position, String() << "Unknown element type '" << Type << "'"}};
-	try { return Found->second(Position, JSON); }
-	catch (RecurseErrorT const &Error) { return {Fail{}, Error}; }
-}
-
-// Element tree construction
-struct RecurseStopT {};
-struct RecurseStayT {};
-typedef RecurseReplaceT StrictType(ElementT *); // Only used for simplification?
-typedef RecursePushT StrictType(std::tuple<ElementT &, json_object *>);
-
-struct ParseStackElementT
-{
-	json_object *JSON;
-	ElementT &Element;
-};
-
-typedef std::list<ParseStackElementT> ParseStackT;
-
-typedef std::function<ErrorOr<RecurseErrorT, RecurseStateResultT>(ParseStackT &Stack)> RecurseStateT;
-
-template <typename StackT> Recurse(StackT &&Stack)
-{
-	while (!Stack.empty())
-	{
-		auto Error = Stack.back().Element.Parse(Stack);
-		if (Error)
+		if (auto Number = Other.As<NumericT<DataT>>())
 		{
-			std::cerr << "Error (" << Error->Position << "): " << Error->Message << std::endl;
-			return 1;
+			Data = Number.Data;
 		}
-	}
-}
-
-struct RecursableT
-{
-	std::list<RecurseStateT> States;
-	RecursableT(std::list<RecurseStateT> &&States) : States(std::move(States)) {}
-	Optional<RecurseErrorT> operator(StackT &Stack)
-	{
-		if (ParseStates.empty())
+		else if (auto Implementation = Other.As<ImplementT>())
 		{
-			Stack.pop_back();
-			return {};
+			if (auto Number = Implementation.Value.As<NumericT<int32_t>>()) Data = Number.Data;
+			else if (auto Number = Implementation.Value.As<NumericT<uint32_t>>()) Data = Number.Data;
+			else if (auto Number = Implementation.Value.As<NumericT<float>>()) Data = Number.Data;
+			else if (auto Number = Implementation.Value.As<NumericT<double>>()) Data = Number.Data;
+			else ERROR;
 		}
-		auto Result = ParseStates.front()->Execute(Stack);
-		if (!Result) return Result.Error;
-		if (*Result == RecurseStateResultT::StopE)
-			ParseStates.pop_front();
-		return {};
+		else ERROR;
+	}
+	
+	llvm::Value *GenerateLLVMLoad(ContextT Context) override
+	{
+		return llvm::ConstantInt::get
+			(
+				llvm::IntegerType::get(Context.LLVM, sizeof(Data) * 8), 
+				0, 
+				false
+			);
 	}
 };
 
-struct ElementT
+struct DynamicT : NucleusT, AssignableT, LLVMLoadableT
 {
-	RecursableT<ParseStackT> Parse;
-	RecursableT<SimplifyStackT> Simplify;
-
-	ElementT(std::list<RecurseStateT> &&ParseStates, std::list<RecurseStateT> &&SimplifyStates) : Parse(std::move(ParseStates)), Simplify(std::move(SimplifyStates)) {}
-	virtual ~ElementT(void) {}
+	bool Defined;
+	AtomT Type;
+	llvm::Value *Target;
+	
+	AtomT Allocate(ContextT Context) override
+	{
+		auto Type = GetType()->As<TypeT>();
+		if (!Type) ERROR:
+		return Type->Allocate();
+	}
+	
+	void Assign(ContextT Context, AtomT Other) override
+	{
+		auto Type = GetType()->As<TypeT>();
+		if (!Type) ERROR:
+		Type->Assign(Context, Defined, Target, Other);
+	}
+	
+	llvm::Value *GenerateLLVMLoad(ContextT Context) override
+	{
+		if (!Defined) ERROR;
+		return new llvm::LoadInst(Target, "", Context.Block); 
+	}
 };
 
-using SingleT = std::unique_ptr<ElementT>;
-using MultipleT = std::vector<SingleT>;
-
-RecurseStateT ParseSingle(PositionT const &Position, std::string const &Field, SingleT &Output)
+enum struct LLVMConversionTypeT { Signed, Unsigned, Float };
+llvm::Value *GenerateLLVMNumericConversion(llvm::BasicBlock *Block, llvm::Value *Source, llvm::Type *SourceType, bool SourceSigned, llvm::Type *DestType, bool DestSigned)
 {
-	return [=, &Output](ParseStackT &Stack)
+	if (SourceType->IsIntegerTy())
 	{
-		auto &Top = Stack.back();
-
-		json_object *ElementJSON = json_object_object_get(Top.JSON, Field.c_str());
-		if (!ElementJSON) return {Position, String() << "Missing '" << Field << "'"};
-		if (!json_object_is_type(ElementJSON, json_type_object)) return {Position, String() << "Element '" << Field << "' is not an object"};
-
-		PositionT ElementPosition = *Position + Field;
-		auto TypeJSON = json_object_object_get(ElementJSON, "type");
-		if (!TypeJSON) return {ElementPosition, String() << "Missing element type"};
-		if (!json_object_is_type(TypeJSON, json_type_string)) return {ElementPosition, String() << "Type is not a JSON string."};
-		std::string const Type{json_object_get_string(TypeJSON), json_object_get_string_len(TypeJSON)};
-		auto Element = Construct(Type, ElementPosition, ElementJSON);
-		if (!Element) return Element.Error;
-		Output.reset(*Element);
-		Stack.emplace_back(ElementJSON, Element);
-
-		return RecurseStateResultT::StopE;
-	};
-}
-
-RecurseStateT ParseMultiple(PositionT Position, std::string const &Field, MultipleT &Output)
-{
-	json_object *FieldJSON = nullptr;
-	int Index = -1;
-	return [=, &Output](ParseStackT &Stack)
-	{
-		auto &Top = Stack.back();
-
-		if (Index == -1)
+		if (SourceSigned)
 		{
-			if (Field.empty())
-				FieldJSON = Top.JSON;
+			if (DestType->IsIntegerTy())
+			{
+				if (DestType->GetIntegerBitWidth() < SourceType->GetIntegerBitWidth())
+					return new llvm::TruncInst(Source, DestType, "", Block);
+				else if (DestType->GetIntegerBitWidth() == SourceType->GetIntegerBitWidth())
+					return Source;
+				else 
+					return new llvm::SExtInst(Source, DestType, "", Block);
+			}
 			else
 			{
-				FieldJSON = json_object_object_get(Top.JSON, Field.c_str());
-				if (!FieldJSON) return {Position, String() << "Missing '" << Field << "'"};
-				if (!json_object_is_type(FieldJSON, json_type_array)) return {Position, String() << "Field '" << Field << "' is not an array"};
+				assert(DestType->IsFloatTy() || DestType->IsDoubleTy());
+				return new llvm::SIToFPInst(Source, DestType, "", Block);
 			}
-			Index = 0;
-		}
-
-		PositionT FieldPosition = *Position + Field;
-		auto ElementJSON = json_object_array_get_idx(FieldJSON, Index);
-		if (!ElementJSON) return RecurseStateResultT::StopE;
-		if (!json_object_is_type(ElementJSON, json_type_object)) return {FieldPosition, String() << "Index " << Index << " is not an object."};
-		PositionT ElementPosition = *FieldPosition + Index;
-		auto TypeJSON = json_object_object_get(ElementJSON, "type");
-		if (!TypeJSON) return {ElementPosition, String() << "Missing element type"};
-		if (!json_object_is_type(TypeJSON, json_type_string)) return {ElementPosition, String() << "Type is not a JSON string."};
-		std::string const Type{json_object_get_string(TypeJSON), json_object_get_string_len(TypeJSON)};
-		auto Element = Construct(Type, ElementPosition, ElementJSON);
-		if (!Element) return Element.Error;
-		Output.push_back(*Element);
-		Stack.emplace_back(ElementJSON, Element);
-
-		return RecurseStateResultT::ContinueE;
-	};
-}
-
-Optional<RecurseErrorMessageT> FailNotType(ElementT *Element);
-Optional<RecurseErrorMessageT> FailNotExpression(ElementT *Element);
-Optional<RecurseErrorMessageT> FailNotStatement(ElementT *Element);
-
-// Types
-struct StringTypeT : ElementT { IntegerTypeT(PositionT const &Position, json_object *JSON) {} };
-
-struct IntegerTypeT : ElementT { IntegerTypeT(PositionT const &Position, json_object *JSON) {} };
-
-struct MemoryTypeT : ElementT { MemoryTypeT(PositionT const &Position, json_object *JSON) {} };
-
-struct RecordTypeElementT : ElementT
-{
-	SingleT Name;
-	SingleT Type;
-	RecordTypeElementT(PositionT const &Position, json_object *JSON) : ElementT
-	{
-		ParseSingle(Position, "name", Name),
-		ParseSingle(Position, "type", Type)
-	} {}
-};
-
-struct RecordTypeT : ElementT
-{
-	MultipleT Elements;
-	RecordTypeT(PositionT const &Position, json_object *JSON) : ElementT
-	{
-		ParseMultiple(Position, "elements", Elements)
-	} {}
-};
-
-struct FunctionTypeT : ElementT
-{
-	SingleT Input;
-	SingleT Output;
-	FunctionTypeT(PositionT const &Position, json_object *JSON) : ElementT
-	{
-		ParseSingle(Position, "input", Input),
-		ParseSingle(Position, "output", Output)
-	} {}
-};
-
-// Type values
-struct IntegerT : ElementT
-{
-	int Value;
-	IntegerT(PositionT const &Position, json_object *JSON)
-	{
-		auto JSONValue = json_object_object_get(JSON, "value");
-		if (!JSONValue) throw RecurseErrorT{Position, "'value' missing."};
-		if (!json_object_is_type(Value, json_type_int)) throw RecurseErrorT{Position, "'value' is not an integer."};
-		Value = json_object_get_int(JSONValue);
-	}
-};
-
-struct StringT : ElementT
-{
-	std::string Value;
-	StringT(PositionT const &Position, json_object *JSON)
-	{
-		auto JSONValue = json_object_object_get(JSON, "value");
-		if (!JSONValue) throw RecurseErrorT{Position, "'value' missing."};
-		if (!json_object_is_type(Value, json_type_string)) throw RecurseErrorT{Position, "'value' is not an string."};
-		Value = {json_object_get_string(JSONValue), json_object_get_string_len(JSONValue)};
-	}
-};
-
-struct RecordElementT : ElementT
-{
-	SingleT Name;
-	SingleT Value;
-	RecordElementT(PositionT const &Position, json_object *JSON) : ElementT
-	{
-		ParseSingle(Position, "name", Name),
-		ParseSingle(Position, "value", Value)
-	} {}
-};
-
-struct RecordT : ElementT
-{
-	MultipleT Elements; // Assignments
-	RecordT(PositionT const &Position, json_object *JSON) : ElementT
-	{
-		ParseMultiple(Position, "elements", Elements)
-	} {}
-
-};
-
-struct FunctionT : ElementT
-{
-	MultipleT Statements;
-	FunctionT(PositionT const &Position, json_object *JSON) : ElementT
-	{
-		ParseMultiple(Position, "statements", Statements)
-	} {}
-};
-
-// General Expressions
-struct NameT : ElementT
-{
-	SingleT Name;
-	NameT(PositionT const &Position, json_object *JSON) : ElementT
-	{
-		ParseSingle(Position, "name", Name)
-	} {}
-};
-
-struct ValueT : ElementT
-{
-	SingleT Type;
-	SingleT Value;
-	ValueT(PositionT const &Position, json_object *JSON) : ElementT
-	{
-		ParseSingle(Position, "type", Type),
-		ParseSingle(Position, "value", Value)
-	} {}
-};
-
-struct AddT : ElementT
-{
-	SingleT Left;
-	SingleT Right;
-	
-	template <typename PrimitiveT> auto AddHelper(ElementT *Left, ElementT *Right) -> PrimitiveT *
-	{
-		auto ActualLeft = dynamic_cast<PrimitiveT *>(Left->Inner);
-		auto ActualRight = dynamic_cast<PrimitiveT *>(Right->Inner);
-		return new PrimitiveT(ActualLeft->Value + ActualRight->Value);
-	}
-	
-	ValueT(PositionT const &Position, json_object *JSON) : ElementT
-	(
-		{
-			ParseSingle(Position, "left", Left),
-			ParseSingle(Position, "right", Right)
-		},
-		{
-			SimplifySingle(Left),
-			SimplifySingle(Right),
-			[this](SimplifyStack &Stack)
-			{
-				if (IsPrimitive(Left) && IsPrimitive(Right))
-				{
-					auto LeftType = Type(Left);
-					auto RightType = Type(Right);
-					if (LeftType == RightType)
-					{
-						switch (LeftType.BaseID())
-						{
-							case IntegerT::ID: return RecurseReplaceT(AddHelper<IntegerT>(Left, Right));
-							default: return RecurseErrorT(Position, String() << "Add is undefined on arguments of type " << LeftType.Name());
-						}
-					}
-					return RecurseStopT{};
-				}
-			}
-		}
-	), Position(Position) {}
-};
-
-// Statements
-struct AssignT : ElementT
-{
-	SingleT Name;
-	SingleT Value;
-	AssignT(PositionT const &Position, json_object *JSON) : ElementT
-	(
-		{ 
-			make_unique<ParseSingleT(Position, "name", Name),
-			make_unique<ParseSingleT(Position, "value", Value) 
-		},
-		{}
-	) {}
-};
-
-// Program
-struct ModuleT : ElementT
-{
-	MultipleT Statements;
-	ModuleT(void) : ElementT
-	(
-		{ ParseMultiple(PositionT(), "statements", Statements) },
-		{ SimplifyMultiple(Statements) }
-	) {}
-};
-
-// Element classification
-bool Is(ElementT *Element) { return false; }
-template <typename... TypeT, typename... TypeTs> bool Is(ElementT *Element)
-{
-	if (typeid(*Element) == typeid(TypeT)) return true;
-	return Is<TypeTs...>(Element);
-}
-
-Optional<RecurseErrorMessageT> FailNotType(ElementT *Element)
-{
-	if (Is<
-		IntegerTypeT,
-		MemoryTypeT,
-		RecordTypeT,
-		FunctionTypeT
-	>(Element)) return {};
-	return "Element must be a TYPE.";
-}
-
-Optional<RecurseErrorMessageT> FailNotExpression(ElementT *Element)
-{
-	if (!FailType(Element)) return {};
-	if (Is<
-		ValueT,
-		FunctionT
-	>(Element)) return {};
-	return "Element must be an EXPRESSION.";
-}
-
-Optional<RecurseErrorMessageT> FailNotStatement(ElementT *Element)
-{
-	if (!FailExpression(Element)) return {};
-	return "Element must be a STATEMENT.";
-}
-
-int main(int ArgumentCount, char **Arguments)
-{
-	// Execution options
-	bool OptionsOnly = false;
-	std::string Input;
-	std::string Output;
-
-	// Command line option parsing
-	struct Option
-	{
-		std::string Help;
-		std::function<void(void)> Start;
-		std::function<bool(std::string const &Argument)> Handle;
-		Option(void) {}
-		Option(std::string Help, std::function<bool(std::string const &Argument)> Handle, std::function<void(void)> Start = {}) : Help(Help), Start(Start), Handle(Handle) {}
-	};
-	std::map<std::string, Option> Options;
-
-	Options["--in"] =
-	{
-		"FILENAME\tSpecify files to compile.  By default uses stdin.",
-		[&](std::string const &Argument)
-		{
-			if (!Input.empty())
-			{
-				std::cerr << "You may only specify one input filename." << std::endl;
-				return false;
-			}
-			Input = Argument;
-			return true;
-		}
-	};
-	Options["-i"] = Options["--in"];
-
-	Options["--out"] =
-	{
-		"FILENAME\tSpecify compiled output filename.  By default uses stdout.",
-		[&](std::string const &Argument)
-		{
-			if (!Output.empty())
-			{
-				std::cerr << "You may only specify one output filename." << std::endl;
-				return false;
-			}
-			Output = Argument;
-			return true;
-		}
-	};
-
-	Options["--help"] =
-	{
-		"[FLAG]\tIf FLAG is specified, shows help for FLAG.  Otherwise displays all help options.",
-		[&](std::string const &Argument)
-		{
-			OptionsOnly = true;
-			auto DisplayAll = [&](void)
-			{
-				std::cout << "All options: \n";
-				for (auto Option : Options)
-					std::cout << "\t" << Option.first << "\n";
-				std::cout << std::endl;
-			};
-			if (Argument.empty()) { DisplayAll(); return true; }
-			auto Found = Options.find(Argument);
-			if (Found == Options.end()) { std::cerr << "Unknown flag '" << Argument << "'." << std::endl; return false; }
-			std::cout << "\t" << Argument << " " << Found->second.Help << std::endl;
-			return true;
-		}
-	};
-
-	decltype(Options)::iterator OptionState = Options.end();
-	for (int ArgumentIndex = 1; ArgumentIndex < ArgumentCount; ++ArgumentIndex)
-	{
-		std::string Argument = Arguments[ArgumentIndex];
-		auto Found = Options.find(Argument);
-		if (Found != Options.end())
-		{
-			OptionState = Found;
-			if (OptionState->second.Start)
-				OptionState->second.Start();
-			assert(OptionState->second.Handle);
-		}
-		else if ((Argument.size() > 1) && (Argument[0] == '-'))
-		{
-			std::cerr << "Unknown option '" << Argument << "'" << std::endl;
-			return 1;
-		}
-		else if (OptionState == Options.end())
-		{
-			std::cerr << "Don't know how to handle argument '" << Argument << "'.  Please specify an option starting with - or -- first." << std::endl;
-			return 1;
 		}
 		else
 		{
-			auto Result = OptionState->second.Handle(Argument);
-			if (!Result)
+			if (DestType->IsIntegerTy())
 			{
-				std::cerr << "Error handling '" << OptionState->first << "' argument '" << Argument << "'\n"
-					"\n\nHelp for '" << OptionState->first << "':\n"
-					<< OptionState->first << " " << OptionState->second.Help << "\n" << std::endl;
-				return 1;
+				if (DestType->GetIntegerBitWidth() < SourceType->GetIntegerBitWidth())
+					return new llvm::TruncInst(Source, DestType, "", Block);
+				else if (DestType->GetIntegerBitWidth() == SourceType->GetIntegerBitWidth())
+					return Source;
+				else 
+					return new llvm::ZExtInst(Source, DestType, "", Block);
+			}
+			else
+			{
+				assert(DestType->IsFloatTy() || DestType->IsDoubleTy());
+				return new llvm::UIToFPInst(Source, DestType, "", Block);
 			}
 		}
-	}
-
-	if (OptionsOnly) return 0;
-
-	// Read source
-	std::unique_ptr<json_object, decltype(json_object_put)*> Root(&json_object_put);
-	{
-		std::unique_ptr<json_tokener, decltype(json_tokener_free)*> Tokener(json_tokener_new(), &json_tokener_free);
-		std::stringstream Buffer;
-		if (Input.empty())
-		{
-			if (!std::cin)
-			{
-				std::cerr << "Error: stdin is unreadable." << std::endl;
-				return 1;
-			}
-			Buffer << std::cin.rdbuf();
-		}
-		else
-		{
-			std::ifstream Source(Input);
-			if (!Source)
-			{
-				std::cerr << "Error: Couldn't open " << Input << "." << std::endl;
-				return 1;
-			}
-			Buffer << Source.rdbuf();
-		}
-		Root.reset(json_tokener_parse_ex(Tokener.get(), Buffer.str().c_str(), Buffer.str().length()), &json_object_put);
-		if (!Root)
-		{
-			std::cerr << "Error: Source file '" << Input << "' is an incomplete JSON file." << std::endl;
-			return 1;
-		}
-
-	}
-
-	// Parse
-	std::unique_ptr<ModuleT> TopElement{new ModuleT};
-	Stack.emplace_back(*TopElement->Definition, Root);
-
-	while (!Stack.empty())
-	{
-		auto Error = Stack.back().Element.Parse(Stack);
-		if (Error)
-		{
-			std::cerr << "Error (" << Error->Position << "): " << Error->Message << std::endl;
-			return 1;
-		}
-	}
-
-	// Massage tree
-	TopElement->Simplify();
-
-	// Generate IR
-	auto Module = llvm::makeLLVMModule();
-	auto TopIR = TopElement->Translate();
-
-	{
-		std::string Error;
-		if (!llvm::verifyModule(Module, llvm::AbortProcessAction, &Error))
-		{
-			std::cerr << "Error: Generated invalid llvm module.  " << Error << std::endl;
-			return 1;
-		}
-	}
-
-	// Optimize and output
-	llvm::PassManager OutputPasses;
-	OutputPasses.add(new llvm::TargetData(TopIR));
-	if (Output.empty())
-	{
-		if (!std::cout)
-		{
-			std::cerr << "Error: stdout is unwritable." << std::endl;
-			return 1;
-		}
-		OutputPasses.add(llvm::createPrintModulePass(&llvm::fouts()));
 	}
 	else
 	{
-		std::string Error;
-		llvm::tool_output_file *OutputStream = new llvm::tool_output_file(Output.c_str(), Error, 0);
-		if (!OutputStream)
+		if (SourceType->IsFloatTy())
 		{
-			std::cerr << "Error: Unable to open output file.  " << Error << std::endl;
-			return 1;
+			if (DestType->IsFloatTy())
+			{
+				return Source;
+			}
+			else
+			{
+				assert(DestType->IsDoubleTy());
+				return new llvm::FPExtInst(Source, DestType, "", Block);
+			}
 		}
-		OutputPasses.add(llvm::createPrintModulePass(new llvm::formatted_raw_ostream(OutputStream->os())), true);
+		else
+		{
+			assert(SourceType->IsDoubleTy());
+			if (DestType->IsFloatTy())
+			{
+				return new llvm::FPTruncInst(Source, DestType, "", Block);
+			}
+			else
+			{
+				assert(DestType->IsDoubleTy());
+				return Source;
+			}
+		}
 	}
-	OutputPasses.run(*module);
+}
 
+struct NumericTypeT : NucleusT, PrimitiveTypeT, LLVMLoadableTypeT
+{
+	uint16_t ID;
+	bool Constant;
+	bool Static;
+	enum struct DataTypeT { Int, UInt, Float, Double } DataType;
+	
+	bool IsSigned(void) const
+	{
+		return DataType == DataTypeT::Int;
+	}
+	
+	void CheckType(bool Defined, AtomT Other)
+	{
+		if (Static && Defined) ERROR;
+		auto OtherType = Other.GetType().As<PrimitiveTypeBaseT<BaseT>>();
+		if (!OtherType) ERROR;
+		if (OtherType.ID != ID) ERROR;
+		if (ID == DefaultTypeID)
+		{
+			if (Constant && !OtherType.Constant) ERROR;
+			if (Other.DataType != DataType) ERROR;
+		}
+		else
+		{
+			assert(!Constant || OtherType.Constant);
+			assert(DataType == OtherType.DataType);
+		}
+	}
+	
+	AtomT Allocate(ContextT Context) override
+	{
+		if (Constant)
+		{
+			switch (DataType)
+			{
+				case DataTypeT::Int: return new NumericT<int32_t>(*this);
+				case DataTypeT::UInt: return new NumericT<uint32_t>(*this);
+				case DataTypeT::Float: return new NumericT<float>(*this);
+				case DataTypeT::Double: return new NumericT<double>(*this);
+				default: assert(false); return nullptr;
+			}
+		}
+		else return new DynamicT(*this, new llvm::AllocaInst(GenerateLLVMType(Context), "", Context.Block));
+	}
+	
+	void Assign(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other) override
+	{
+		CheckType(Defined, Other);
+		llvm::Value *Source = nullptr;
+		if (auto Loadable = Other->As<LLVMLoadableT>())
+		{
+			Source = Loadable->GenerateLLVMLoad();
+		}
+		else if (auto Implementation = Other.As<ImplementT>())
+		{
+			auto Loadable = Implementation.Value.As<LLVMLoadableT>();
+			if (!Loadable) ERROR;
+			Source = Loadable->GenerateLLVMLoad();
+			auto OtherType = Implementation.Value.GetType().As<NumericTypeT>();
+			if (!OtherType) ERROR;
+			llvm::Type *SourceType = OtherType->GenerateLLVMType();
+			bool SourceSigned = OtherType->IsSigned();
+			llvm::Type *DestType = GenerateLLVMType();
+			bool DestSigned = IsSigned();
+			Source = GenerateLLVMNumericConversion(
+				Context.Block,
+				Source,
+				SourceType,
+				SourceSigned,
+				DestType,
+				DestSigned);
+		}
+		else ERROR;
+		new llvm::StoreInst(Source, Target, Context.Block);
+		Defined = true;
+	}
+	
+	llvm::Type *GenerateLLVMType(ContextT Context) override
+	{
+		switch (DataType)
+		{
+			case DataTypeT::Int: 
+			case DataTypeT::UInt:
+				return llvm::IntegerType::get(Context.LLVM, 32);
+			case DataTypeT::Float:
+				return llvm::Type::getFloatTy(Context.LLVM);
+			case DataTypeT::Double:
+				return llvm::Type::getDoubleTy(Context.LLVM);
+			default: assert(false); return nullptr;
+		}
+	}
+	
+};
+
+//================================================================================================================
+// Groups
+struct GroupCollectionT
+{
+	std::map<std::string, AtomT> Keys;
+
+	OptionalT<AtomT> GetByKey(std::string const &Key)
+	{
+		auto Found = Keys.find(Key);
+		if (Found == Keys.end()) return {};
+		return Found->second;
+		//return Values[*Found];
+	}
+
+	void Add(std::string const &Key, AtomT Value)
+	{
+		auto Found = Keys.find(Key);
+		if (Found != Keys.end()) ERROR;
+		//auto Index = Values.size();
+		//Values.push_back(Value);
+		//Keys[Key] = Index;
+		Keys[Key] = Value;
+		return;
+	}
+	
+	auto begin(void) -> decltype(Keys.begin()) { return Keys.begin(); }
+	auto end(void) -> decltype(Keys.end()) { return Keys.end(); }
+};
+
+struct GroupT : NucleusT, ValueT, AssignableT, GroupCollectionT
+{
+	std::vector<AtomT> Statements;
+
+	void Simplify(ContextT Context) override
+	{
+		auto NewContext = Context.EnterScope(this);
+		for (auto &Statement : Statements)
+			Statement->Simplify(NewContext);
+	}
+	
+	AtomT Allocate(ContextT Context) override
+	{
+		auto NewContext = Context.EnterScope(this);
+		auto Out = new GroupT;
+		for (auto &Pair : *this)
+		{
+			auto Value = Pair.second.As<ValueT>();
+			if (!Value) ERROR;
+			Out->Add(Pair.first, Value->Allocate(NewContext));
+		}
+		return {Out};
+	}
+
+	void Assign(ContextT Context, AtomT Other) override
+	{
+		auto NewContext = Context.EnterScope(this);
+		auto Group = Other.As<GroupT>();
+		if (!Group) ERROR;
+		for (auto &Pair : *this)
+		{
+			auto Dest = Pair.second.As<AssignableT>();
+			if (!Dest) ERROR;
+			auto Source = GetByKey(Pair.first);
+			if (!Source) ERROR;
+			Dest->Assign(NewContext, *Source);
+		}
+	}
+
+	AtomT AccessElement(AtomT Key)
+	{
+		auto KeyString = Key.As<StringT>();
+		if (!KeyString) ERROR;
+		auto Got = GetByKey(KeyString->Data);
+		if (Got) return *Got;
+		auto Out = new UndefinedT;
+		Add(KeyString, Out);
+		return Out;
+	}
+};
+
+struct ElementT : NucleusT
+{
+	AtomT Base, Key;
+
+	void Simplify(ContextT Context) override
+	{
+		if (!Base) Base = Context.Scope;
+		Base->Simplify(Context);
+		Key->Simplify(Context);
+		auto Group = Base.As<GroupT>();
+		if (!Group) ERROR;
+		Replace(Group->AccessElement(Key));
+	}
+};
+
+//================================================================================================================
+// Statements
+struct AssignmentT : NucleusT
+{
+	AtomT Left, Right;
+
+	void Simplify(ContextT Context) override
+	{
+		Left.Simplify();
+		Right.Simplify();
+		Left.Assign(Right);
+	}
+};
+
+//================================================================================================================
+// Functions
+
+/*struct FunctionT
+{
+	AtomT Call(AtomT Input)
+	{
+		auto Result = Function.Refine(Input);
+		if (auto DynamicFunction = Result.As<DynamicFunctionT>())
+		{
+			// If return value is struct, allocate + set as first of DynamicInput
+			// Pull out linearization of dynamic elements from Input -> DynamicInput
+			// Result = LLVM call create
+			// If return value is struct, override - Result = DynamicT(Allocated)
+		}
+		Replace(Result);
+	}
+	
+	AtomT Refine(AtomT Input)
+	{
+		// Generate refinement ID from input
+		// If ID in memory, return that value
+		// Recurse input, TODO
+	}
+};
+
+struct CallT
+{
+	AtomT Function, Input;
+	
+	void Simplify(ContextT Context)
+	{
+		if (!Function) ERROR;
+		Function.Simplify(Context);
+		if (!Input) ERROR;
+		Input.Simplify(Context);
+		auto Function = Function.As<FunctionT>();
+		if (!Function) ERROR:
+		Replace(Function.Call(Input));
+	}
+};*/
+
+}
+
+using namespace Core;
+
+//================================================================================================================
+// Main
+int main(int, char **)
+{
+	llvm::ReturnInst::Create(LLVM, Block);
+	auto &LLVM = llvm::getGlobalContext();
+	auto Module = new llvm::Module("asdf", LLVM);
+	auto MainType = llvm::FunctionType::get(llvm::Type::getVoidTy(LLVM), false);
+	auto Main = llvm::Function::Create(MainType, llvm::Function::ExternalLinkage, "main", Module);
+	auto Block = llvm::BasicBlock::Create(LLVM, "entrypoint", Main);
+	
+	auto MainGroup = new GroupT;
+	auto MakeString = [&](std::string const &Value)
+	{
+		auto Out = new StringT;
+		Out->Data = Value;
+		return Out;
+	};
+	auto MakeInt = [&](int Value)
+	{
+		auto Out = new NumericT<int>;
+		Out->Data = Value;
+		return Out;
+	};
+	auto MakeFloat = [&](float Value)
+	{
+		auto Out = new NumericT<float>;
+		Out->Data = Value;
+		return Out;
+	};
+	auto MakeElement = [&](std::string const &Key)
+	{
+		auto Out = ElementT;
+		Out->Key = MakeString(Key);
+		return Out;
+	};
+	auto MakeDynamicInt = [&](NucleusT *&&Value)
+	{
+		auto Type = new NumericTypeT;
+		Type->DataType = NumericTypeT::DataTypeT::Int;
+		Type->Constant = false;
+		auto Out = new ImplementT;
+		Out->Type = Type;
+		Out->Value = Value;
+		return Out;
+	};
+	auto MakeIntCast = [&](NucleusT *&&Value)
+	{
+		auto Type = new NumericTypeT;
+		Type->DataType = NumericTypeT::DataTypeT::Int;
+		auto Out = new ImplementT;
+		Out->Type = Type;
+		Out->Value = Value;
+		return Out;
+	};
+	auto MakeAssignment = [&](std::string const &Key, NucleusT *&&Value)
+	{
+		auto Assignment = new AssignmentT;
+		Assignment->Left = MakeElement(Key);
+		Assignment->Right = Value;
+		MainScope.Statements.push_back(Assignment);
+	};
+	MakeAssignment("a", MakeString("hi"));
+	MakeAssignment("b", MakeString("bye"));
+	MakeAssignment("b", MakeElement("a"));
+	MakeAssignment("c", MakeInt(40));
+	MakeAssignment("d", MakeDynamicInt(35));
+	MakeAssignment("d", MakeElement("c"));
+	MakeAssignment("c", MakeIntCast(MakeFloat(17.3)));
+	MakeAssignment("d", MakeElement("c"));
+	MainScope->Simplify({LLVM, Module, Memcpy, Block, nullptr});
+	
+	Module->dump();
+	delete MainGroup;
+	
 	return 0;
 }
 
-}

@@ -4,28 +4,40 @@
 #include <memory>
 #include <sstream>
 #include <iostream>
+#include <functional>
+#include <algorithm>
 
-struct String
+//----------------------------------------------------------------------------------------------------------------
+// Remove values for vector
+template <typename VectorT, typename FunctionT> void VectorRemove(VectorT &Vector, FunctionT const &Filter)
+	{ Vector.erase(std::remove_if(Vector.begin(), Vector.end(), Filter), Vector.end()); }
+
+//----------------------------------------------------------------------------------------------------------------
+// r-value string serialization and deserialization
+struct StringT
 {
 	private:
 		std::stringstream Buffer;
 	public:
 
-	String(void) {}
-	String(std::string const &Initial) : Buffer(Initial) {}
-	template <typename Whatever> String &operator <<(Whatever const &Input) { Buffer << Input; return *this; }
-	template <typename Whatever> String &operator >>(Whatever &Output) { Buffer >> Output; return *this; }
+	StringT(void) {}
+	StringT(std::string const &Initial) : Buffer(Initial) {}
+	template <typename Whatever> StringT &operator <<(Whatever const &Input) { Buffer << Input; return *this; }
+	template <typename Whatever> StringT &operator >>(Whatever &Output) { Buffer >> Output; return *this; }
+	bool operator !(void) const { return !Buffer; }
 	decltype(Buffer.str()) str(void) const { return Buffer.str(); }
 	operator std::string(void) const { return Buffer.str(); }
 };
 
-inline std::ostream &operator <<(std::ostream &Stream, String const &Value)
+inline std::ostream &operator <<(std::ostream &Stream, StringT const &Value)
 	{ return Stream << (std::string)Value; }
 
+//----------------------------------------------------------------------------------------------------------------
 // Will be included in C++14 lolololol
 template<typename T, typename... Args> std::unique_ptr<T> make_unique(Args&&... args)
 	{ return std::unique_ptr<T>(new T(std::forward<Args>(args)...)); }
 
+//----------------------------------------------------------------------------------------------------------------
 // A more informative assert?
 inline void AssertStamp(char const *File, char const *Function, int Line)
         { std::cerr << File << "/" << Function << ":" << Line << " Assertion failed" << std::endl; }
