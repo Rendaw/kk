@@ -136,10 +136,10 @@ struct ContextT
 
 //================================================================================================================
 // Interfaces
-struct ValueT
+struct TypeT
 {
-	virtual ~ValueT(void);
-	virtual AtomT Allocate(ContextT Context) = 0;
+	virtual ~TypeT(void);
+	virtual AtomT Allocate(ContextT Context, AtomT Value) = 0;
 };
 
 struct AssignableT
@@ -161,6 +161,12 @@ struct LLVMLoadableTypeT
 	virtual llvm::Type *GenerateLLVMType(ContextT Context) = 0;
 };
 
+struct LLVMAssignableTypeT
+{
+	virtual ~LLVMAssignableTypeT(void);
+	virtual void AssignLLVM(ContextT Context, llvm::Value *Target, AtomT Other) = 0;
+};
+
 //================================================================================================================
 // Basics
 struct UndefinedT : NucleusT, AssignableT
@@ -169,48 +175,22 @@ struct UndefinedT : NucleusT, AssignableT
 	void Assign(ContextT Context, AtomT Other) override;
 };
 
-struct ImplementT : NucleusT, ValueT
+struct ImplementT : NucleusT
 {
 	AtomT Type, Value;
 	
 	ImplementT(PositionT const Position);
 	AtomT GetType(ContextT Context) override;
-	AtomT Allocate(ContextT Context) override;
 	void Simplify(ContextT Context) override;
 };
 
 //================================================================================================================
 // Primitives
-struct LLVMAssignableTypeT
-{
-	virtual ~LLVMAssignableTypeT(void);
-	virtual void AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other) = 0;
-};
-
-struct TypeT
-{
-	virtual ~TypeT(void);
-	virtual AtomT Allocate(ContextT Context) = 0;
-};
-
-template <typename TypeT> struct PrimitiveMixinT : virtual NucleusT, virtual ValueT
-{
-	bool Defined;
-	AtomT Type;
-	
-	PrimitiveMixinT(void) : NucleusT(INVALIDPOSITION), Defined(false) {}
-	
-	AtomT Allocate(ContextT Context) override
-	{
-		auto Type = GetType(Context).template As<TypeT>();
-		if (!Type) ERROR;
-		return Type->Allocate(Context);
-	}
-};
 
 struct StringTypeT;
-struct StringT : virtual NucleusT, virtual ValueT, virtual AssignableT, PrimitiveMixinT<StringTypeT>
+struct StringT : virtual NucleusT, virtual AssignableT
 {
+	AtomT Type;
 	std::string Data;
 	
 	StringT(PositionT const Position);
@@ -226,19 +206,18 @@ struct StringTypeT : NucleusT, TypeT
 	
 	StringTypeT(PositionT const Position);
 
-	void CheckType(ContextT Context, bool Defined, AtomT Other);
-	AtomT Allocate(ContextT Context) override;
-	void Assign(ContextT Context, bool &Defined, std::string &Data, AtomT Other);
+	void CheckType(ContextT Context, AtomT Other);
+	AtomT Allocate(ContextT Context, AtomT Value) override;
+	void Assign(ContextT Context, std::string &Data, AtomT Other);
 };
 
 struct NumericTypeT;
 template <typename DataT> struct NumericT : 
 	virtual NucleusT, 
-	virtual ValueT, 
 	virtual AssignableT, 
-	virtual LLVMLoadableT, 
-	virtual PrimitiveMixinT<NumericTypeT>
+	virtual LLVMLoadableT
 {
+	AtomT Type;
 	DataT Data;
 	
 	NumericT(PositionT const Position);
@@ -247,16 +226,14 @@ template <typename DataT> struct NumericT :
 	llvm::Value *GenerateLLVMLoad(ContextT Context) override;
 };
 
-struct DynamicT : NucleusT, ValueT, AssignableT, LLVMLoadableT
+struct DynamicT : NucleusT, AssignableT, LLVMLoadableT
 {
-	bool Defined;
 	AtomT Type;
 	llvm::Value *Target;
 	
 	DynamicT(PositionT const Position);
 	
 	AtomT GetType(ContextT Context) override;
-	AtomT Allocate(ContextT Context) override;
 	void Assign(ContextT Context, AtomT Other) override;
 	llvm::Value *GenerateLLVMLoad(ContextT Context) override;
 };
@@ -272,9 +249,9 @@ struct NumericTypeT : NucleusT, TypeT, LLVMLoadableTypeT, LLVMAssignableTypeT
 	NumericTypeT(PositionT const Position);
 	
 	bool IsSigned(void) const;
-	void CheckType(ContextT Context, bool Defined, AtomT Other);
-	AtomT Allocate(ContextT Context) override;
-	void AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other) override;
+	void CheckType(ContextT Context, AtomT Other);
+	AtomT Allocate(ContextT Context, AtomT Value) override;
+	void AssignLLVM(ContextT Context, llvm::Value *Target, AtomT Other) override;
 	llvm::Type *GenerateLLVMType(ContextT Context) override;
 };
 
@@ -290,13 +267,13 @@ struct GroupCollectionT
 	auto end(void) -> decltype(Keys.end());
 };
 
-struct GroupT : NucleusT, ValueT, AssignableT, GroupCollectionT
+struct GroupT : NucleusT, AssignableT, GroupCollectionT
 {
+	// TODO gettype, allocate
 	std::vector<AtomT> Statements;
 
 	GroupT(PositionT const Position);
 	void Simplify(ContextT Context) override;
-	AtomT Allocate(ContextT Context) override;
 	void Assign(ContextT Context, AtomT Other) override;
 	AtomT AccessElement(ContextT Context, AtomT Key);
 };
@@ -321,7 +298,7 @@ struct AssignmentT : NucleusT
 
 //================================================================================================================
 // Functions
-struct FunctionT : NucleusT
+/*struct FunctionT : NucleusT
 {
 	AtomT Type, Body;
 	
@@ -337,7 +314,7 @@ struct CallT : NucleusT
 	
 	CallT(PositionT const Position);
 	void Simplify(ContextT Context) override;
-};
+};*/
 
 }
 
