@@ -3,7 +3,13 @@
 namespace Core
 {
 
-#define ERROR assert(false)
+constexpr TypeIDT DefaultTypeID = 0;
+
+PositionBaseT::~PositionBaseT(void) {}
+
+HardPositionT::HardPositionT(char const *File, char const *Function, int Line) : Position(::StringT() << "(HARD)" << File << "/" << Function << ":" << Line) {}
+
+std::string HardPositionT::AsString(void) const { return Position; }
 
 //================================================================================================================
 // Core
@@ -14,11 +20,14 @@ void NucleusT::Replace(NucleusT *Replacement)
 		*Atom = Replacement;
 }
 
+NucleusT::NucleusT(PositionT const Position) : Position(Position) {}
+
 NucleusT::~NucleusT(void) {}
 
 void NucleusT::Simplify(ContextT Context) {}
 
-AtomT NucleusT::GetType(void) { return {nullptr}; }
+//AtomT NucleusT::GetType(void) { return {nullptr}; }
+AtomT NucleusT::GetType(ContextT Context) { ERROR; }
 
 void AtomT::Set(NucleusT *Nucleus)
 {
@@ -40,8 +49,8 @@ void AtomT::Clear(void)
 }
 
 AtomT::AtomT(void) : Nucleus(nullptr) {}
-AtomT::AtomT(NucleusT *Nucleus) { Set(Nucleus); }
-AtomT::AtomT(AtomT const &Other) { Set(Other.Nucleus); }
+AtomT::AtomT(NucleusT *Nucleus) : Nucleus(nullptr) { Set(Nucleus); }
+AtomT::AtomT(AtomT const &Other) : Nucleus(nullptr) { Set(Other.Nucleus); }
 AtomT::~AtomT(void) { Clear(); }
 
 AtomT &AtomT::operator =(NucleusT *Nucleus) { Set(Nucleus); return *this; }
@@ -56,36 +65,28 @@ ContextT::ContextT(
 	llvm::LLVMContext &LLVM, 
 	llvm::Module *Module, 
 	llvm::BasicBlock *Block, 
-	AtomT Scope) : 
+	AtomT Scope,
+	PositionT Position) : 
 	LLVM(LLVM), 
 	Module(Module),
 	Block(Block),
-	Scope(Scope)
+	Scope(Scope),
+	Position(Position)
 	{}
 		
 ContextT::ContextT(ContextT const &Context) : 
 	LLVM(Context.LLVM), 
 	Module(Context.Module),
 	Block(Context.Block),
-	Scope(Context.Scope)
+	Scope(Context.Scope),
+	Position(Context.Position)
 	{}
 	
-ContextT ContextT::EnterScope(AtomT Scope)
-{
-	return ContextT(
-		LLVM,
-		Module,
-		Block,
-		Scope);
-}
-
 //================================================================================================================
 // Interfaces
 ValueT::~ValueT(void) {}
-AtomT ValueT::Allocate(ContextT Context) { ERROR; }
 
 AssignableT::~AssignableT(void) {}
-void AssignableT::Assign(ContextT Context, AtomT Other) { ERROR; }
 
 LLVMLoadableT::~LLVMLoadableT(void) {}
 
@@ -93,7 +94,9 @@ LLVMLoadableTypeT::~LLVMLoadableTypeT(void) {}
 
 //================================================================================================================
 // Basics
-void UndefinedT::Assign(ContextT Context, AtomT Other) override
+UndefinedT::UndefinedT(PositionT const Position) : NucleusT(Position) {}
+
+void UndefinedT::Assign(ContextT Context, AtomT Other)
 {
 	auto Source = Other.As<ValueT>();
 	if (!Source) ERROR;
@@ -104,14 +107,18 @@ void UndefinedT::Assign(ContextT Context, AtomT Other) override
 	Replace(DestAtom);
 }
 
-AtomT ImplementT::Allocate(ContextT Context) override
+ImplementT::ImplementT(PositionT const Position) : NucleusT(Position) {}
+
+AtomT ImplementT::GetType(ContextT Context) { return Type; }
+
+AtomT ImplementT::Allocate(ContextT Context)
 {
-	auto Value = this->Value.As<ValueT>();
-	if (!Value) ERROR;
-	return Value->Allocate(Context);
+	auto Type = this->Type.As<TypeT>();
+	if (!Type) ERROR;
+	return Type->Allocate(Context);
 }
 
-void ImplementT::Simplify(ContextT Context) override
+void ImplementT::Simplify(ContextT Context)
 {
 	Type->Simplify(Context);
 	Value->Simplify(Context);
@@ -119,103 +126,142 @@ void ImplementT::Simplify(ContextT Context) override
 
 //================================================================================================================
 // Primitives
-PrimitiveTypeT::~PrimitiveTypeT(void) {}
+LLVMAssignableTypeT::~LLVMAssignableTypeT(void) {}
 
-template <typename TypeT> struct PrimitiveMixinT : virtual NucleusT, virtual ValueT
-{
-	AtomT Type;
-	
-	AtomT GetType(void) override
-	{
-		if (!Type) Type = new TypeT;
-		return Type;
-	}
-	
-	AtomT Allocate(ContextT Context) override
-	{
-		auto Type = GetType().template As<PrimitiveTypeT>();
-		if (!Type) ERROR;
-		return Type->Allocate();
-	}
-};
+TypeT::~TypeT(void) {}
 
-void StringT::Assign(ContextT Context, AtomT Other) override
+StringT::StringT(PositionT const Position) : NucleusT(Position) {}
+
+AtomT StringT::GetType(ContextT Context)
 {
-	GetType().As<StringTypeT>().Assign(Data, Other);
+	if (!Type) Type = new StringT(Position);
+	return Type;
 }
 
-void StringTypeT::CheckType(bool Defined, AtomT Other)
+void StringT::Assign(ContextT Context, AtomT Other)
+{
+	GetType(Context).As<StringTypeT>()->Assign(Context, Defined, Data, Other);
+}
+
+StringTypeT::StringTypeT(PositionT const Position) : NucleusT(Position), ID(DefaultTypeID), Static(true) {}
+
+void StringTypeT::CheckType(ContextT Context, bool Defined, AtomT Other)
 {
 	if (Static && Defined) ERROR;
-	auto OtherType = Other.GetType().As<StringTypeT>();
+	auto OtherType = Other->GetType(Context).As<StringTypeT>();
 	if (!OtherType) ERROR;
-	if (OtherType.ID != ID) ERROR;
+	if (OtherType->ID != ID) ERROR;
 }
 	
-AtomT StringTypeT::Allocate(ContextT Context) override
+AtomT StringTypeT::Allocate(ContextT Context)
 {
-	return {new StringT(*this)};
+	auto Out = new StringT(Context.Position);
+	Out->Type = this;
+	return Out;
 }
 
-void StringTypeT::Assign(ContextT Context, std::string &Data, AtomT Other)
+void StringTypeT::Assign(ContextT Context, bool &Defined, std::string &Data, AtomT Other)
 {
-	CheckType(Defined, Other);
-	if (auto &Implementation = Other->As<ImplementT>())
+	CheckType(Context, Defined, Other);
+	if (auto Implementation = Other.As<ImplementT>())
 	{
-		auto String = Implementation.Value.As<StringT>();
+		auto String = Implementation->Value.As<StringT>();
 		if (!String) ERROR;
-		Data = String.Data;
+		Data = String->Data;
 	}
 	else
 	{
 		auto String = Other.As<StringT>();
 		if (!String) ERROR;
-		Data = String.Data;
+		Data = String->Data;
 	}
 	Defined = true;
 }
 
-void StringTypeT::Assign(ContextT Context, llvm::Value *Target, AtomT Other) override { assert(false); }
+template <typename DataT> NumericT<DataT>::NumericT(PositionT const Position) : NucleusT(Position) {}
 
-template <typename DataT> void NumericT<DataT>::Assign(ContextT Context, AtomT Other) override
+NumericTypeT::DataTypeT GetDataType(ExplicitT<int32_t>) { return NumericTypeT::DataTypeT::Int; }
+NumericTypeT::DataTypeT GetDataType(ExplicitT<uint32_t>) { return NumericTypeT::DataTypeT::UInt; }
+NumericTypeT::DataTypeT GetDataType(ExplicitT<float>) { return NumericTypeT::DataTypeT::Float; }
+NumericTypeT::DataTypeT GetDataType(ExplicitT<double>) { return NumericTypeT::DataTypeT::Double; }
+
+template <typename DataT> AtomT NumericT<DataT>::GetType(ContextT Context)
+{
+	if (!Type) 
+	{
+		auto Temp = new NumericTypeT(Position);
+		Temp->DataType = GetDataType(ExplicitT<DataT>());
+		Type = Temp;
+	}
+	return Type;
+}
+
+template <typename DataT> void NumericT<DataT>::Assign(ContextT Context, AtomT Other)
 {
 	if (auto Number = Other.As<NumericT<DataT>>())
 	{
-		Data = Number.Data;
+		Data = Number->Data;
 	}
 	else if (auto Implementation = Other.As<ImplementT>())
 	{
-		if (auto Number = Implementation.Value.As<NumericT<int32_t>>()) Data = Number.Data;
-		else if (auto Number = Implementation.Value.As<NumericT<uint32_t>>()) Data = Number.Data;
-		else if (auto Number = Implementation.Value.As<NumericT<float>>()) Data = Number.Data;
-		else if (auto Number = Implementation.Value.As<NumericT<double>>()) Data = Number.Data;
+		if (auto Number = Implementation->Value.As<NumericT<int32_t>>()) Data = Number->Data;
+		else if (auto Number = Implementation->Value.As<NumericT<uint32_t>>()) Data = Number->Data;
+		else if (auto Number = Implementation->Value.As<NumericT<float>>()) Data = Number->Data;
+		else if (auto Number = Implementation->Value.As<NumericT<double>>()) Data = Number->Data;
 		else ERROR;
 	}
 	else ERROR;
 }
 
-template <typename DataT> llvm::Value *NumericT<DataT>::GenerateLLVMLoad(ContextT Context) override
+template <> llvm::Value *NumericT<float>::GenerateLLVMLoad(ContextT Context)
 {
+	std::cout << "1 " << Data << std::endl;
+	return llvm::ConstantFP::get
+		(
+			llvm::Type::getFloatTy(Context.LLVM),
+			Data
+		);
+	//return llvm::ConstantFP::get(Context.LLVM, llvm::APFloat(Data));
+}
+
+template <> llvm::Value *NumericT<double>::GenerateLLVMLoad(ContextT Context)
+{
+	std::cout << "2 " << Data << std::endl;
+	return llvm::ConstantFP::get
+		(
+			llvm::Type::getDoubleTy(Context.LLVM),
+			Data
+		);
+	//return llvm::ConstantFP::get(Context.LLVM, llvm::APFloat(Data));
+}
+
+template <typename DataT> llvm::Value *NumericT<DataT>::GenerateLLVMLoad(ContextT Context)
+{
+	std::cout << "3 " << Data << std::endl;
 	return llvm::ConstantInt::get
 		(
 			llvm::IntegerType::get(Context.LLVM, sizeof(Data) * 8), 
-			0, 
+			Data, 
 			false
 		);
 }
 
+DynamicT::DynamicT(PositionT const Position) : NucleusT(Position), Defined(false), Target(nullptr) {}
+
+AtomT DynamicT::GetType(ContextT Context) { return Type; }
+
 AtomT DynamicT::Allocate(ContextT Context)
 {
-	auto Type = GetType()->As<TypeT>();
-	if (!Type) ERROR:
-	return Type->Allocate();
+	auto Type = GetType(Context).As<TypeT>();
+	if (!Type) ERROR;
+	return Type->Allocate(Context);
 }
 
 void DynamicT::Assign(ContextT Context, AtomT Other)
 {
-	auto Type = GetType()->As<TypeT>();
-	if (!Type) ERROR:
-	Type->Assign(Context, Defined, Target, Other);
+	auto Type = GetType(Context).As<LLVMAssignableTypeT>();
+	if (!Type) ERROR;
+	Type->AssignLLVM(Context, Defined, Target, Other);
 }
 
 llvm::Value *DynamicT::GenerateLLVMLoad(ContextT Context)
@@ -226,130 +272,172 @@ llvm::Value *DynamicT::GenerateLLVMLoad(ContextT Context)
 
 llvm::Value *GenerateLLVMNumericConversion(llvm::BasicBlock *Block, llvm::Value *Source, llvm::Type *SourceType, bool SourceSigned, llvm::Type *DestType, bool DestSigned)
 {
-	if (SourceType->IsIntegerTy())
+	if (SourceType->isIntegerTy())
 	{
 		if (SourceSigned)
 		{
-			if (DestType->IsIntegerTy())
+			if (DestType->isIntegerTy())
 			{
-				if (DestType->GetIntegerBitWidth() < SourceType->GetIntegerBitWidth())
+				if (DestType->getIntegerBitWidth() < SourceType->getIntegerBitWidth())
+				{
 					return new llvm::TruncInst(Source, DestType, "", Block);
-				else if (DestType->GetIntegerBitWidth() == SourceType->GetIntegerBitWidth())
+				}
+				else if (DestType->getIntegerBitWidth() == SourceType->getIntegerBitWidth())
+				{
 					return Source;
+				}
 				else 
+				{
 					return new llvm::SExtInst(Source, DestType, "", Block);
+				}
 			}
 			else
 			{
-				assert(DestType->IsFloatTy() || DestType->IsDoubleTy());
+				assert(DestType->isFloatTy() || DestType->isDoubleTy());
 				return new llvm::SIToFPInst(Source, DestType, "", Block);
 			}
 		}
 		else
 		{
-			if (DestType->IsIntegerTy())
+			if (DestType->isIntegerTy())
 			{
-				if (DestType->GetIntegerBitWidth() < SourceType->GetIntegerBitWidth())
+				if (DestType->getIntegerBitWidth() < SourceType->getIntegerBitWidth())
+				{
 					return new llvm::TruncInst(Source, DestType, "", Block);
-				else if (DestType->GetIntegerBitWidth() == SourceType->GetIntegerBitWidth())
+				}
+				else if (DestType->getIntegerBitWidth() == SourceType->getIntegerBitWidth())
+				{
 					return Source;
+				}
 				else 
+				{
 					return new llvm::ZExtInst(Source, DestType, "", Block);
+				}
 			}
 			else
 			{
-				assert(DestType->IsFloatTy() || DestType->IsDoubleTy());
+				assert(DestType->isFloatTy() || DestType->isDoubleTy());
 				return new llvm::UIToFPInst(Source, DestType, "", Block);
 			}
 		}
 	}
 	else
 	{
-		if (SourceType->IsFloatTy())
+		if (SourceType->isFloatTy())
 		{
-			if (DestType->IsFloatTy())
+			if (DestType->isIntegerTy())
+			{
+				if (DestSigned)
+				{
+					return new llvm::FPToSIInst(Source, DestType, "", Block);
+				}
+				else
+				{
+					return new llvm::FPToUIInst(Source, DestType, "", Block);
+				}
+			}
+			else if (DestType->isFloatTy())
 			{
 				return Source;
 			}
 			else
 			{
-				assert(DestType->IsDoubleTy());
+				assert(DestType->isDoubleTy());
 				return new llvm::FPExtInst(Source, DestType, "", Block);
 			}
 		}
 		else
 		{
-			assert(SourceType->IsDoubleTy());
-			if (DestType->IsFloatTy())
+			assert(SourceType->isDoubleTy());
+			if (DestType->isIntegerTy())
+			{
+				if (DestSigned)
+				{
+					return new llvm::FPToSIInst(Source, DestType, "", Block);
+				}
+				else
+				{
+					return new llvm::FPToUIInst(Source, DestType, "", Block);
+				}
+			}
+			else if (DestType->isFloatTy())
 			{
 				return new llvm::FPTruncInst(Source, DestType, "", Block);
 			}
 			else
 			{
-				assert(DestType->IsDoubleTy());
+				assert(DestType->isDoubleTy());
 				return Source;
 			}
 		}
 	}
 }
+
+NumericTypeT::NumericTypeT(PositionT const Position) : NucleusT(Position), ID(DefaultTypeID), Constant(true), Static(true), DataType(DataTypeT::Int) {}
 
 bool NumericTypeT::IsSigned(void) const
 {
 	return DataType == DataTypeT::Int;
 }
 
-void NumericTypeT::CheckType(bool Defined, AtomT Other)
+void NumericTypeT::CheckType(ContextT Context, bool Defined, AtomT Other)
 {
 	if (Static && Defined) ERROR;
-	auto OtherType = Other.GetType().As<PrimitiveTypeBaseT<BaseT>>();
+	auto OtherType = Other->GetType(Context).As<NumericTypeT>();
 	if (!OtherType) ERROR;
-	if (OtherType.ID != ID) ERROR;
+	if (OtherType->ID != ID) ERROR;
 	if (ID == DefaultTypeID)
 	{
-		if (Constant && !OtherType.Constant) ERROR;
-		if (Other.DataType != DataType) ERROR;
+		if (Constant && !OtherType->Constant) ERROR;
+		if (OtherType->DataType != DataType) ERROR;
 	}
 	else
 	{
-		assert(!Constant || OtherType.Constant);
-		assert(DataType == OtherType.DataType);
+		assert(!Constant || OtherType->Constant);
+		assert(DataType == OtherType->DataType);
 	}
 }
 
-AtomT NumericTypeT::Allocate(ContextT Context) override
+AtomT NumericTypeT::Allocate(ContextT Context)
 {
 	if (Constant)
 	{
 		switch (DataType)
 		{
-			case DataTypeT::Int: return new NumericT<int32_t>(*this);
-			case DataTypeT::UInt: return new NumericT<uint32_t>(*this);
-			case DataTypeT::Float: return new NumericT<float>(*this);
-			case DataTypeT::Double: return new NumericT<double>(*this);
+			case DataTypeT::Int: { auto Out = new NumericT<int32_t>(Context.Position); Out->Type = this; return Out; }
+			case DataTypeT::UInt: { auto Out = new NumericT<uint32_t>(Context.Position); Out->Type = this; return Out; }
+			case DataTypeT::Float: { auto Out = new NumericT<float>(Context.Position); Out->Type = this; return Out; }
+			case DataTypeT::Double: { auto Out = new NumericT<double>(Context.Position); Out->Type = this; return Out; }
 			default: assert(false); return nullptr;
 		}
 	}
-	else return new DynamicT(*this, new llvm::AllocaInst(GenerateLLVMType(Context), "", Context.Block));
+	else 
+	{
+		auto Out = new DynamicT(Context.Position);
+		Out->Type = this;
+		Out->Target = new llvm::AllocaInst(GenerateLLVMType(Context), "", Context.Block);
+		return Out;
+	}
 }
 
-void NumericTypeT::Assign(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other) override
+void NumericTypeT::AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other)
 {
-	CheckType(Defined, Other);
+	CheckType(Context, Defined, Other);
 	llvm::Value *Source = nullptr;
-	if (auto Loadable = Other->As<LLVMLoadableT>())
+	if (auto Loadable = Other.As<LLVMLoadableT>())
 	{
-		Source = Loadable->GenerateLLVMLoad();
+		Source = Loadable->GenerateLLVMLoad(Context);
 	}
 	else if (auto Implementation = Other.As<ImplementT>())
 	{
-		auto Loadable = Implementation.Value.As<LLVMLoadableT>();
+		auto Loadable = Implementation->Value.As<LLVMLoadableT>();
 		if (!Loadable) ERROR;
-		Source = Loadable->GenerateLLVMLoad();
-		auto OtherType = Implementation.Value.GetType().As<NumericTypeT>();
+		Source = Loadable->GenerateLLVMLoad(Context);
+		auto OtherType = Implementation->Value->GetType(Context).As<NumericTypeT>();
 		if (!OtherType) ERROR;
-		llvm::Type *SourceType = OtherType->GenerateLLVMType();
+		llvm::Type *SourceType = OtherType->GenerateLLVMType(Context);
 		bool SourceSigned = OtherType->IsSigned();
-		llvm::Type *DestType = GenerateLLVMType();
+		llvm::Type *DestType = GenerateLLVMType(Context);
 		bool DestSigned = IsSigned();
 		Source = GenerateLLVMNumericConversion(
 			Context.Block,
@@ -364,7 +452,7 @@ void NumericTypeT::Assign(ContextT Context, bool &Defined, llvm::Value *Target, 
 	Defined = true;
 }
 
-llvm::Type *NumericTypeT::GenerateLLVMType(ContextT Context) override
+llvm::Type *NumericTypeT::GenerateLLVMType(ContextT Context)
 {
 	switch (DataType)
 	{
@@ -392,40 +480,42 @@ OptionalT<AtomT> GroupCollectionT::GetByKey(std::string const &Key)
 void GroupCollectionT::Add(std::string const &Key, AtomT Value)
 {
 	auto Found = Keys.find(Key);
-	if (Found != Keys.end()) ERROR;
+	assert(Found == Keys.end());
+	////if (Found != Keys.end()) ERROR;
 	//auto Index = Values.size();
 	//Values.push_back(Value);
 	//Keys[Key] = Index;
 	Keys[Key] = Value;
-	return;
 }
 
 auto GroupCollectionT::begin(void) -> decltype(Keys.begin()) { return Keys.begin(); }
 auto GroupCollectionT::end(void) -> decltype(Keys.end()) { return Keys.end(); }
 
-void GroupT::Simplify(ContextT Context) override
+GroupT::GroupT(PositionT const Position) : NucleusT(Position) {}
+
+void GroupT::Simplify(ContextT Context)
 {
-	auto NewContext = Context.EnterScope(this);
+	Context.Scope = this;
 	for (auto &Statement : Statements)
-		Statement->Simplify(NewContext);
+		Statement->Simplify(Context);
 }
 
-AtomT GroupT::Allocate(ContextT Context) override
+AtomT GroupT::Allocate(ContextT Context)
 {
-	auto NewContext = Context.EnterScope(this);
-	auto Out = new GroupT;
+	Context.Scope = this;
+	auto Out = new GroupT(Context.Position);
 	for (auto &Pair : *this)
 	{
 		auto Value = Pair.second.As<ValueT>();
 		if (!Value) ERROR;
-		Out->Add(Pair.first, Value->Allocate(NewContext));
+		Out->Add(Pair.first, Value->Allocate(Context));
 	}
 	return {Out};
 }
 
-void GroupT::Assign(ContextT Context, AtomT Other) override
+void GroupT::Assign(ContextT Context, AtomT Other)
 {
-	auto NewContext = Context.EnterScope(this);
+	Context.Scope = this;
 	auto Group = Other.As<GroupT>();
 	if (!Group) ERROR;
 	for (auto &Pair : *this)
@@ -434,44 +524,46 @@ void GroupT::Assign(ContextT Context, AtomT Other) override
 		if (!Dest) ERROR;
 		auto Source = GetByKey(Pair.first);
 		if (!Source) ERROR;
-		Dest->Assign(NewContext, *Source);
+		Dest->Assign(Context, *Source);
 	}
 }
 
-AtomT GroupT::AccessElement(AtomT Key)
+AtomT GroupT::AccessElement(ContextT Context, AtomT Key)
 {
 	auto KeyString = Key.As<StringT>();
 	if (!KeyString) ERROR;
 	auto Got = GetByKey(KeyString->Data);
 	if (Got) return *Got;
-	auto Out = new UndefinedT;
-	Add(KeyString, Out);
+	auto Out = new UndefinedT(Context.Position);
+	Add(KeyString->Data, Out);
 	return Out;
 }
 
-void ElementT::Simplify(ContextT Context) override
+ElementT::ElementT(PositionT const Position) : NucleusT(Position) {}
+
+void ElementT::Simplify(ContextT Context)
 {
 	if (!Base) Base = Context.Scope;
-	Base->Simplify(Context);
+	else Base->Simplify(Context);
 	Key->Simplify(Context);
 	auto Group = Base.As<GroupT>();
 	if (!Group) ERROR;
-	Replace(Group->AccessElement(Key));
+	Replace(Group->AccessElement(Context, Key));
 }
 
 //================================================================================================================
 // Statements
-struct AssignmentT : NucleusT
-{
-	AtomT Left, Right;
+AssignmentT::AssignmentT(PositionT const Position) : NucleusT(Position) {}
 
-	void Simplify(ContextT Context) override
-	{
-		Left.Simplify();
-		Right.Simplify();
-		Left.Assign(Right);
-	}
-};
+void AssignmentT::Simplify(ContextT Context)
+{
+	Context.Position = Position;
+	Left->Simplify(Context);
+	Right->Simplify(Context);
+	auto Assignable = Left.As<AssignableT>();
+	if (!Assignable) ERROR;
+	Assignable->Assign(Context, Right);
+}
 
 //================================================================================================================
 // Functions
@@ -486,7 +578,7 @@ struct AssignmentT : NucleusT
 			// If return value is struct, allocate + set as first of DynamicInput
 			// Pull out linearization of dynamic elements from Input -> DynamicInput
 			// Result = LLVM call create
-			// If return value is struct, override - Result = DynamicT(Allocated)
+			// If return value is struct, - Result = DynamicT(Allocated)
 		}
 		Replace(Result);
 	}
@@ -514,6 +606,38 @@ struct CallT
 		Replace(Function.Call(Input));
 	}
 };*/
+FunctionT::FunctionT(PositionT const Position) : NucleusT(Position) {}
+
+void FunctionT::Simplify(ContextT Context) override
+{
+	Type->Simplify(Context);
+}
+
+AtomT FunctionT::Call(ContextT Context, AtomT Input)
+{
+	
+	////
+	auto Result = Function.Refine(Input);
+	if (auto DynamicFunction = Result.As<DynamicFunctionT>())
+	{
+		// If return value is struct, allocate + set as first of DynamicInput
+		// Pull out linearization of dynamic elements from Input -> DynamicInput
+		// Result = LLVM call create
+		// If return value is struct, - Result = DynamicT(Allocated)
+	}
+	return Result;
+}
+
+CallT::CallT(PositionT const Position) : NucleusT(Position) { }
+
+void CallT::Simplify(ContextT Context)
+{
+	Function->Simplify(Context);
+	Input->Simplify(Context);
+	auto Function = this->Function.As<FunctionT>();
+	if (!Function) ERROR;
+	Replace(Function->Call(Context, Input));
+}
 
 }
 
