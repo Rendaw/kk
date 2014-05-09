@@ -82,8 +82,9 @@ struct NucleusT
 		void Replace(NucleusT *Replacement);
 	public:
 		virtual ~NucleusT(void);
-		virtual void Simplify(ContextT Context);
+		virtual AtomT Clone(void);
 		virtual AtomT GetType(ContextT Context);
+		virtual void Simplify(ContextT Context);
 };
 
 struct AtomT
@@ -125,12 +126,15 @@ struct ContextT
 	
 	PositionT Position;
 	
+	bool IsConstant;
+	
 	ContextT(
 		llvm::LLVMContext &LLVM, 
 		llvm::Module *Module, 
 		llvm::BasicBlock *Block, 
 		AtomT Scope,
-		PositionT Position);
+		PositionT Position,
+		bool IsConstant);
 	ContextT(ContextT const &Context);
 };
 
@@ -140,6 +144,8 @@ struct TypeT
 {
 	virtual ~TypeT(void);
 	virtual AtomT Allocate(ContextT Context, AtomT Value) = 0;
+	virtual bool IsDynamic(void) = 0;
+	virtual void CheckType(ContextT Context, AtomT Other) = 0;
 };
 
 struct AssignableT
@@ -164,7 +170,7 @@ struct LLVMLoadableTypeT
 struct LLVMAssignableTypeT
 {
 	virtual ~LLVMAssignableTypeT(void);
-	virtual void AssignLLVM(ContextT Context, llvm::Value *Target, AtomT Other) = 0;
+	virtual void AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other) = 0;
 };
 
 //================================================================================================================
@@ -180,6 +186,7 @@ struct ImplementT : NucleusT
 	AtomT Type, Value;
 	
 	ImplementT(PositionT const Position);
+	AtomT Clone(void) override;
 	AtomT GetType(ContextT Context) override;
 	void Simplify(ContextT Context) override;
 };
@@ -190,10 +197,12 @@ struct ImplementT : NucleusT
 struct StringTypeT;
 struct StringT : virtual NucleusT, virtual AssignableT
 {
+	bool Defined;
 	AtomT Type;
 	std::string Data;
 	
 	StringT(PositionT const Position);
+	AtomT Clone(void) override;
 	AtomT GetType(ContextT Context) override;
 	void Assign(ContextT Context, AtomT Other) override;
 };
@@ -205,22 +214,24 @@ struct StringTypeT : NucleusT, TypeT
 	bool Static;
 	
 	StringTypeT(PositionT const Position);
-
-	void CheckType(ContextT Context, AtomT Other);
+	AtomT Clone(void) override;
+	bool IsDynamic(void) override;
+	void CheckType(ContextT Context, AtomT Other) override;
 	AtomT Allocate(ContextT Context, AtomT Value) override;
-	void Assign(ContextT Context, std::string &Data, AtomT Other);
+	void Assign(ContextT Context, bool &Defined, std::string &Data, AtomT Other);
 };
 
-struct NumericTypeT;
 template <typename DataT> struct NumericT : 
 	virtual NucleusT, 
 	virtual AssignableT, 
 	virtual LLVMLoadableT
 {
+	bool Defined;
 	AtomT Type;
 	DataT Data;
 	
 	NumericT(PositionT const Position);
+	AtomT Clone(void) override;
 	AtomT GetType(ContextT Context) override;
 	void Assign(ContextT Context, AtomT Other) override;
 	llvm::Value *GenerateLLVMLoad(ContextT Context) override;
@@ -228,7 +239,14 @@ template <typename DataT> struct NumericT :
 
 struct DynamicT : NucleusT, AssignableT, LLVMLoadableT
 {
+	bool Defined;
 	AtomT Type;
+	struct StructTargetT
+	{
+		llvm::Value *Struct;
+		size_t Index;
+	};
+	OptionalT<StructTargetT> StructTarget;
 	llvm::Value *Target;
 	
 	DynamicT(PositionT const Position);
@@ -247,11 +265,12 @@ struct NumericTypeT : NucleusT, TypeT, LLVMLoadableTypeT, LLVMAssignableTypeT
 	enum struct DataTypeT { Int, UInt, Float, Double } DataType;
 	
 	NumericTypeT(PositionT const Position);
-	
+	AtomT Clone(void) override;
+	bool IsDynamic(void) override;
 	bool IsSigned(void) const;
-	void CheckType(ContextT Context, AtomT Other);
+	void CheckType(ContextT Context, AtomT Other) override;
 	AtomT Allocate(ContextT Context, AtomT Value) override;
-	void AssignLLVM(ContextT Context, llvm::Value *Target, AtomT Other) override;
+	void AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other) override;
 	llvm::Type *GenerateLLVMType(ContextT Context) override;
 };
 
@@ -273,9 +292,17 @@ struct GroupT : NucleusT, AssignableT, GroupCollectionT
 	std::vector<AtomT> Statements;
 
 	GroupT(PositionT const Position);
+	AtomT Clone(void) override;
 	void Simplify(ContextT Context) override;
 	void Assign(ContextT Context, AtomT Other) override;
+	AtomT AccessElement(ContextT Context, std::string const &Key);
 	AtomT AccessElement(ContextT Context, AtomT Key);
+};
+
+struct BlockT : GroupT
+{
+	void Simplify(ContextT Context) override;
+	AtomT CloneGroup(ContextT Context);
 };
 
 struct ElementT : NucleusT
@@ -283,6 +310,18 @@ struct ElementT : NucleusT
 	AtomT Base, Key;
 
 	ElementT(PositionT const Position);
+	AtomT Clone(void) override;
+	void Simplify(ContextT Context) override;
+};
+
+//================================================================================================================
+// Type manipulations
+struct AsDynamicTypeT : NucleusT
+{
+	AtomT Type;
+	
+	AsDynamicTypeT(PositionT const Position);
+	AtomT Clone(void) override;
 	void Simplify(ContextT Context) override;
 };
 
@@ -293,16 +332,33 @@ struct AssignmentT : NucleusT
 	AtomT Left, Right;
 
 	AssignmentT(PositionT const Position);
+	AtomT Clone(void) override;
 	void Simplify(ContextT Context) override;
 };
 
 //================================================================================================================
 // Functions
-/*struct FunctionT : NucleusT
+struct FunctionTypeT : NucleusT, TypeT
+{
+	// TODO Dynamic
+	AtomT Signature;
+	
+	FunctionTypeT(PositionT const Position);
+	AtomT Clone(void) override;
+	void Simplify(ContextT Context) override;
+	AtomT Allocate(ContextT Context, AtomT Value) override;
+	bool IsDynamic(void) override;
+	void CheckType(ContextT Context, AtomT Other) override;
+	
+	AtomT Call(ContextT Context, AtomT Body, AtomT Input);
+};
+
+struct FunctionT : NucleusT
 {
 	AtomT Type, Body;
 	
 	FunctionT(PositionT const Position);
+	AtomT GetType(ContextT Context) override;
 	void Simplify(ContextT Context) override;
 	
 	AtomT Call(ContextT Context, AtomT Input);
@@ -313,8 +369,9 @@ struct CallT : NucleusT
 	AtomT Function, Input;
 	
 	CallT(PositionT const Position);
+	AtomT Clone(void) override;
 	void Simplify(ContextT Context) override;
-};*/
+};
 
 }
 

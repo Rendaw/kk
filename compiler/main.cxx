@@ -14,7 +14,7 @@ int main(int, char **)
 	auto Block = llvm::BasicBlock::Create(LLVM, "entrypoint", Main);
 	
 	auto MainGroup = new GroupT(HARDPOSITION);
-	auto MakeString = [&](PositionT const Position, std::string const &Value)
+	auto MakeString_ = [&](PositionT const Position, std::string const &Value)
 	{
 		auto Type = new StringTypeT(Position);
 		Type->Static = false;
@@ -23,7 +23,8 @@ int main(int, char **)
 		Out->Type = Type;
 		return Out;
 	};
-	auto MakeInt = [&](PositionT const Position, int Value)
+	#define MakeString(...) MakeString_(HARDPOSITION, __VA_ARGS__)
+	auto MakeInt_ = [&](PositionT const Position, int Value)
 	{
 		auto Type = new NumericTypeT(Position);
 		Type->DataType = NumericTypeT::DataTypeT::Int;
@@ -33,19 +34,21 @@ int main(int, char **)
 		Out->Data = Value;
 		return Out;
 	};
-	auto MakeFloat = [&](PositionT const Position, float Value)
+	#define MakeInt(...) MakeInt_(HARDPOSITION, __VA_ARGS__)
+	/*auto MakeFloat = [&](PositionT const Position, float Value)
 	{
 		auto Out = new NumericT<float>(Position);
 		Out->Data = Value;
 		return Out;
-	};
-	auto MakeElement = [&](PositionT const Position, std::string const &Key)
+	};*/
+	auto MakeElement_ = [&](PositionT const Position, std::string const &Key)
 	{
 		auto Out = new ElementT(Position);
-		Out->Key = MakeString(Position, Key);
+		Out->Key = MakeString_(Position, Key);
 		return Out;
 	};
-	auto MakeDynamic = [&](PositionT const Position, NucleusT *&&Value)
+	#define MakeElement(...) MakeElement_(HARDPOSITION, __VA_ARGS__)
+	/*auto MakeDynamic = [&](PositionT const Position, NucleusT *&&Value)
 	{
 		auto Type = new NumericTypeT(Position);
 		auto ValueType = Value->GetType({LLVM, Module, Block, nullptr, HARDPOSITION}).As<NumericTypeT>();
@@ -69,14 +72,18 @@ int main(int, char **)
 		Out->Type = Type;
 		Out->Value = Value;
 		return Out;
-	};
-	auto MakeAssignment = [&](PositionT const Position, std::string const &Key, NucleusT *&&Value)
+	};*/
+	auto MakeAssignment_ = [&](PositionT const Position, std::string const &Key, NucleusT *&&Value)
 	{
 		auto Assignment = new AssignmentT(Position);
-		Assignment->Left = MakeElement(Position, Key);
+		Assignment->Left = MakeElement_(Position, Key);
 		Assignment->Right = Value;
-		MainGroup->Statements.push_back(Assignment);
+		//MainGroup->Statements.push_back(Assignment);
+		return Assignment;
 	};
+	#define MakeAssignment(...) MakeAssignment_(HARDPOSITION, __VA_ARGS__)
+	
+	#if 0
 	/*MakeAssignment(HARDPOSITION, "a", 
 		MakeString(HARDPOSITION, "hi"));
 	MakeAssignment(HARDPOSITION, "b", 
@@ -102,7 +109,97 @@ int main(int, char **)
 	MakeAssignment(HARDPOSITION, "e",
 		MakeDynamic(HARDPOSITION,
 			MakeFloat(HARDPOSITION, 7)));
-	MainGroup->Simplify({LLVM, Module, Block, nullptr, HARDPOSITION});
+	#endif
+	
+	auto MakeGroup_ = [&](PositionT const Position, std::list<AtomT> Atoms)
+	{
+		auto Out = new GroupT(Position);
+		for (auto &Atom : Atoms)
+			Out->Statements.push_back(Atom);
+		return Out;
+	};
+	#define MakeGroup(...) MakeGroup_(HARDPOSITION, __VA_ARGS__)
+	
+	auto MakeImplement_ = [&](PositionT const Position, AtomT Type, AtomT Value)
+	{
+		auto Implement = new ImplementT(Position);
+		Implement->Type = Type;
+		Implement->Value = Value;
+		return Implement;
+	};
+	#define MakeImplement(...) MakeImplement_(HARDPOSITION, __VA_ARGS__)
+	
+	auto MakeFunctionType_ = [&](PositionT const Position, AtomT Signature)
+	{
+		auto Type = new FunctionTypeT(Position);
+		Type->Signature = Signature;
+		return Type;
+	};
+	#define MakeFunctionType(...) MakeFunctionType_(HARDPOSITION, __VA_ARGS__)
+	
+	auto MakeIntType_ = [&](PositionT const Position)
+	{
+		auto Type = new NumericTypeT(Position);
+		return Type;
+	};
+	#define MakeIntType() MakeIntType_(HARDPOSITION)
+	
+	auto MakeStringType_ = [&](PositionT const Position)
+	{
+		auto Type = new StringTypeT(Position);
+		return Type;
+	};
+	#define MakeStringType() MakeStringType_(HARDPOSITION)
+	
+	auto MakeDynamic_ = [&](PositionT const Position, AtomT Value)
+	{
+		auto Out = new AsDynamicTypeT(Position);
+		Out->Type = Value;
+		return Out;
+	};
+	#define MakeDynamic(...) MakeDynamic_(HARDPOSITION, __VA_ARGS__)
+	
+	auto MakeCall_ = [&](PositionT const Position, AtomT Function, AtomT Input)
+	{
+		auto Out = new CallT(Position);
+		Out->Function = Function;
+		Out->Input = Input;
+		return Out;
+	};
+	#define MakeCall(...) MakeCall_(HARDPOSITION, __VA_ARGS__)
+	
+	MainGroup->Statements.push_back(
+		MakeAssignment("a",
+			MakeImplement(
+				MakeFunctionType(
+					MakeGroup({
+						MakeAssignment("input",
+							MakeGroup({
+								MakeAssignment("q", MakeIntType()),
+								MakeAssignment("l", MakeStringType())
+							})),
+						MakeAssignment("output",
+							MakeGroup({
+								MakeAssignment("m", MakeDynamic(MakeIntType())),
+								MakeAssignment("r", MakeDynamic(MakeIntType()))
+							}))
+					})),
+				MakeGroup({
+					MakeAssignment("output",
+						MakeGroup({
+							MakeAssignment("m", MakeInt(7)),
+							MakeAssignment("r", MakeInt(13))
+						}))
+					}))));
+	MainGroup->Statements.push_back(
+		MakeAssignment("b",
+			MakeCall(
+				MakeElement("a"),
+				MakeGroup({
+					MakeAssignment("l", MakeString("normative")),
+					MakeAssignment("q", MakeInt(44))
+				}))));
+	MainGroup->Simplify({LLVM, Module, Block, nullptr, HARDPOSITION, true});
 	
 	Module->dump();
 	
