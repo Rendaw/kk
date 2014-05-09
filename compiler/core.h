@@ -252,6 +252,7 @@ struct DynamicT : NucleusT, AssignableT, LLVMLoadableT
 	DynamicT(PositionT const Position);
 	
 	AtomT GetType(ContextT Context) override;
+	llvm::Value *GetTarget(ContextT Context);
 	void Assign(ContextT Context, AtomT Other) override;
 	llvm::Value *GenerateLLVMLoad(ContextT Context) override;
 };
@@ -299,10 +300,14 @@ struct GroupT : NucleusT, AssignableT, GroupCollectionT
 	AtomT AccessElement(ContextT Context, AtomT Key);
 };
 
-struct BlockT : GroupT
+struct BlockT : NucleusT
 {
+	std::vector<AtomT> Statements;
+	
+	BlockT(PositionT const Position);
+	AtomT Clone(void) override;
 	void Simplify(ContextT Context) override;
-	AtomT CloneGroup(ContextT Context);
+	AtomT CloneGroup(void);
 };
 
 struct ElementT : NucleusT

@@ -19,6 +19,7 @@ int main(int, char **)
 		auto Type = new StringTypeT(Position);
 		Type->Static = false;
 		auto Out = new Core::StringT(Position);
+		Out->Defined = true;
 		Out->Data = Value;
 		Out->Type = Type;
 		return Out;
@@ -31,6 +32,8 @@ int main(int, char **)
 		Type->Constant = true;
 		Type->Static = false;
 		auto Out = new NumericT<int>(Position);
+		Out->Type = Type;
+		Out->Defined = true;
 		Out->Data = Value;
 		return Out;
 	};
@@ -119,6 +122,15 @@ int main(int, char **)
 		return Out;
 	};
 	#define MakeGroup(...) MakeGroup_(HARDPOSITION, __VA_ARGS__)
+
+	auto MakeBlock_ = [&](PositionT const Position, std::list<AtomT> Atoms)
+	{
+		auto Out = new BlockT(Position);
+		for (auto &Atom : Atoms)
+			Out->Statements.push_back(Atom);
+		return Out;
+	};
+	#define MakeBlock(...) MakeBlock_(HARDPOSITION, __VA_ARGS__)
 	
 	auto MakeImplement_ = [&](PositionT const Position, AtomT Type, AtomT Value)
 	{
@@ -184,7 +196,7 @@ int main(int, char **)
 								MakeAssignment("r", MakeDynamic(MakeIntType()))
 							}))
 					})),
-				MakeGroup({
+				MakeBlock({
 					MakeAssignment("output",
 						MakeGroup({
 							MakeAssignment("m", MakeInt(7)),
