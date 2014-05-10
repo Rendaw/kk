@@ -286,7 +286,14 @@ llvm::Value *DynamicT::GetTarget(ContextT Context)
 		std::vector<llvm::Value *> Indices;
 		Indices.push_back(llvm::ConstantInt::get
 		(
-			llvm::IntegerType::get(Context.LLVM, sizeof(StructTarget->Index) * 8), 
+			llvm::IntegerType::get(Context.LLVM, 32), 
+			0, 
+			false
+		));
+		Indices.push_back(llvm::ConstantInt::get
+		(
+			//llvm::IntegerType::get(Context.LLVM, sizeof(StructTarget->Index) * 8), 
+			llvm::IntegerType::get(Context.LLVM, 32), 
 			StructTarget->Index, 
 			false
 		));
@@ -890,7 +897,7 @@ AtomT FunctionTypeT::Call(ContextT Context, AtomT Body, AtomT CallInput)
 	
 	llvm::Type *LLVMReturnType;
 	if (LLVMReturnTypes.size() == 1) LLVMReturnType = LLVMReturnTypes[0];
-	else LLVMReturnType = llvm::FunctionType::get(llvm::Type::getVoidTy(Context.LLVM), false);
+	else LLVMReturnType = llvm::Type::getVoidTy(Context.LLVM);
 	auto LLVMFunctionType = llvm::FunctionType::get(LLVMReturnType, LLVMArgTypes, false);
 	auto LLVMFunction = llvm::Function::Create(LLVMFunctionType, llvm::Function::ExternalLinkage, "", Context.Module);
 	auto Block = llvm::BasicBlock::Create(Context.LLVM, "entrypoint", LLVMFunction);
@@ -918,6 +925,10 @@ AtomT FunctionTypeT::Call(ContextT Context, AtomT Body, AtomT CallInput)
 	
 	FunctionContext.Block = Block;
 	BodyGroup->Simplify(FunctionContext);
+	
+	if (LLVMReturnTypes.size() == 1)
+		llvm::ReturnInst::Create(Context.LLVM, DynamicBodyOutput[0]->GenerateLLVMLoad(Context), Block);
+	else llvm::ReturnInst::Create(Context.LLVM, Block);
 	
 	if (!FunctionContext.IsConstant)
 	{
