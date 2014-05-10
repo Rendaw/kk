@@ -343,8 +343,10 @@ struct AssignmentT : NucleusT
 
 //================================================================================================================
 // Functions
-struct FunctionTypeT : NucleusT, TypeT
+struct FunctionTypeT : NucleusT, TypeT, LLVMLoadableTypeT, LLVMAssignableTypeT
 {
+	bool Constant;
+	bool Static;
 	// TODO Dynamic
 	AtomT Signature;
 	
@@ -354,6 +356,8 @@ struct FunctionTypeT : NucleusT, TypeT
 	AtomT Allocate(ContextT Context, AtomT Value) override;
 	bool IsDynamic(void) override;
 	void CheckType(ContextT Context, AtomT Other) override;
+	llvm::Type *GenerateLLVMType(ContextT Context) override;
+	void AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other) override;
 	
 	AtomT Call(ContextT Context, AtomT Body, AtomT Input);
 };

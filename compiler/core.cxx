@@ -704,7 +704,7 @@ void AssignmentT::Simplify(ContextT Context)
 //================================================================================================================
 // Functions
 
-FunctionTypeT::FunctionTypeT(PositionT const Position) : NucleusT(Position) {}
+FunctionTypeT::FunctionTypeT(PositionT const Position) : NucleusT(Position), Constant(true), Static(true) {}
 
 AtomT FunctionTypeT::Clone(void)
 {
@@ -720,20 +720,268 @@ void FunctionTypeT::Simplify(ContextT Context)
 
 AtomT FunctionTypeT::Allocate(ContextT Context, AtomT Value) 
 {
-	auto Out = new FunctionT(Context.Position);
-	Out->Type = this;
-	Out->Body = Value;
-	return Out;
+	auto Function = new FunctionT(Context.Position);
+	Function->Type = this;
+	if (Value) Function->Body = Value;
+	if (Constant)
+	{
+		return Function;
+	}
+	else
+	{
+		auto Dynamic = new DynamicT(Context.Position);
+		Dynamic->Type = this;
+		Dynamic->Target = new llvm::AllocaInst(llvm::PointerType::getUnqual(GenerateLLVMType(Context)), "", Context.Block);
+		if (Value) Dynamic->Assign(Function);
+		return Dynamic;
+	}
 }
 
 bool FunctionTypeT::IsDynamic(void)
 {
-	return false; // TODO
+	return !Constant;
 }
 
 void FunctionTypeT::CheckType(ContextT Context, AtomT Other)
 {
 	ERROR; // TODO
+}
+
+llvm::Type *FunctionTypeT::GenerateLLVMType(ContextT Context)
+{
+	auto Signature = this->Signature.As<GroupT>();
+	if (!Signature) ERROR;
+	auto InputType = Signature->GetByKey(FunctionInputKey);
+	auto OutputType = Signature->GetByKey(FunctionOutputKey);
+
+	std::vector<llvm::Type *> LLVMArgTypes;
+	std::vector<llvm::Type *> LLVMReturnTypes;
+	
+	if (OutputType)
+	{
+		std::function<void(AtomT Type)> ClassifyOutput;
+		ClassifyOutput = [&](AtomT Type)
+		{
+			if (auto Group = Type.As<GroupT>())
+			{
+				for (auto &TypePair : **Group)
+				{
+					ClassifyOutput(TypePair.second);
+				}
+			}
+			else if (auto SimpleType = Type.As<TypeT>())
+			{
+				if (!SimpleType->IsDynamic()) ERROR;
+				
+				auto LLVMType = Type.As<LLVMLoadableTypeT>();
+				assert(LLVMType);
+				LLVMReturnTypes.push_back(LLVMType->GenerateLLVMType(Context));
+			}
+			else ERROR;
+		};
+		ClassifyOutput(*OutputType, BodyOutput, CallOutput);
+		
+		if (LLVMReturnTypes.size() > 1)
+		{
+			auto LLVMStructType = llvm::StructType::create(LLVMReturnTypes);
+			LLVMArgTypes.push_back(llvm::PointerType::getUnqual(LLVMStructType));
+		}
+	}
+	
+	if (InputType)
+	{
+		std::function<void(AtomT Type)> ClassifyInput;
+		ClassifyInput = [&](AtomT Type)
+		{
+			if (auto Group = Type.As<GroupT>())
+			{
+				for (auto &TypePair : **Group)
+				{
+					ClassifyInput(TypePair.second);
+				}
+			}
+			else if (auto SimpleType = Type.As<TypeT>())
+			{
+				if (!SimpleType->IsDynamic()) ERROR;
+				auto LLVMType = Type.As<LLVMLoadableTypeT>();
+				assert(LLVMType);
+				LLVMArgTypes.push_back(LLVMType->GenerateLLVMType(Context));
+			}
+			else ERROR;
+		};
+		ClassifyInput(*InputType);
+	}
+	
+	llvm::Type *LLVMReturnType;
+	if (LLVMReturnTypes.size() == 1) LLVMReturnType = LLVMReturnTypes[0];
+	else LLVMReturnType = llvm::Type::getVoidTy(Context.LLVM);
+	return llvm::FunctionType::get(LLVMReturnType, LLVMArgTypes, false);
+}
+	
+void FunctionTypeT::AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other)
+{
+	auto Function = Other.As<FunctionT>();
+	if (!Function) ERROR;
+	auto Body = Function->Body;
+	
+	auto FunctionContext = Context;
+	FunctionContext.IsConstant = true;
+	
+	auto BlockBody = Body.As<BlockT>();
+	if (!BlockBody) ERROR;
+	Body = BlockBody->CloneGroup();
+	auto BodyGroup = Body.As<GroupT>();
+	assert(BodyGroup);
+	
+	auto Signature = this->Signature.As<GroupT>();
+	if (!Signature) ERROR;
+	auto InputType = Signature->GetByKey(FunctionInputKey);
+	auto OutputType = Signature->GetByKey(FunctionOutputKey);
+
+	std::vector<llvm::Type *> LLVMArgTypes;
+	std::vector<llvm::Type *> LLVMReturnTypes;
+	
+	// INSIDE
+	AtomT BodyInput = BodyGroup->AccessElement(Context, FunctionInputKey);
+	AtomT BodyOutput = BodyGroup->AccessElement(Context, FunctionOutputKey);
+	std::vector<DynamicT *> DynamicBodyOutput;
+	std::vector<DynamicT *> DynamicBodyInput;
+	
+	if (OutputType)
+	{
+		std::function<void(AtomT Type, AtomT Body)> ClassifyOutput;
+		ClassifyOutput = [&](AtomT Type, AtomT Body)
+		{
+			auto BodyAssignable = Body.As<AssignableT>();
+			assert(BodyAssignable);
+			
+			if (auto Group = Type.As<GroupT>())
+			{
+				auto BodyGroup = new GroupT(Context.Position);
+				BodyAssignable->Assign(Context, BodyGroup);
+				for (auto &TypePair : **Group)
+				{
+					ClassifyOutput(
+						TypePair.second, 
+						BodyGroup->AccessElement(Context, TypePair.first));
+				}
+			}
+			else if (auto SimpleType = Type.As<TypeT>())
+			{
+				if (SimpleType->IsDynamic())
+				{
+					FunctionContext.IsConstant = false;
+					
+					auto LLVMType = Type.As<LLVMLoadableTypeT>();
+					assert(LLVMType);
+					LLVMReturnTypes.push_back(LLVMType->GenerateLLVMType(Context));
+					
+					auto BodyDynamic = new DynamicT(Context.Position);
+					BodyDynamic->Type = Type;
+					DynamicBodyOutput.push_back(BodyDynamic);
+					BodyAssignable->Assign(Context, BodyDynamic);
+				}
+				else
+				{
+					auto ConstantOutput = SimpleType->Allocate(Context, {});
+					BodyAssignable->Assign(Context, ConstantOutput);
+				}
+			}
+			else ERROR;
+		};
+		ClassifyOutput(*OutputType, BodyOutput);
+		
+		if (LLVMReturnTypes.size() > 1)
+		{
+			auto LLVMStructType = llvm::StructType::create(LLVMReturnTypes);
+			LLVMArgTypes.push_back(llvm::PointerType::getUnqual(LLVMStructType));
+		}
+	}
+	
+	if (InputType)
+	{
+		std::function<void(AtomT Type, AtomT Body)> ClassifyInput;
+		ClassifyInput = [&](AtomT Type, AtomT Body)
+		{
+			auto BodyAssignable = Body.As<AssignableT>();
+			assert(BodyAssignable);
+			
+			if (auto Group = Type.As<GroupT>())
+			{
+				auto BodyGroup = new GroupT(Context.Position);
+				
+				for (auto &TypePair : **Group)
+				{
+					auto SubBody = BodyGroup->AccessElement(Context, TypePair.first);
+					ClassifyInput(TypePair.second, SubBody);
+				}
+				
+				BodyAssignable->Assign(Context, BodyGroup);
+			}
+			else if (auto SimpleType = Type.As<TypeT>())
+			{
+				SimpleType->CheckType(Context, Call);
+				if (SimpleType->IsDynamic())
+				{
+					FunctionContext.IsConstant = false;
+					
+					auto LLVMType = Type.As<LLVMLoadableTypeT>();
+					assert(LLVMType);
+					LLVMArgTypes.push_back(LLVMType->GenerateLLVMType(Context));
+					
+					auto BodyDynamic = new DynamicT(Context.Position);
+					DynamicBodyInput.push_back(BodyDynamic);
+					BodyAssignable->Assign(Context, BodyDynamic);
+				}
+				else
+				{
+					auto BodyAtom = SimpleType->Allocate(Context, {});
+					auto BodyValue = BodyAtom.As<AssignableT>();
+					BodyValue->Assign(Context, Call);
+					BodyAssignable->Assign(Context, BodyAtom);
+				}
+			}
+			else ERROR;
+		};
+		ClassifyInput(*InputType, BodyInput);
+	}
+	
+	llvm::Type *LLVMReturnType;
+	if (LLVMReturnTypes.size() == 1) LLVMReturnType = LLVMReturnTypes[0];
+	else LLVMReturnType = llvm::Type::getVoidTy(Context.LLVM);
+	auto LLVMFunctionType = llvm::FunctionType::get(LLVMReturnType, LLVMArgTypes, false);
+	auto LLVMFunction = llvm::Function::Create(LLVMFunctionType, llvm::Function::ExternalLinkage, "", Context.Module);
+	auto Block = llvm::BasicBlock::Create(Context.LLVM, "entrypoint", LLVMFunction);
+	
+	{
+		size_t Index = 0, InputIndex = 0;
+		for (auto &Argument : LLVMFunction->getArgumentList())
+		{
+			if ((Index == 0) && (LLVMReturnTypes.size() > 1))
+			{
+				size_t StructIndex = 0;
+				Assert(DynamicBodyOutput.size(), LLVMReturnTypes.size());
+				for (auto &Dynamic : DynamicBodyOutput)
+					Dynamic->StructTarget = DynamicT::StructTargetT{&Argument, StructIndex++};
+			}
+			else
+			{
+				assert(InputIndex < DynamicBodyInput.size());
+				DynamicBodyInput[InputIndex++]->Target = &Argument;
+			}
+			++Index;
+		}
+		assert(InputIndex == DynamicBodyInput.size());
+	}
+	
+	FunctionContext.Block = Block;
+	BodyGroup->Simplify(FunctionContext);
+	
+	if (LLVMReturnTypes.size() == 1)
+		llvm::ReturnInst::Create(Context.LLVM, DynamicBodyOutput[0]->GenerateLLVMLoad(Context), Block);
+	else llvm::ReturnInst::Create(Context.LLVM, Block);
+	
+	return LLVMFunction;
 }
 
 constexpr auto FunctionInputKey = "input";
@@ -974,9 +1222,15 @@ void CallT::Simplify(ContextT Context)
 {
 	Function->Simplify(Context);
 	Input->Simplify(Context);
-	auto Function = this->Function.As<FunctionT>();
-	if (!Function) ERROR;
-	Replace(Function->Call(Context, Input));
+	AtomT Type;
+	if (auto Function = this->Function.As<FunctionT>())
+		Type = Function->GetType();
+	else if (auto Dynamic = this->Function.As<DynamicT>())
+		Type = Dynamic->Type.As<FunctionTypeT>();
+	else ERROR;
+	auto FunctionType = Type.As<FunctionTypeT>();
+	if (!FunctionType) ERROR;
+	Replace(FunctionType->Call(Context, Function, Input);
 }
 
 }
