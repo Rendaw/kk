@@ -211,6 +211,14 @@ int main(int, char **)
 					MakeAssignment("l", MakeString("normative")),
 					MakeAssignment("q", MakeInt(44))
 				}))));
+	MainGroup->Statements.push_back(
+		MakeAssignment("c",
+			MakeCall(
+				MakeElement("a"),
+				MakeGroup({
+					MakeAssignment("l", MakeString("normative")),
+					MakeAssignment("q", MakeInt(44))
+				}))));
 	MainGroup->Simplify({LLVM, Module, Block, nullptr, HARDPOSITION, true});
 	
 	Module->dump();

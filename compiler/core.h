@@ -2,10 +2,11 @@
 #define core_h
 
 /*NOTE NOTE NOTE NOTe
-] recursive implementt handling in assignment
-] fix
-] test
-] functions
+] function scope
+] test dynamic functions (implement empty input, etc... see TODO)
+] test recursive functions
+] test mutually recursive functions
+ 
 ] macros
 ] export
 ] import, c ffi?
@@ -109,6 +110,13 @@ struct AtomT
 		template <typename AsT> OptionalT<AsT *> As(void) 
 		{ 
 			auto Out = dynamic_cast<AsT *>(Nucleus);
+			if (!Out) return {};
+			return {Out};
+		}
+		
+		template <typename AsT> OptionalT<AsT const *> As(void) const
+		{ 
+			auto Out = dynamic_cast<AsT const *>(Nucleus);
 			if (!Out) return {};
 			return {Out};
 		}
@@ -343,12 +351,64 @@ struct AssignmentT : NucleusT
 
 //================================================================================================================
 // Functions
+template <typename TypeT> struct FunctionTreeT
+{
+	struct ElementT
+	{
+		OptionalT<TypeT> Leaf;
+		std::map<std::vector<uint8_t>, std::unique_ptr<ElementT>> Branches;
+	} Root;
+	
+	struct LookupT
+	{
+		ElementT *Position;
+		void Enter(std::vector<uint8_t> const &Key)
+		{
+			auto &Branch = Position->Branches[Key];
+			if (!Branch) Branch.reset(new ElementT);
+		}
+		
+		operator bool(void) const { return Position->Leaf; }
+		
+		TypeT &operator *(void) { if (!Position->Leaf) Position->Leaf = TypeT{}; return *Position->Leaf; }
+		
+		TypeT *operator ->(void) { if (!Position->Leaf) Position->Leaf = TypeT{}; return &*Position->Leaf; }
+	};
+	
+	LookupT StartLookup(void) { return LookupT{&Root}; }
+};
+
+struct FunctionT : NucleusT
+{
+	AtomT Type, Body;
+	
+	struct CachedLLVMFunctionT
+	{
+		llvm::Value *Function;
+		bool IsConstant;
+	};
+	FunctionTreeT<CachedLLVMFunctionT> InstanceTree;
+	
+	FunctionT(PositionT const Position);
+	AtomT GetType(ContextT Context) override;
+	void Simplify(ContextT Context) override;
+	
+	AtomT Call(ContextT Context, AtomT Input);
+};
+
 struct FunctionTypeT : NucleusT, TypeT, LLVMLoadableTypeT, LLVMAssignableTypeT
 {
 	bool Constant;
 	bool Static;
 	// TODO Dynamic
 	AtomT Signature;
+	
+	struct CachedLLVMFunctionTypeT
+	{
+		llvm::FunctionType *FunctionType;
+		OptionalT<llvm::Type *> ResultStructType;
+	};
+	FunctionTreeT<CachedLLVMFunctionTypeT> TypeTree;
 	
 	FunctionTypeT(PositionT const Position);
 	AtomT Clone(void) override;
@@ -360,17 +420,33 @@ struct FunctionTypeT : NucleusT, TypeT, LLVMLoadableTypeT, LLVMAssignableTypeT
 	void AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other) override;
 	
 	AtomT Call(ContextT Context, AtomT Body, AtomT Input);
-};
-
-struct FunctionT : NucleusT
-{
-	AtomT Type, Body;
 	
-	FunctionT(PositionT const Position);
-	AtomT GetType(ContextT Context) override;
-	void Simplify(ContextT Context) override;
+	struct GenerateLLVMTypeParamsT {};
+	struct GenerateLLVMTypeResultsT
+	{
+		llvm::Type *Type;
+	};
+	struct GenerateLLVMLoadParamsT
+	{
+		FunctionT *Function;
+	};
+	struct GenerateLLVMLoadResultsT
+	{
+		llvm::Value *Value;
+	};
+	struct CallParamsT
+	{
+		AtomT Function;
+		AtomT Input;
+	};
+	struct CallResultsT
+	{
+		AtomT Result;
+	};
+	typedef VariantT<GenerateLLVMTypeParamsT, GenerateLLVMLoadParamsT, CallParamsT> ProcessFunctionParamT;
+	typedef VariantT<GenerateLLVMTypeResultsT, GenerateLLVMLoadResultsT, CallResultsT> ProcessFunctionResultT;
 	
-	AtomT Call(ContextT Context, AtomT Input);
+	ProcessFunctionResultT ProcessFunction(ContextT Context, ProcessFunctionParamT Param);
 };
 
 struct CallT : NucleusT
