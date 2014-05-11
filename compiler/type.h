@@ -236,7 +236,7 @@ template <typename CurrentT, typename ...RemainingT> struct VariantInternalsT<Cu
 	
 	void Set(UnionT &Union, UnionT const &OtherUnion, VariantTagT const &OtherTag)
 	{
-		if (OtherTag == VARIANTTAG) Set(Union, OtherUnion.Value);
+		if (OtherTag == VARIANTTAG) Set(ExplicitT<CurrentT>(), Union, OtherUnion.Value);
 		else 
 		{
 			if (this->Tag == VARIANTTAG) DestroyImmediately(Union);
@@ -246,7 +246,7 @@ template <typename CurrentT, typename ...RemainingT> struct VariantInternalsT<Cu
 	
 	void Set(UnionT &Union, UnionT &&OtherUnion, VariantTagT const &OtherTag)
 	{
-		if (OtherTag == VARIANTTAG) Set(Union, std::move(OtherUnion.Value));
+		if (OtherTag == VARIANTTAG) Set(ExplicitT<CurrentT>(), Union, std::move(OtherUnion.Value));
 		else 
 		{
 			if (this->Tag == VARIANTTAG) DestroyImmediately(Union);
