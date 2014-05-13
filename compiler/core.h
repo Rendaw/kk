@@ -2,8 +2,6 @@
 #define core_h
 
 /*NOTE NOTE NOTE NOTe
-] function scope
-] test dynamic functions (implement empty input, etc... see TODO)
 ] test recursive functions
 ] test mutually recursive functions
  
@@ -105,7 +103,8 @@ struct AtomT
 		AtomT &operator =(AtomT &Other);
 	
 		operator NucleusT *(void);
-		operator bool(void);
+		operator bool(void) const;
+		bool operator !(void) const;
 		
 		template <typename AsT> OptionalT<AsT *> As(void) 
 		{ 
@@ -178,7 +177,7 @@ struct LLVMLoadableTypeT
 struct LLVMAssignableTypeT
 {
 	virtual ~LLVMAssignableTypeT(void);
-	virtual void AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other) = 0;
+	virtual void AssignLLVM(ContextT Context, bool &Initialized, llvm::Value *Target, AtomT Other) = 0;
 };
 
 //================================================================================================================
@@ -205,7 +204,7 @@ struct ImplementT : NucleusT
 struct StringTypeT;
 struct StringT : virtual NucleusT, virtual AssignableT
 {
-	bool Defined;
+	bool Initialized;
 	AtomT Type;
 	std::string Data;
 	
@@ -226,7 +225,7 @@ struct StringTypeT : NucleusT, TypeT
 	bool IsDynamic(void) override;
 	void CheckType(ContextT Context, AtomT Other) override;
 	AtomT Allocate(ContextT Context, AtomT Value) override;
-	void Assign(ContextT Context, bool &Defined, std::string &Data, AtomT Other);
+	void Assign(ContextT Context, bool &Initialized, std::string &Data, AtomT Other);
 };
 
 template <typename DataT> struct NumericT : 
@@ -234,7 +233,7 @@ template <typename DataT> struct NumericT :
 	virtual AssignableT, 
 	virtual LLVMLoadableT
 {
-	bool Defined;
+	bool Initialized;
 	AtomT Type;
 	DataT Data;
 	
@@ -247,7 +246,7 @@ template <typename DataT> struct NumericT :
 
 struct DynamicT : NucleusT, AssignableT, LLVMLoadableT
 {
-	bool Defined;
+	bool Initialized;
 	AtomT Type;
 	struct StructTargetT
 	{
@@ -279,7 +278,7 @@ struct NumericTypeT : NucleusT, TypeT, LLVMLoadableTypeT, LLVMAssignableTypeT
 	bool IsSigned(void) const;
 	void CheckType(ContextT Context, AtomT Other) override;
 	AtomT Allocate(ContextT Context, AtomT Value) override;
-	void AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other) override;
+	void AssignLLVM(ContextT Context, bool &Initialized, llvm::Value *Target, AtomT Other) override;
 	llvm::Type *GenerateLLVMType(ContextT Context) override;
 };
 
@@ -297,7 +296,7 @@ struct GroupCollectionT
 
 struct GroupT : NucleusT, AssignableT, GroupCollectionT
 {
-	// TODO gettype, allocate
+	// TODO? gettype, allocate
 	std::vector<AtomT> Statements;
 
 	GroupT(PositionT const Position);
@@ -398,9 +397,9 @@ struct FunctionT : NucleusT
 
 struct FunctionTypeT : NucleusT, TypeT, LLVMLoadableTypeT, LLVMAssignableTypeT
 {
+	uint16_t ID;
 	bool Constant;
 	bool Static;
-	// TODO Dynamic
 	AtomT Signature;
 	
 	struct CachedLLVMFunctionTypeT
@@ -417,7 +416,7 @@ struct FunctionTypeT : NucleusT, TypeT, LLVMLoadableTypeT, LLVMAssignableTypeT
 	bool IsDynamic(void) override;
 	void CheckType(ContextT Context, AtomT Other) override;
 	llvm::Type *GenerateLLVMType(ContextT Context) override;
-	void AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other) override;
+	void AssignLLVM(ContextT Context, bool &Initialized, llvm::Value *Target, AtomT Other) override;
 	
 	AtomT Call(ContextT Context, AtomT Body, AtomT Input);
 	

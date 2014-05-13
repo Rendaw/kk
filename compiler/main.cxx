@@ -13,13 +13,15 @@ int main(int, char **)
 	auto Main = llvm::Function::Create(MainType, llvm::Function::ExternalLinkage, "main", Module);
 	auto Block = llvm::BasicBlock::Create(LLVM, "entrypoint", Main);
 	
+	uint16_t TypeIDCounter = 1;
+	
 	auto MainGroup = new GroupT(HARDPOSITION);
 	auto MakeString_ = [&](PositionT const Position, std::string const &Value)
 	{
 		auto Type = new StringTypeT(Position);
 		Type->Static = false;
 		auto Out = new Core::StringT(Position);
-		Out->Defined = true;
+		Out->Initialized = true;
 		Out->Data = Value;
 		Out->Type = Type;
 		return Out;
@@ -33,7 +35,7 @@ int main(int, char **)
 		Type->Static = false;
 		auto Out = new NumericT<int>(Position);
 		Out->Type = Type;
-		Out->Defined = true;
+		Out->Initialized = true;
 		Out->Data = Value;
 		return Out;
 	};
@@ -144,6 +146,7 @@ int main(int, char **)
 	auto MakeFunctionType_ = [&](PositionT const Position, AtomT Signature)
 	{
 		auto Type = new FunctionTypeT(Position);
+		Type->ID = TypeIDCounter++;
 		Type->Signature = Signature;
 		return Type;
 	};
@@ -219,6 +222,37 @@ int main(int, char **)
 					MakeAssignment("l", MakeString("normative")),
 					MakeAssignment("q", MakeInt(44))
 				}))));
+	/*MainGroup->Statements.push_back(
+		MakeAssignment("a",
+			MakeImplement(
+				MakeDynamic(
+					MakeFunctionType(
+						MakeGroup({
+							MakeAssignment("input",
+								MakeGroup({
+									MakeAssignment("q", MakeDynamic(MakeIntType()))
+								})),
+							MakeAssignment("output",
+								MakeGroup({
+									MakeAssignment("m", MakeDynamic(MakeIntType())),
+									MakeAssignment("r", MakeDynamic(MakeIntType()))
+								}))
+						}))),
+				MakeBlock({
+					MakeAssignment("output",
+						MakeGroup({
+							MakeAssignment("m", MakeInt(7)),
+							MakeAssignment("r", MakeInt(13))
+						}))
+					}))));
+	MainGroup->Statements.push_back(
+		MakeAssignment("b",
+			MakeCall(
+				MakeElement("a"),
+				MakeGroup({
+					MakeAssignment("l", MakeString("normative")),
+					MakeAssignment("q", MakeInt(44))
+				}))));*/
 	MainGroup->Simplify({LLVM, Module, Block, nullptr, HARDPOSITION, true});
 	
 	Module->dump();

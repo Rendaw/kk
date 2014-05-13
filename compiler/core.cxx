@@ -58,7 +58,8 @@ AtomT &AtomT::operator =(NucleusT *Nucleus) { Set(Nucleus); return *this; }
 AtomT &AtomT::operator =(AtomT &Other) { Set(Other.Nucleus); return *this; }
 
 AtomT::operator NucleusT *(void) { return Nucleus; }
-AtomT::operator bool(void) { return Nucleus; }
+AtomT::operator bool(void) const { return Nucleus; }
+bool AtomT::operator !(void) const { return !Nucleus; }
 
 NucleusT *AtomT::operator ->(void) { return Nucleus; }
 
@@ -133,12 +134,12 @@ LLVMAssignableTypeT::~LLVMAssignableTypeT(void) {}
 
 TypeT::~TypeT(void) {}
 
-StringT::StringT(PositionT const Position) : NucleusT(Position), Defined(false) {}
+StringT::StringT(PositionT const Position) : NucleusT(Position), Initialized(false) {}
 
 AtomT StringT::Clone(void)
 {
 	auto Out = new StringT(Position);
-	Out->Defined = Defined;
+	Out->Initialized = Initialized;
 	Out->Type = Type;
 	Out->Data = Data;
 	return Out;
@@ -152,7 +153,7 @@ AtomT StringT::GetType(ContextT Context)
 
 void StringT::Assign(ContextT Context, AtomT Other)
 {
-	GetType(Context).As<StringTypeT>()->Assign(Context, Defined, Data, Other);
+	GetType(Context).As<StringTypeT>()->Assign(Context, Initialized, Data, Other);
 }
 
 StringTypeT::StringTypeT(PositionT const Position) : NucleusT(Position), ID(DefaultTypeID), Static(true) {}
@@ -185,32 +186,32 @@ AtomT StringTypeT::Allocate(ContextT Context, AtomT Value)
 	{
 		if (auto String = Value.As<StringT>())
 		{
-			if (!String->Defined) ERROR;
+			if (!String->Initialized) ERROR;
 			Out->Data = String->Data;
 		}
 		else ERROR;
-		Out->Defined = true;
+		Out->Initialized = true;
 	}
 	return Out;
 }
 
-void StringTypeT::Assign(ContextT Context, bool &Defined, std::string &Data, AtomT Other)
+void StringTypeT::Assign(ContextT Context, bool &Initialized, std::string &Data, AtomT Other)
 {
 	CheckType(Context, Other);
-	if (Defined && Static) ERROR;
+	if (Initialized && Static) ERROR;
 	auto String = Other.As<StringT>();
 	if (!String) ERROR;
-	if (!String->Defined) ERROR;
+	if (!String->Initialized) ERROR;
 	Data = String->Data;
-	Defined = true;
+	Initialized = true;
 }
 
-template <typename DataT> NumericT<DataT>::NumericT(PositionT const Position) : NucleusT(Position), Defined(false) {}
+template <typename DataT> NumericT<DataT>::NumericT(PositionT const Position) : NucleusT(Position), Initialized(false) {}
 
 template <typename DataT> AtomT NumericT<DataT>::Clone(void)
 {
 	auto Out = new NumericT<DataT>(Position);
-	Out->Defined = Defined;
+	Out->Initialized = Initialized;
 	Out->Type = Type;
 	Out->Data = Data;
 	return Out;
@@ -236,16 +237,16 @@ template <typename DataT> void NumericT<DataT>::Assign(ContextT Context, AtomT O
 {
 	auto Type = GetType(Context).template As<NumericTypeT>();
 	Type->CheckType(Context, Other);
-	if (Type->Static && Defined) ERROR;
+	if (Type->Static && Initialized) ERROR;
 	auto Number = Other.As<NumericT<DataT>>();
 	if (!Number) ERROR;
-	if (!Number->Defined) ERROR;
+	if (!Number->Initialized) ERROR;
 	Data = Number->Data;
 }
 
 template <> llvm::Value *NumericT<float>::GenerateLLVMLoad(ContextT Context)
 {
-	if (!Defined) ERROR;
+	if (!Initialized) ERROR;
 	return llvm::ConstantFP::get
 		(
 			llvm::Type::getFloatTy(Context.LLVM),
@@ -255,7 +256,7 @@ template <> llvm::Value *NumericT<float>::GenerateLLVMLoad(ContextT Context)
 
 template <> llvm::Value *NumericT<double>::GenerateLLVMLoad(ContextT Context)
 {
-	if (!Defined) ERROR;
+	if (!Initialized) ERROR;
 	return llvm::ConstantFP::get
 		(
 			llvm::Type::getDoubleTy(Context.LLVM),
@@ -265,7 +266,7 @@ template <> llvm::Value *NumericT<double>::GenerateLLVMLoad(ContextT Context)
 
 template <typename DataT> llvm::Value *NumericT<DataT>::GenerateLLVMLoad(ContextT Context)
 {
-	if (!Defined) ERROR;
+	if (!Initialized) ERROR;
 	return llvm::ConstantInt::get
 		(
 			llvm::IntegerType::get(Context.LLVM, sizeof(Data) * 8), 
@@ -274,7 +275,7 @@ template <typename DataT> llvm::Value *NumericT<DataT>::GenerateLLVMLoad(Context
 		);
 }
 
-DynamicT::DynamicT(PositionT const Position) : NucleusT(Position), Defined(false), Target(nullptr) {}
+DynamicT::DynamicT(PositionT const Position) : NucleusT(Position), Initialized(false), Target(nullptr) {}
 
 AtomT DynamicT::GetType(ContextT Context) { return Type; }
 
@@ -306,12 +307,12 @@ void DynamicT::Assign(ContextT Context, AtomT Other)
 {
 	auto Type = GetType(Context).As<LLVMAssignableTypeT>();
 	if (!Type) ERROR;
-	Type->AssignLLVM(Context, Defined, GetTarget(Context), Other);
+	Type->AssignLLVM(Context, Initialized, GetTarget(Context), Other);
 }
 
 llvm::Value *DynamicT::GenerateLLVMLoad(ContextT Context)
 {
-	if (!Defined) ERROR;
+	if (!Initialized) ERROR;
 	return new llvm::LoadInst(GetTarget(Context), "", Context.Block); 
 }
 	
@@ -338,7 +339,7 @@ llvm::Value *GenerateLLVMNumericConversion(llvm::BasicBlock *Block, llvm::Value 
 			}
 			else
 			{
-				assert(DestType->isFloatTy() || DestType->isDoubleTy());
+				AssertOr(DestType->isFloatTy(), DestType->isDoubleTy());
 				return new llvm::SIToFPInst(Source, DestType, "", Block);
 			}
 		}
@@ -361,7 +362,7 @@ llvm::Value *GenerateLLVMNumericConversion(llvm::BasicBlock *Block, llvm::Value 
 			}
 			else
 			{
-				assert(DestType->isFloatTy() || DestType->isDoubleTy());
+				AssertOr(DestType->isFloatTy(), DestType->isDoubleTy());
 				return new llvm::UIToFPInst(Source, DestType, "", Block);
 			}
 		}
@@ -387,13 +388,13 @@ llvm::Value *GenerateLLVMNumericConversion(llvm::BasicBlock *Block, llvm::Value 
 			}
 			else
 			{
-				assert(DestType->isDoubleTy());
+				Assert(DestType->isDoubleTy());
 				return new llvm::FPExtInst(Source, DestType, "", Block);
 			}
 		}
 		else
 		{
-			assert(SourceType->isDoubleTy());
+			Assert(SourceType->isDoubleTy());
 			if (DestType->isIntegerTy())
 			{
 				if (DestSigned)
@@ -411,7 +412,7 @@ llvm::Value *GenerateLLVMNumericConversion(llvm::BasicBlock *Block, llvm::Value 
 			}
 			else
 			{
-				assert(DestType->isDoubleTy());
+				Assert(DestType->isDoubleTy());
 				return Source;
 			}
 		}
@@ -451,8 +452,8 @@ void NumericTypeT::CheckType(ContextT Context, AtomT Other)
 	}
 	else
 	{
-		assert(!Constant || OtherType->Constant);
-		assert(DataType == OtherType->DataType);
+		AssertOr(!Constant, OtherType->Constant);
+		AssertE((int)DataType, (int)OtherType->DataType);
 	}
 }
 
@@ -462,12 +463,12 @@ template <typename BaseT> AtomT NumericTypeConstantAssign(ContextT Context, Nume
 	Out->Type = &Type;
 	if (Value)
 	{
-		if (auto Number = Value.As<NumericT<int32_t>>()) { if (!Number->Defined) ERROR; Out->Data = Number->Data; }
-		else if (auto Number = Value.As<NumericT<uint32_t>>()) { if (!Number->Defined) ERROR; Out->Data = Number->Data; }
-		else if (auto Number = Value.As<NumericT<float>>()) { if (!Number->Defined) ERROR; Out->Data = Number->Data; }
-		else if (auto Number = Value.As<NumericT<double>>()) { if (!Number->Defined) ERROR; Out->Data = Number->Data; }
+		if (auto Number = Value.As<NumericT<int32_t>>()) { if (!Number->Initialized) ERROR; Out->Data = Number->Data; }
+		else if (auto Number = Value.As<NumericT<uint32_t>>()) { if (!Number->Initialized) ERROR; Out->Data = Number->Data; }
+		else if (auto Number = Value.As<NumericT<float>>()) { if (!Number->Initialized) ERROR; Out->Data = Number->Data; }
+		else if (auto Number = Value.As<NumericT<double>>()) { if (!Number->Initialized) ERROR; Out->Data = Number->Data; }
 		else ERROR;
-		Out->Defined = true;
+		Out->Initialized = true;
 	}
 	return Out;
 }
@@ -515,16 +516,16 @@ AtomT NumericTypeT::Allocate(ContextT Context, AtomT Value)
 			DestSigned);
 		new llvm::StoreInst(Source, Dest, Context.Block);
 		
-		Out->Defined = true;
+		Out->Initialized = true;
 		return Out;
 	}
 }
 
-void NumericTypeT::AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other)
+void NumericTypeT::AssignLLVM(ContextT Context, bool &Initialized, llvm::Value *Target, AtomT Other)
 {
 	CheckType(Context, Other);
-	if (Defined && Static) ERROR;
-	Defined = true;
+	if (Initialized && Static) ERROR;
+	Initialized = true;
 	auto Loadable = Other.As<LLVMLoadableT>();
 	if (!Loadable) ERROR;
 	new llvm::StoreInst(Loadable->GenerateLLVMLoad(Context), Target, Context.Block);
@@ -557,7 +558,7 @@ OptionalT<AtomT> GroupCollectionT::GetByKey(std::string const &Key)
 void GroupCollectionT::Add(std::string const &Key, AtomT Value)
 {
 	auto Found = Keys.find(Key);
-	assert(Found == Keys.end());
+	Assert(Found == Keys.end());
 	Keys[Key] = Value;
 }
 
@@ -568,10 +569,11 @@ GroupT::GroupT(PositionT const Position) : NucleusT(Position) {}
 
 AtomT GroupT::Clone(void)
 {
-	assert(Keys.empty()); // Clones must occur before simplification
 	auto Out = new GroupT(Position);
 	for (auto &Statement : Statements)
 		Out->Statements.push_back(Statement->Clone());
+	for (auto &Pair : *this)
+		Out->Add(Pair.first, Pair.second->Clone());
 	return Out;
 }
 
@@ -675,6 +677,10 @@ void AsDynamicTypeT::Simplify(ContextT Context)
 	{
 		Numeric->Constant = false;
 	}
+	else if (auto FunctionType = NewType.As<FunctionTypeT>())
+	{
+		FunctionType->Constant = false;
+	}
 	else ERROR;
 	Replace(NewType);
 }
@@ -704,11 +710,14 @@ void AssignmentT::Simplify(ContextT Context)
 //================================================================================================================
 // Functions
 
-FunctionTypeT::FunctionTypeT(PositionT const Position) : NucleusT(Position), Constant(true), Static(true) {}
+FunctionTypeT::FunctionTypeT(PositionT const Position) : NucleusT(Position), ID(0), Constant(true), Static(true) {}
 
 AtomT FunctionTypeT::Clone(void)
 {
 	auto Out = new FunctionTypeT(Position);
+	Out->ID = ID;
+	Out->Constant = Constant;
+	Out->Static = Static;
 	Out->Signature = Signature->Clone();
 	return Out;
 }
@@ -744,7 +753,10 @@ bool FunctionTypeT::IsDynamic(void)
 
 void FunctionTypeT::CheckType(ContextT Context, AtomT Other)
 {
-	ERROR; // TODO
+	AssertNE(ID, 0);
+	auto OtherType = Other->GetType(Context).As<FunctionTypeT>();
+	if (!OtherType) ERROR;
+	if (OtherType->ID != ID) ERROR;
 }
 
 llvm::Type *FunctionTypeT::GenerateLLVMType(ContextT Context)
@@ -753,21 +765,21 @@ llvm::Type *FunctionTypeT::GenerateLLVMType(ContextT Context)
 	return Result.Get<GenerateLLVMTypeResultsT>().Type;
 }
 	
-void FunctionTypeT::AssignLLVM(ContextT Context, bool &Defined, llvm::Value *Target, AtomT Other)
+void FunctionTypeT::AssignLLVM(ContextT Context, bool &Initialized, llvm::Value *Target, AtomT Other)
 {
 	CheckType(Context, Other);
-	if (Defined && Static) ERROR;
+	if (Initialized && Static) ERROR;
 	if (auto Function = Other.As<FunctionT>())
 	{
 		auto Result = ProcessFunction(Context, GenerateLLVMLoadParamsT{*Function});
-		new llvm::StoreInst(new llvm::LoadInst(Result.Get<GenerateLLVMLoadResultsT>().Value, "", Context.Block), Target, Context.Block);
+		new llvm::StoreInst(Result.Get<GenerateLLVMLoadResultsT>().Value, Target, Context.Block);
 	}
 	else if (auto Dynamic = Other.As<DynamicT>())
 	{
-		new llvm::StoreInst(Dynamic->Target, Target, Context.Block);
+		new llvm::StoreInst(Dynamic->GenerateLLVMLoad(Context), Target, Context.Block);
 	}
 	else ERROR;
-	Defined = true;
+	Initialized = true;
 }
 
 AtomT FunctionTypeT::Call(ContextT Context, AtomT Function, AtomT Input)
@@ -776,15 +788,25 @@ AtomT FunctionTypeT::Call(ContextT Context, AtomT Function, AtomT Input)
 	return Result.Get<CallResultsT>().Result;
 }
 
-std::vector<uint8_t> GetValueID(AtomT const &Value)
+std::vector<uint8_t> GetLLVMArgID(ExplicitT<DynamicT>)
+{
+	return {0};
+}
+
+std::vector<uint8_t> GetLLVMArgID(ExplicitT<GroupT>)
+{
+	return {1};
+}
+
+std::vector<uint8_t> GetLLVMArgID(AtomT const &Value)
 {
 	if (auto Dynamic = Value.As<DynamicT>())
 	{
-		return {0};
+		return GetLLVMArgID(ExplicitT<DynamicT>());
 	}
 	else if (auto Group = Value.As<GroupT>())
 	{
-		return {1};
+		return GetLLVMArgID(ExplicitT<GroupT>());
 	}
 	else if (auto String = Value.As<StringT>())
 	{
@@ -849,6 +871,7 @@ FunctionTypeT::ProcessFunctionResultT FunctionTypeT::ProcessFunction(ContextT Co
 	else if (Param.Is<GenerateLLVMLoadParamsT>())
 	{
 		auto &Params = Param.Get<GenerateLLVMLoadParamsT>();
+		Body = Params.Function->Body;
 		FunctionTree = &Params.Function->InstanceTree;
 	}
 	else if (Param.Is<CallParamsT>())
@@ -875,11 +898,16 @@ FunctionTypeT::ProcessFunctionResultT FunctionTypeT::ProcessFunction(ContextT Co
 	auto FunctionContext = Context;
 	FunctionContext.IsConstant = true;
 	
-	auto BlockBody = Body.As<BlockT>();
-	if (!BlockBody) ERROR;
-	Body = BlockBody->CloneGroup();
-	auto BodyGroup = Body.As<GroupT>();
-	assert(BodyGroup);
+	OptionalT<BlockT *> BlockBody;
+	OptionalT<GroupT *> BodyGroup;
+	if (Body)
+	{
+		BlockBody = Body.As<BlockT>();
+		if (!*BlockBody) ERROR;
+		Body = BlockBody->CloneGroup();
+		BodyGroup = Body.As<GroupT>();
+		Assert(*BodyGroup);
+	}
 	
 	auto Signature = this->Signature.As<GroupT>();
 	if (!Signature) ERROR;
@@ -891,13 +919,22 @@ FunctionTypeT::ProcessFunctionResultT FunctionTypeT::ProcessFunction(ContextT Co
 	
 	// OUTSIDE
 	// argument CallInput
-	AtomT CallOutput = new UndefinedT(Context.Position);
+	AtomT CallOutput;
+	if (Param.Is<CallParamsT>()) 
+	{
+		CallOutput = new UndefinedT(Context.Position);
+	}
 	std::vector<llvm::Value *> DynamicCallInput; // Values passed to llvm::callinst
 	std::vector<DynamicT *> DynamicCallOutput; // Dynamics parsed from result of llvm::callinst
 	
 	// INSIDE
-	AtomT BodyInput = BodyGroup->AccessElement(Context, FunctionInputKey);
-	AtomT BodyOutput = BodyGroup->AccessElement(Context, FunctionOutputKey);
+	AtomT BodyInput;
+	AtomT BodyOutput;
+	if (Body) 
+	{
+		BodyInput = (*BodyGroup)->AccessElement(Context, FunctionInputKey);
+		BodyOutput = (*BodyGroup)->AccessElement(Context, FunctionOutputKey);
+	}
 	std::vector<DynamicT *> DynamicBodyOutput;
 	std::vector<DynamicT *> DynamicBodyInput;
 	
@@ -906,23 +943,42 @@ FunctionTypeT::ProcessFunctionResultT FunctionTypeT::ProcessFunction(ContextT Co
 		std::function<void(AtomT Type, AtomT Body, AtomT Call)> ClassifyOutput;
 		ClassifyOutput = [&](AtomT Type, AtomT Body, AtomT Call)
 		{
-			auto BodyAssignable = Body.As<AssignableT>();
-			assert(BodyAssignable);
-			auto CallAssignable = Call.As<AssignableT>();
-			assert(CallAssignable);
+			OptionalT<AssignableT *> BodyAssignable;
+			if (Body)
+			{
+				BodyAssignable = Body.As<AssignableT>();
+				Assert(*BodyAssignable);
+			}
+			
+			OptionalT<AssignableT *> CallAssignable;
+			if (Param.Is<CallParamsT>())
+			{
+				CallAssignable = Call.As<AssignableT>();
+				Assert(*CallAssignable);
+			}
 			
 			if (auto Group = Type.As<GroupT>())
 			{
-				auto BodyGroup = new GroupT(Context.Position);
-				BodyAssignable->Assign(Context, BodyGroup);
-				auto CallGroup = new GroupT(Context.Position);
-				CallAssignable->Assign(Context, CallGroup);
+				OptionalT<GroupT *> BodyGroup;
+				if (Body)
+				{
+					BodyGroup = new GroupT(Context.Position);
+					(*BodyAssignable)->Assign(Context, *BodyGroup);
+				}
+				
+				OptionalT<GroupT *> CallGroup;
+				if (Param.Is<CallParamsT>())
+				{
+					CallGroup = new GroupT(Context.Position);
+					(*CallAssignable)->Assign(Context, *CallGroup);
+				}
+				
 				for (auto &TypePair : **Group)
 				{
 					ClassifyOutput(
 						TypePair.second, 
-						BodyGroup->AccessElement(Context, TypePair.first), 
-						CallGroup->AccessElement(Context, TypePair.first));
+						Body ? (*BodyGroup)->AccessElement(Context, TypePair.first) : AtomT{}, 
+						Param.Is<CallParamsT>() ? (*CallGroup)->AccessElement(Context, TypePair.first) : AtomT{});
 				}
 			}
 			else if (auto SimpleType = Type.As<TypeT>())
@@ -932,10 +988,10 @@ FunctionTypeT::ProcessFunctionResultT FunctionTypeT::ProcessFunction(ContextT Co
 					FunctionContext.IsConstant = false;
 					
 					auto LLVMType = Type.As<LLVMLoadableTypeT>();
-					assert(LLVMType);
+					Assert(LLVMType);
 					LLVMReturnTypes.push_back(LLVMType->GenerateLLVMType(Context));
 					
-					if (Param.Is<GenerateLLVMLoadParamsT>() || Param.Is<CallParamsT>())
+					if (Body)
 					{
 						auto BodyDynamic = new DynamicT(Context.Position);
 						BodyDynamic->Type = Type;
@@ -955,6 +1011,8 @@ FunctionTypeT::ProcessFunctionResultT FunctionTypeT::ProcessFunction(ContextT Co
 				{
 					if (Param.Is<GenerateLLVMTypeParamsT>() || Param.Is<GenerateLLVMLoadParamsT>())
 						ERROR;
+					Assert(Body);
+					Assert(Param.Is<CallParamsT>());
 					auto ConstantOutput = SimpleType->Allocate(Context, {});
 					BodyAssignable->Assign(Context, ConstantOutput);
 					CallAssignable->Assign(Context, ConstantOutput);
@@ -989,57 +1047,111 @@ FunctionTypeT::ProcessFunctionResultT FunctionTypeT::ProcessFunction(ContextT Co
 		}
 	}
 	
-	// TODO Handle no input, no body, no input but type groups
 	if (InputType)
 	{
 		std::function<void(AtomT Type, AtomT Call, AtomT Body)> ClassifyInput;
 		ClassifyInput = [&](AtomT Type, AtomT Call, AtomT Body)
 		{
-			TypeLookup.Enter(GetValueID(Call));
-			if (FunctionLookup)
-				FunctionLookup->Enter(GetValueID(Call));
+			if (Param.Is<CallParamsT>())
+			{
+				TypeLookup.Enter(GetLLVMArgID(Call));
+				if (FunctionLookup)
+					FunctionLookup->Enter(GetLLVMArgID(Call));
+			}
 			
-			auto BodyAssignable = Body.As<AssignableT>();
-			assert(BodyAssignable);
+			OptionalT<AssignableT *> BodyAssignable;
+			if (Body)
+			{
+				auto OptBodyAssignable = Body.As<AssignableT>();
+				Assert(OptBodyAssignable);
+				BodyAssignable = *OptBodyAssignable;
+			}
 			
 			if (auto Group = Type.As<GroupT>())
 			{
-				auto CallGroup = Call.As<GroupT>();
-				if (!CallGroup) ERROR;
+				OptionalT<GroupT *> CallGroup;
+				if (Param.Is<CallParamsT>())
+				{
+					auto OptCallGroup = Call.As<GroupT>();
+					if (!OptCallGroup) ERROR;
+					CallGroup = *OptCallGroup;
+				}
+				else
+				{
+					TypeLookup.Enter(GetLLVMArgID(ExplicitT<GroupT>()));
+					if (FunctionLookup)
+						FunctionLookup->Enter(GetLLVMArgID(ExplicitT<GroupT>()));
+				}
 				
-				auto BodyGroup = new GroupT(Context.Position);
+				OptionalT<GroupT *> BodyGroup;
+				if (Body)
+				{
+					BodyGroup = new GroupT(Context.Position);
+				}
 				
 				for (auto &TypePair : **Group)
 				{
-					auto SubCall = CallGroup->GetByKey(TypePair.first);
-					if (!SubCall) ERROR;
-					auto SubBody = BodyGroup->AccessElement(Context, TypePair.first);
-					ClassifyInput(TypePair.second, *SubCall, SubBody);
+					AtomT SubCall;
+					if (Param.Is<CallParamsT>())
+					{
+						auto OptSubCall = (*CallGroup)->GetByKey(TypePair.first);
+						if (!OptSubCall) ERROR;
+						SubCall = *OptSubCall;
+					}
+					
+					AtomT SubBody;
+					if (Body)
+					{
+						SubBody = (*BodyGroup)->AccessElement(Context, TypePair.first);
+					}
+					
+					ClassifyInput(TypePair.second, SubCall, SubBody);
 				}
 				
-				BodyAssignable->Assign(Context, BodyGroup);
+				if (Body)
+				{
+					(*BodyAssignable)->Assign(Context, *BodyGroup);
+				}
 			}
 			else if (auto SimpleType = Type.As<TypeT>())
 			{
-				SimpleType->CheckType(Context, Call);
+				if (Param.Is<CallParamsT>())
+					SimpleType->CheckType(Context, Call);
+				
 				if (SimpleType->IsDynamic())
 				{
 					FunctionContext.IsConstant = false;
 					
 					auto LLVMType = Type.As<LLVMLoadableTypeT>();
-					assert(LLVMType);
+					Assert(LLVMType);
 					LLVMArgTypes.push_back(LLVMType->GenerateLLVMType(Context));
 					
-					auto CallValue = Call.As<LLVMLoadableT>();
-					if (!CallValue) ERROR;
-					DynamicCallInput.push_back(CallValue->GenerateLLVMLoad(Context));
+					if (Param.Is<CallParamsT>())
+					{
+						auto CallValue = Call.As<LLVMLoadableT>();
+						if (!CallValue) ERROR;
+						DynamicCallInput.push_back(CallValue->GenerateLLVMLoad(Context));
+					}
+					else
+					{
+						TypeLookup.Enter(GetLLVMArgID(ExplicitT<DynamicT>()));
+						if (FunctionLookup)
+							FunctionLookup->Enter(GetLLVMArgID(ExplicitT<DynamicT>()));
+					}
 					
-					auto BodyDynamic = new DynamicT(Context.Position);
-					DynamicBodyInput.push_back(BodyDynamic);
-					BodyAssignable->Assign(Context, BodyDynamic);
+					if (Body)
+					{
+						auto BodyDynamic = new DynamicT(Context.Position);
+						DynamicBodyInput.push_back(BodyDynamic);
+						BodyAssignable->Assign(Context, BodyDynamic);
+					}
 				}
 				else
 				{
+					if (Param.Is<GenerateLLVMTypeParamsT>() || Param.Is<GenerateLLVMLoadParamsT>())
+						ERROR;
+					Assert(Body);
+					Assert(Param.Is<CallParamsT>());
 					auto BodyAtom = SimpleType->Allocate(Context, {});
 					auto BodyValue = BodyAtom.As<AssignableT>();
 					BodyValue->Assign(Context, Call);
@@ -1081,8 +1193,18 @@ FunctionTypeT::ProcessFunctionResultT FunctionTypeT::ProcessFunction(ContextT Co
 	}
 	else
 	{
-		auto SpecificLLVMFunction = llvm::Function::Create(LLVMFunctionType, llvm::Function::ExternalLinkage, "", Context.Module);
+		auto SpecificLLVMFunction = llvm::Function::Create(LLVMFunctionType, llvm::Function::PrivateLinkage, "", Context.Module);
 		LLVMFunction = SpecificLLVMFunction;
+
+		if (LLVMReturnTypes.size() > 1)
+		{
+			SpecificLLVMFunction->addAttribute(1, llvm::Attribute::StructRet);
+		}
+		
+		// Add to lookup here for recursion and mutual-recursion purposes
+		Assert(FunctionLookup);
+		(*FunctionLookup)->Function = LLVMFunction;
+		(*FunctionLookup)->IsConstant = FunctionContext.IsConstant;
 		
 		auto Block = llvm::BasicBlock::Create(Context.LLVM, "entrypoint", SpecificLLVMFunction);
 		
@@ -1093,30 +1215,26 @@ FunctionTypeT::ProcessFunctionResultT FunctionTypeT::ProcessFunction(ContextT Co
 				if ((Index == 0) && (LLVMReturnTypes.size() > 1))
 				{
 					size_t StructIndex = 0;
-					Assert(DynamicBodyOutput.size(), LLVMReturnTypes.size());
+					AssertE(DynamicBodyOutput.size(), LLVMReturnTypes.size());
 					for (auto &Dynamic : DynamicBodyOutput)
 						Dynamic->StructTarget = DynamicT::StructTargetT{&Argument, StructIndex++};
 				}
 				else
 				{
-					assert(InputIndex < DynamicBodyInput.size());
+					AssertLT(InputIndex, DynamicBodyInput.size());
 					DynamicBodyInput[InputIndex++]->Target = &Argument;
 				}
 				++Index;
 			}
-			assert(InputIndex == DynamicBodyInput.size());
+			AssertE(InputIndex, DynamicBodyInput.size());
 		}
 		
 		FunctionContext.Block = Block;
-		BodyGroup->Simplify(FunctionContext);
+		(*BodyGroup)->Simplify(FunctionContext);
 		
 		if (LLVMReturnTypes.size() == 1)
 			llvm::ReturnInst::Create(Context.LLVM, DynamicBodyOutput[0]->GenerateLLVMLoad(Context), Block);
 		else llvm::ReturnInst::Create(Context.LLVM, Block);
-		
-		Assert(FunctionLookup);
-		(*FunctionLookup)->Function = LLVMFunction;
-		(*FunctionLookup)->IsConstant = FunctionContext.IsConstant;
 	}
 
 	if (Param.Is<GenerateLLVMLoadParamsT>()) return GenerateLLVMLoadResultsT{LLVMFunction}; // NOTE Return
@@ -1128,7 +1246,7 @@ FunctionTypeT::ProcessFunctionResultT FunctionTypeT::ProcessFunction(ContextT Co
 		
 		if (LLVMReturnTypes.size() == 1)
 		{
-			Assert(DynamicCallOutput.size() == 1);
+			AssertE(DynamicCallOutput.size(), 1u);
 			DynamicCallOutput[0]->Target = Result;
 		}
 	}

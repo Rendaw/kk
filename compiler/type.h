@@ -1,6 +1,7 @@
 #ifndef type_h
 #define type_h
 
+#include <cassert>
 #include "extrastandard.h"
 #include <string>
 #include <sstream>
@@ -273,10 +274,10 @@ template <typename CurrentT, typename ...RemainingT> struct VariantInternalsT<Cu
 	}
 		
 	void DestroyImmediately(UnionT &Union)
-		{ Assert(this->Tag == VARIANTTAG); Union.Value.~CurrentT(); }
+		{ AssertE(this->Tag, VARIANTTAG); Union.Value.~CurrentT(); }
 	
 	void DestroyImmediately(UnionT const &Union) const 
-		{ Assert(this->Tag == VARIANTTAG); Union.Value.~CurrentT(); }
+		{ AssertE(this->Tag, VARIANTTAG); Union.Value.~CurrentT(); }
 		
 	using VariantInternalsT<RemainingT...>::Destroy;
 	
