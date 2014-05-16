@@ -1022,7 +1022,12 @@ FunctionTypeT::ProcessFunctionResultT FunctionTypeT::ProcessFunction(ContextT Co
 		};
 		ClassifyOutput(*OutputType, BodyOutput, CallOutput);
 		
-		if (LLVMReturnTypes.size() > 1)
+		if (LLVMReturnTypes.size() == 1)
+		{
+			Assert(DynamicBodyOutput.size() == 1);
+			DynamicBodyOutput[0]->Target = new llvm::AllocaInst(LLVMReturnTypes[0], "", Context.Block);
+		}
+		else if (LLVMReturnTypes.size() > 1)
 		{
 			if (TypeLookup) 
 			{
@@ -1296,6 +1301,105 @@ void CallT::Simplify(ContextT Context)
 	auto FunctionType = Type.As<FunctionTypeT>();
 	if (!FunctionType) ERROR;
 	Replace(FunctionType->Call(Context, Function, Input));
+}
+
+ModuleT::ModuleT(PositionT const Position) : NucleusT(Position), Entry(false) {}
+
+void ModuleT::Simplify(ContextT Context)
+{
+	if (!Top) ERROR;
+	auto TopGroup = Top.As<GroupT>();
+	
+	auto &LLVM = Context.LLVM;
+	if (Name.empty()) ERROR;
+	auto Module = new llvm::Module(Name.c_str(), LLVM);
+	
+	NumericTypeT *ReturnType = nullptr;
+	
+	llvm::FunctionType *FunctionType = nullptr;
+	if (Entry)
+	{
+		ReturnType = new NumericTypeT(Context.Position);
+		ReturnType->Constant = false;
+		ReturnType->Static = false;
+		ReturnType->DataType = NumericTypeT::DataTypeT::Int;
+		FunctionType = llvm::FunctionType::get(
+			ReturnType->GenerateLLVMType(Context),
+			std::vector<llvm::Type *>
+			{
+				llvm::IntegerType::get(LLVM, 32), 
+				llvm::PointerType::get(llvm::PointerType::get(llvm::IntegerType::get(LLVM, 8), 0), 0)
+			}, 
+			false);
+	}
+	else FunctionType = llvm::FunctionType::get(llvm::Type::getVoidTy(LLVM), false);
+	auto Function = llvm::Function::Create(FunctionType, llvm::Function::ExternalLinkage, Entry ? "main" : "__ctor", Module);
+	auto Block = llvm::BasicBlock::Create(LLVM, "entrypoint", Function);
+	
+	Assert(!Context.Module);
+	Context.Module = Module;
+	Assert(!Context.Block);
+	Context.Block = Block;
+	Assert(!Context.Scope);
+	Assert(Context.IsConstant);
+	
+	DynamicT *ReturnValue = nullptr;
+	
+	if (Entry)
+	{
+		ReturnValue = new DynamicT(Context.Position);
+		ReturnValue->Type = ReturnType;
+		ReturnValue->Target = new llvm::AllocaInst(ReturnType->GenerateLLVMType(Context), "", Context.Block);
+		ReturnValue->Initialized = false;
+		auto Out = TopGroup->AccessElement(Context, FunctionOutputKey).As<AssignableT>();
+		Out->Assign(Context, ReturnValue);
+	}
+
+	Top->Simplify(Context); // TODO position
+	
+	if (Entry)
+	{
+		llvm::ReturnInst::Create(Context.LLVM, ReturnValue->GenerateLLVMLoad(Context), Block);
+	}
+	else
+	{
+		auto GlobalConstructorStructType = llvm::StructType::get(
+			LLVM,
+			std::vector<llvm::Type *>{
+				llvm::IntegerType::get(LLVM, 32),
+				llvm::PointerType::get(FunctionType, 0)}, 
+			false);
+
+		auto GlobalConstructorArrayType = llvm::ArrayType::get(GlobalConstructorStructType, 1);
+
+		new llvm::GlobalVariable
+		(
+			*Module, 
+			GlobalConstructorArrayType, 
+			false, 
+			llvm::GlobalValue::AppendingLinkage, 
+			llvm::ConstantArray::get
+			(
+				GlobalConstructorArrayType, 
+				std::vector<llvm::Constant *>
+				{
+					llvm::ConstantStruct::get
+					(
+						GlobalConstructorStructType, 
+						std::vector<llvm::Constant *>{
+							llvm::ConstantInt::get(llvm::IntegerType::get(Context.LLVM, 32), 65535, false),
+							Function
+						}
+					)
+				}
+			), 
+			"llvm.global_ctors"
+		);
+		
+		llvm::ReturnInst::Create(Context.LLVM, Block);
+	}
+
+	Module->dump();
 }
 
 }

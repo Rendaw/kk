@@ -457,6 +457,18 @@ struct CallT : NucleusT
 	void Simplify(ContextT Context) override;
 };
 
+//================================================================================================================
+// Module stuff
+struct ModuleT : NucleusT
+{
+	std::string Name;
+	bool Entry;
+	AtomT Top;
+	
+	ModuleT(PositionT const Position);
+	void Simplify(ContextT Context) override;
+};
+
 }
 
 #endif

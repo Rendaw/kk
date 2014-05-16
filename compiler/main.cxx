@@ -7,15 +7,14 @@ using namespace Core;
 int main(int, char **)
 {
 	//llvm::ReturnInst::Create(LLVM, Block);
-	auto &LLVM = llvm::getGlobalContext();
+	/*auto &LLVM = llvm::getGlobalContext();
 	auto Module = new llvm::Module("asdf", LLVM);
 	auto MainType = llvm::FunctionType::get(llvm::Type::getVoidTy(LLVM), false);
 	auto Main = llvm::Function::Create(MainType, llvm::Function::ExternalLinkage, "main", Module);
-	auto Block = llvm::BasicBlock::Create(LLVM, "entrypoint", Main);
+	auto Block = llvm::BasicBlock::Create(LLVM, "entrypoint", Main);*/
 	
 	uint16_t TypeIDCounter = 1;
 	
-	auto MainGroup = new GroupT(HARDPOSITION);
 	auto MakeString_ = [&](PositionT const Position, std::string const &Value)
 	{
 		auto Type = new StringTypeT(Position);
@@ -83,7 +82,6 @@ int main(int, char **)
 		auto Assignment = new AssignmentT(Position);
 		Assignment->Left = MakeElement_(Position, Key);
 		Assignment->Right = Value;
-		//MainGroup->Statements.push_back(Assignment);
 		return Assignment;
 	};
 	#define MakeAssignment(...) MakeAssignment_(HARDPOSITION, __VA_ARGS__)
@@ -183,7 +181,17 @@ int main(int, char **)
 	};
 	#define MakeCall(...) MakeCall_(HARDPOSITION, __VA_ARGS__)
 	
-	MainGroup->Statements.push_back(
+	auto MakeModule_ = [&](PositionT const Position, std::string const &Name, bool Entry, AtomT Body)
+	{
+		auto Out = new ModuleT(Position);
+		Out->Name = Name;
+		Out->Entry = Entry;
+		Out->Top = Body;
+		return Out;
+	};
+	#define MakeModule(...) MakeModule_(HARDPOSITION, __VA_ARGS__)
+	
+	auto Module = MakeModule("hello", true, MakeGroup({
 		MakeAssignment("a",
 			MakeImplement(
 				MakeFunctionType(
@@ -205,23 +213,25 @@ int main(int, char **)
 							MakeAssignment("m", MakeInt(7)),
 							MakeAssignment("r", MakeInt(13))
 						}))
-					}))));
-	MainGroup->Statements.push_back(
+					}))),
 		MakeAssignment("b",
 			MakeCall(
 				MakeElement("a"),
 				MakeGroup({
 					MakeAssignment("l", MakeString("normative")),
 					MakeAssignment("q", MakeInt(44))
-				}))));
-	MainGroup->Statements.push_back(
+				}))),
 		MakeAssignment("c",
 			MakeCall(
 				MakeElement("a"),
 				MakeGroup({
 					MakeAssignment("l", MakeString("normative")),
 					MakeAssignment("q", MakeInt(44))
-				}))));
+				}))),
+		MakeAssignment("output",
+			MakeInt(0))
+	}));
+	Module->Simplify({llvm::getGlobalContext(), {}, {}, {}, HARDPOSITION, true});
 	/*MainGroup->Statements.push_back(
 		MakeAssignment("a",
 			MakeImplement(
@@ -253,9 +263,7 @@ int main(int, char **)
 					MakeAssignment("l", MakeString("normative")),
 					MakeAssignment("q", MakeInt(44))
 				}))));*/
-	MainGroup->Simplify({LLVM, Module, Block, nullptr, HARDPOSITION, true});
-	
-	Module->dump();
+	//MainGroup->Simplify({LLVM, Module, Block, nullptr, HARDPOSITION, true});
 	
 	return 0;
 }
