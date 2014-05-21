@@ -11,6 +11,25 @@ HardPositionT::HardPositionT(char const *File, char const *Function, int Line) :
 
 std::string HardPositionT::AsString(void) const { return Position; }
 
+
+llvm::Value *GetElementPointer(llvm::Value *Base, int32_t Index, llvm::BasicBlock *Block)
+{
+	std::vector<llvm::Value *> Indices;
+	Indices.push_back(llvm::ConstantInt::get
+	(
+		llvm::IntegerType::get(Context.LLVM, 32), 
+		0, 
+		false
+	));
+	Indices.push_back(llvm::ConstantInt::get
+	(
+		llvm::IntegerType::get(Context.LLVM, 32), 
+		Index, 
+		false
+	));
+	return llvm::GetElementPtrInst::Create(Base, Indices, "", Block);
+}
+
 //================================================================================================================
 // Core
 void NucleusT::Replace(NucleusT *Replacement)
@@ -284,21 +303,7 @@ llvm::Value *DynamicT::GetTarget(ContextT Context)
 	if (!Target)
 	{
 		Assert(StructTarget);
-		std::vector<llvm::Value *> Indices;
-		Indices.push_back(llvm::ConstantInt::get
-		(
-			llvm::IntegerType::get(Context.LLVM, 32), 
-			0, 
-			false
-		));
-		Indices.push_back(llvm::ConstantInt::get
-		(
-			//llvm::IntegerType::get(Context.LLVM, sizeof(StructTarget->Index) * 8), 
-			llvm::IntegerType::get(Context.LLVM, 32), 
-			StructTarget->Index, 
-			false
-		));
-		Target = llvm::GetElementPtrInst::Create(StructTarget->Struct, Indices, "", Context.Block);
+		Target = GetElementPointer(StructTarget->Struct, StructTarget->Index, Context.Block);
 	}
 	return Target;
 }
@@ -1400,6 +1405,133 @@ void ModuleT::Simplify(ContextT Context)
 	}
 
 	Module->dump();
+}
+
+//================================================================================================================
+// Variants
+ClassifyT::ClassifyT(PositionT const Position) : NucleusT(Position) {}
+
+AtomT ClassifyT::Clone(void)
+{
+	auto Out = new ClassifyT;
+	Out->Value = Value->Clone();
+	Out->Class = Class->Clone();
+	Out->Body = Body->Clone();
+	Out->Else = Else->Clone();
+	return Out;
+}
+
+/* Structure
+const variant
+	type -> varianttype
+	* valuetype -> variantclass
+	* value -> ???
+		type -> actual type
+dynamic
+	type -> varianttype
+	target -> memory
+variantclass
+	basetype -> some type
+*/
+void ClassifyT::Simplify(ContextT Context)
+{
+	Subject->Simplify(Context);
+	Classification->Simplify(Context);
+	
+	auto ClassificationGroup = Classification.As<GroupT>();
+	if (!ClassificationGroup) ERROR;
+	std::string DestName;
+	AtomT DestVariantClassAtom;
+	for (auto &Pair : **ClassificationGroup)
+	{
+		if (Type) ERROR; // Max 1 in class group
+		DestName = Pair.first;
+		DestVariantClassAtom = Pair.second;
+	}
+	if (!DestVariantClassAtom) ERROR; // Min 1 in class group
+	auto DestVariantClass = DestVariantClassAtom.As<VariantClassT>();
+	
+	if (auto Variant = Subject.As<VariantT>())
+	{
+		if (Variant->ValueClass == DestVariantClass) // TODO Is this cool?
+		{
+			{
+				auto BodyGroup = Body.As<GroupT>();
+				if (!BodyGroup) ERROR;
+				auto Dest = BodyGroup->AccessElement(Context, Name);
+				auto DestAssignable = Dest.As<AssignableT>();
+				DestAssignable->Assign(Context, Variant->Value);
+			}
+			Body->Simplify(Context);
+		}
+		else if (Else)
+		{
+			Assert(Else.As<GroupT>());
+			Else->Simplify(Context);
+		}
+	}
+	else
+	{
+		auto IfBlock = llvm::BasicBlock::Create(Context.LLVM, "", Context.Block->GetParent());
+		auto ElseBlock = llvm::BasicBlock::Create(Context.LLVM, "", Context.Block->GetParent());
+		auto EndBlock = llvm::BasicBlock::Create(Context.LLVM, "", Context.Block->GetParent());
+		
+		{
+			auto Dynamic = Subject.As<DynamicT>();
+			Assert(Dynamic);
+			if (Dynamic->Initialized) ERROR;
+			llvm::BranchInst::Create(
+				IfBlock, 
+				ElseBlock, 
+				new llvm::ICmpInst(
+					Context.Block, 
+					llvm::CmpInst::ICMP_EQ, 
+					GetElementPointer(Dynamic->Target, 0, Context.Block),
+					DestVariantClass->GenerateLLVMLoadID(Context)),
+				Context.Block);
+		}
+		
+		{
+			auto IfContext = Context;
+			IfContext.Block = IfBlock;
+			
+			auto Dynamic = new DynamicT(Context.Position);
+			Dynamic->Type = DestVariantClass->BaseType;
+			auto DestType = Dynamic->Type.As<LLVMLoadableTypeT>();
+			Dynamic->Target = new llvm::BitCastInst(
+				GetElementPointer(Dynamic->Target, 1, Context.Block), 
+				DestType->GenerateLLVMType(Context),
+				"",
+				IfContext.Block);
+			Dynamic->Initialized = true;
+			
+			auto Group = Body.As<GroupT>();
+			if (!Group) ERROR;
+			auto Resolution = BodyGroup->AccessElement(Context, Name);
+			auto ResolutionAssignable = Resolution.As<AssignableT>();
+			ResolutionAssignable->Assign(Context, Dynamic);
+			
+			// TODO branch initialized
+			Body->Simplify(IfContext);
+			// TODO unbranch initialized
+			
+			llvm::BranchInst::Create(EndBlock, IfContext.Block);
+		}
+		
+		if (Else)
+		{
+			auto ElseContext = Context;
+			ElseContest.Block = ElseBlock;
+			
+			// TODO branch initialized
+			Else->Simplify(ElseContext);
+			// TODO unbranch initialized
+			
+			llvm::BranchInst::Create(EndBlock, ElseContext.Block);
+		}
+		
+		// TODO modify context block
+	}
 }
 
 }

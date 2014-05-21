@@ -471,5 +471,27 @@ struct ModuleT : NucleusT
 
 }
 
+//================================================================================================================
+// Variants
+struct VariantT : NucleusT
+{
+};
+
+struct IsT : NucleusT
+{
+};
+
+struct ClassifyT : NucleusT
+{
+	AtomT Subject;
+	AtomT Classification;
+	AtomT Body;
+	AtomT Else;
+	
+	ClassifyT(PositionT const Position);
+	AtomT Clone(void);
+	void Simplify(ContextT Context);
+};
+
 #endif
 
