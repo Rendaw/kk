@@ -171,6 +171,8 @@ template <typename CurrentT, typename ...RemainingT> struct VariantInternalsT<Cu
 {
 	union UnionT
 	{
+		UnionT(void) {} 
+		~UnionT(void) {} 
 		CurrentT Value;
 		typename VariantInternalsT<RemainingT...>::UnionT Next;
 	};
@@ -290,7 +292,12 @@ template <typename CurrentT, typename ...RemainingT> struct VariantInternalsT<Cu
 
 template <> struct VariantInternalsT<>
 {
-	union UnionT {};
+	struct InvalidT {};
+	union UnionT 
+	{ 
+		UnionT(void) {} 
+		~UnionT(void) {}
+	};
 	VariantTagT Tag;
 	
 	VariantInternalsT(VariantTagT Tag) : Tag(Tag) {}
@@ -303,9 +310,13 @@ template <> struct VariantInternalsT<>
 
 	template <typename TypeT> bool Is(ExplicitT<TypeT>) const { return false; }
 	
-	void Set(UnionT &Union, UnionT const &OtherUnion, VariantTagT const &OtherTag) {}
+	void Set(UnionT &Union, UnionT const &OtherUnion, VariantTagT const &OtherTag) { if (OtherTag == nullptr) Tag = nullptr; }
 	
-	void Set(UnionT &Union, UnionT &&OtherUnion, VariantTagT const &OtherTag) {}
+	void Set(UnionT &Union, UnionT &&OtherUnion, VariantTagT const &OtherTag) { if (OtherTag == nullptr) Tag = nullptr; }
+	
+	template <typename ValueT> InvalidT &Set(ExplicitT<InvalidT> ValueTag, UnionT &Union, ValueT const &Value) { Tag = nullptr; return *reinterpret_cast<InvalidT *>(0); }
+	
+	template <typename ValueT> InvalidT &Set(ExplicitT<InvalidT> ValueTag, UnionT &Union, ValueT &&Value) { Tag = nullptr; return *reinterpret_cast<InvalidT *>(0); }
 
 	void Destroy(UnionT &Union) {}
 	
@@ -315,18 +326,18 @@ template <> struct VariantInternalsT<>
 template <typename... TypesT> struct VariantT : private VariantInternalsT<TypesT...>
 {
 	protected:
-		typedef VariantInternalsT<TypesT...> Internals;
-		std::array<uint8_t, sizeof(typename Internals::UnionT)> UnionBytes;
-		#define Union *reinterpret_cast<typename Internals::UnionT *>(&this->UnionBytes[0])
-		#define ValueUnion *reinterpret_cast<typename Internals::UnionT *>(&Value.UnionBytes[0])
+		typedef VariantInternalsT<TypesT...> InternalsT;
+		typename InternalsT::UnionT UnionBytes;
+		#define Union this->UnionBytes
+		#define ValueUnion Value.UnionBytes
 	public:
-		VariantT(void) : Internals(nullptr) {}
+		VariantT(void) : InternalsT(nullptr) {}
 		
-		template <typename ValueT> VariantT(ValueT const &Value) : 
-			Internals(ExplicitT<ValueT>(), Union, Value) {}
+		template <typename ValueT> explicit VariantT(ValueT const &Value) : 
+			InternalsT(ExplicitT<ValueT>(), Union, Value) {}
 			
 		template <typename TypeT, typename ValueT> VariantT(ExplicitT<TypeT> ValueTag, ValueT const &Value) : 
-			Internals(ValueTag, Union, Value) {}
+			InternalsT(ValueTag, Union, Value) {}
 			
 		template 
 		<
@@ -334,7 +345,7 @@ template <typename... TypesT> struct VariantT : private VariantInternalsT<TypesT
 			typename = typename std::enable_if<std::is_same<ValueT, typename std::decay<ValueT>::type>::value>::type
 		> 
 			VariantT(ValueT &&Value) : 
-			Internals(ExplicitT<ValueT>(), Union, std::move(Value)) {}
+			InternalsT(ExplicitT<ValueT>(), Union, std::move(Value)) {}
 			
 		template // C++ is my favorite language
 		<
@@ -343,11 +354,11 @@ template <typename... TypesT> struct VariantT : private VariantInternalsT<TypesT
 			typename = typename std::enable_if<std::is_same<TypeT, typename std::decay<TypeT>::type>::value>::type
 		> 
 			VariantT(ExplicitT<TypeT> ValueTag, ValueT &&Value) : 
-			Internals(ValueTag, Union, std::move(Value)) {}
+			InternalsT(ValueTag, Union, std::move(Value)) {}
 			
-		VariantT(VariantT<TypesT...> const &Value) : Internals(Union, ValueUnion, Value) {}
+		VariantT(VariantT<TypesT...> const &Value) : InternalsT(Union, ValueUnion, Value) {}
 		
-		VariantT(VariantT<TypesT...> &&Value) : Internals(Union, std::move(ValueUnion), Value) {}
+		VariantT(VariantT<TypesT...> &&Value) : InternalsT(Union, std::move(ValueUnion), Value) {}
 		
 		~VariantT(void) { this->Destroy(Union); }
 		
@@ -358,29 +369,31 @@ template <typename... TypesT> struct VariantT : private VariantInternalsT<TypesT
 		bool operator !(void) const { return !this->Tag; }
 		
 		template <typename ValueT> ValueT &operator =(ValueT const &Value) 
-			{ return Internals::Set(ExplicitT<ValueT>(), Union, Value); }
+			{ return InternalsT::Set(ExplicitT<ValueT>(), Union, Value); }
 			
 		template <typename ValueT> ValueT &operator =(ValueT &&Value) 
-			{ return Internals::Set(ExplicitT<ValueT>(), Union, std::move(Value)); }
+			{ return InternalsT::Set(ExplicitT<ValueT>(), Union, std::move(Value)); }
 		
 		VariantT<TypesT...> &operator =(VariantT<TypesT...> const &Value) 
-			{ Internals::Set(Union, ValueUnion, Value.Tag); return *this; }
+			{ InternalsT::Set(Union, ValueUnion, Value.Tag); return *this; }
 			
 		VariantT<TypesT...> &operator =(VariantT<TypesT...> &&Value) 
-			{ Internals::Set(Union, std::move(ValueUnion), Value.Tag); return *this; }
+			{ InternalsT::Set(Union, std::move(ValueUnion), Value.Tag); return *this; }
+		
+		void Unset(void) { InternalsT::Set(ExplicitT<typename InternalsT::InvalidT>(), Union, 0); }
 		
 		template <typename TypeT> bool Is(void) const 
-			{ return Internals::Is(ExplicitT<TypeT>()); }
+			{ return InternalsT::Is(ExplicitT<TypeT>()); }
 		
 		template <typename TypeT, typename ValueT> TypeT &Set(ValueT const &Value) 
-			{ return Internals::Set(ExplicitT<TypeT>(), Union, Value); }
+			{ return InternalsT::Set(ExplicitT<TypeT>(), Union, Value); }
 			
 		template <typename TypeT, typename ValueT> TypeT &Set(ValueT &&Value) 
-			{ return Internals::Set(ExplicitT<TypeT>(), Union, std::move(Value)); }
+			{ return InternalsT::Set(ExplicitT<TypeT>(), Union, std::move(Value)); }
 			
-		template <typename TypeT> TypeT &Get(void) { return Internals::Get(ExplicitT<TypeT>(), Union); }
+		template <typename TypeT> TypeT &Get(void) { return InternalsT::Get(ExplicitT<TypeT>(), Union); }
 		
-		template <typename TypeT> TypeT const &Get(void) const { return Internals::Get(ExplicitT<TypeT>(), Union); }
+		template <typename TypeT> TypeT const &Get(void) const { return InternalsT::Get(ExplicitT<TypeT>(), Union); }
 };
 
 //----------------------------------------------------------------------------------------------------------------
@@ -397,12 +410,37 @@ template <typename TypeT> struct OptionalT : public VariantT<TypeT>
 		template <typename CheckT, typename = typename std::enable_if<!std::is_pointer<CheckT>::value>::type> 
 			static CheckT const *Access(CheckT const &Value) { return &Value; }
 	public:
-		using VariantT<TypeT>::VariantT;
-			
+		using VariantT<TypeT>::Set;
+		
+		OptionalT(void) {}
+		
+		OptionalT(OptionalT<TypeT> const &Value) : VariantT<TypeT>((VariantT<TypeT> const &)Value) {}
+		
+		OptionalT(OptionalT<TypeT> &&Value) : VariantT<TypeT>((VariantT<TypeT> &&)std::move(Value)) {}
+	
+		OptionalT(TypeT const &Value) : VariantT<TypeT>(Value) {}
+		
+		OptionalT(TypeT &&Value) : VariantT<TypeT>(std::move(Value)) {}
+		
+		void Set(TypeT const &Value) { this->template Set<TypeT>(Value); }
+		
+		void Set(TypeT &&Value) { this->template Set<TypeT>(std::move(Value)); }
+		
+		OptionalT<TypeT> &operator =(OptionalT<TypeT> const &Value)
+			{ VariantT<TypeT>::operator =((VariantT<TypeT> const &)Value); return *this; }
+		
 		template <typename ValueT> TypeT &operator =(ValueT const &Value) 
 			{ return this->template Set<TypeT>(Value); }
+		
+		OptionalT<TypeT> &operator =(OptionalT<TypeT> &&Value)
+			{ VariantT<TypeT>::operator =((VariantT<TypeT> &&)std::move(Value)); return *this; }
 			
-		template <typename ValueT> TypeT &operator =(ValueT &&Value) 
+		template 
+		<
+			typename ValueT,
+			typename = typename std::enable_if<std::is_same<ValueT, typename std::decay<ValueT>::type>::value>::type
+		>  // C++ standards group for president
+			TypeT &operator =(ValueT &&Value) 
 			{ return this->template Set<TypeT>(std::move(Value)); }
 		
 		TypeT &operator *(void) { return VariantT<TypeT>::template Get<TypeT>(); }

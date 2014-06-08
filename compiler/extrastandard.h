@@ -8,6 +8,19 @@
 #include <algorithm>
 
 //----------------------------------------------------------------------------------------------------------------
+// Will be included in C++14 lolololol
+template<typename T, typename... Args> std::unique_ptr<T> make_unique(Args&&... args)
+	{ return std::unique_ptr<T>(new T(std::forward<Args>(args)...)); }
+
+// Default stuff for shared pointers and unique pointers
+template <typename ValueT> void make_shared(std::shared_ptr<ValueT> &Target) { Target = std::make_shared<ValueT>(); }
+template <typename ValueT> void make_shared(std::shared_ptr<ValueT> &Target, ValueT Value) { Target = std::make_shared<ValueT>(Value); }
+template <typename ValueT, typename ...ArgumentsT> void make_shared(std::shared_ptr<ValueT> &Target, ArgumentsT... Arguments) { Target = make_shared<ValueT>(std::forward<ArgumentsT>(Arguments)...); }
+template <typename ValueT> void make_unique(std::unique_ptr<ValueT> &Target) { Target.reset(new ValueT{}); }
+template <typename ValueT> void make_unique(std::unique_ptr<ValueT> &Target, ValueT Value) { Target.reset(std::unique_ptr<ValueT>{std::move(Value)}); }
+template <typename ValueT, typename ...ArgumentsT> void make_unique(std::unique_ptr<ValueT> &Target, ArgumentsT... Arguments) { Target = make_unique<ValueT>(std::forward<ArgumentsT>(Arguments)...); }
+
+//----------------------------------------------------------------------------------------------------------------
 // Remove values for vector
 template <typename VectorT, typename FunctionT> void VectorRemove(VectorT &Vector, FunctionT const &Filter)
 	{ Vector.erase(std::remove_if(Vector.begin(), Vector.end(), Filter), Vector.end()); }
@@ -31,11 +44,6 @@ struct StringT
 
 inline std::ostream &operator <<(std::ostream &Stream, StringT const &Value)
 	{ return Stream << (std::string)Value; }
-
-//----------------------------------------------------------------------------------------------------------------
-// Will be included in C++14 lolololol
-template<typename T, typename... Args> std::unique_ptr<T> make_unique(Args&&... args)
-	{ return std::unique_ptr<T>(new T(std::forward<Args>(args)...)); }
 
 //----------------------------------------------------------------------------------------------------------------
 // A more informative assert?

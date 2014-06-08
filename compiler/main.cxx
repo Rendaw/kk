@@ -14,13 +14,16 @@ int main(int, char **)
 	auto Block = llvm::BasicBlock::Create(LLVM, "entrypoint", Main);*/
 	
 	uint16_t TypeIDCounter = 1;
+	ContextT Context(llvm::getGlobalContext());
 	
 	auto MakeString_ = [&](PositionT const Position, std::string const &Value)
 	{
 		auto Type = new StringTypeT(Position);
 		Type->Static = false;
 		auto Out = new Core::StringT(Position);
-		Out->Initialized = true;
+		auto NewContext = Context;
+		NewContext.Position = Position;
+		Out->Initialized.Set(NewContext);
 		Out->Data = Value;
 		Out->Type = Type;
 		return Out;
@@ -34,7 +37,9 @@ int main(int, char **)
 		Type->Static = false;
 		auto Out = new NumericT<int>(Position);
 		Out->Type = Type;
-		Out->Initialized = true;
+		auto NewContext = Context;
+		NewContext.Position = Position;
+		Out->Initialized.Set(NewContext);
 		Out->Data = Value;
 		return Out;
 	};
@@ -52,7 +57,7 @@ int main(int, char **)
 		return Out;
 	};
 	#define MakeElement(...) MakeElement_(HARDPOSITION, __VA_ARGS__)
-	/*auto MakeDynamic = [&](PositionT const Position, NucleusT *&&Value)
+	/*auto MakeVariable = [&](PositionT const Position, NucleusT *&&Value)
 	{
 		auto Type = new NumericTypeT(Position);
 		auto ValueType = Value->GetType({LLVM, Module, Block, nullptr, HARDPOSITION}).As<NumericTypeT>();
@@ -96,7 +101,7 @@ int main(int, char **)
 	MakeAssignment(HARDPOSITION, "c", 
 		MakeInt(HARDPOSITION, 40));*/
 	MakeAssignment(HARDPOSITION, "d", 
-		MakeDynamic(HARDPOSITION, 
+		MakeVariable(HARDPOSITION, 
 			MakeInt(HARDPOSITION, 35)));
 	/*MakeAssignment(HARDPOSITION, "d", 
 		MakeElement(HARDPOSITION, "c"));
@@ -110,7 +115,7 @@ int main(int, char **)
 			//MakeFloat(HARDPOSITION, 202.4)));
 			MakeFloat(HARDPOSITION, 7)));
 	MakeAssignment(HARDPOSITION, "e",
-		MakeDynamic(HARDPOSITION,
+		MakeVariable(HARDPOSITION,
 			MakeFloat(HARDPOSITION, 7)));
 	#endif
 	
@@ -164,13 +169,13 @@ int main(int, char **)
 	};
 	#define MakeStringType() MakeStringType_(HARDPOSITION)
 	
-	auto MakeDynamic_ = [&](PositionT const Position, AtomT Value)
+	auto MakeVariable_ = [&](PositionT const Position, AtomT Value)
 	{
-		auto Out = new AsDynamicTypeT(Position);
+		auto Out = new AsVariableTypeT(Position);
 		Out->Type = Value;
 		return Out;
 	};
-	#define MakeDynamic(...) MakeDynamic_(HARDPOSITION, __VA_ARGS__)
+	#define MakeVariable(...) MakeVariable_(HARDPOSITION, __VA_ARGS__)
 	
 	auto MakeCall_ = [&](PositionT const Position, AtomT Function, AtomT Input)
 	{
@@ -203,8 +208,8 @@ int main(int, char **)
 							})),
 						MakeAssignment("output",
 							MakeGroup({
-								MakeAssignment("m", MakeDynamic(MakeIntType())),
-								MakeAssignment("r", MakeDynamic(MakeIntType()))
+								MakeAssignment("m", MakeVariable(MakeIntType())),
+								MakeAssignment("r", MakeVariable(MakeIntType()))
 							}))
 					})),
 				MakeBlock({
@@ -231,21 +236,21 @@ int main(int, char **)
 		MakeAssignment("output",
 			MakeInt(0))
 	}));
-	Module->Simplify({llvm::getGlobalContext(), {}, {}, {}, HARDPOSITION, true});
+	Module->Simplify(Context);
 	/*MainGroup->Statements.push_back(
 		MakeAssignment("a",
 			MakeImplement(
-				MakeDynamic(
+				MakeVariable(
 					MakeFunctionType(
 						MakeGroup({
 							MakeAssignment("input",
 								MakeGroup({
-									MakeAssignment("q", MakeDynamic(MakeIntType()))
+									MakeAssignment("q", MakeVariable(MakeIntType()))
 								})),
 							MakeAssignment("output",
 								MakeGroup({
-									MakeAssignment("m", MakeDynamic(MakeIntType())),
-									MakeAssignment("r", MakeDynamic(MakeIntType()))
+									MakeAssignment("m", MakeVariable(MakeIntType())),
+									MakeAssignment("r", MakeVariable(MakeIntType()))
 								}))
 						}))),
 				MakeBlock({
