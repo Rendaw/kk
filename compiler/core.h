@@ -14,7 +14,7 @@
 
 */
 
-#include "type.h"
+#include "../shared/type.h"
 
 #include <string>
 #include <functional>

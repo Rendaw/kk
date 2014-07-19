@@ -9,8 +9,8 @@
 
 //----------------------------------------------------------------------------------------------------------------
 // Will be included in C++14 lolololol
-template<typename T, typename... Args> std::unique_ptr<T> make_unique(Args&&... args)
-	{ return std::unique_ptr<T>(new T(std::forward<Args>(args)...)); }
+template<typename T, typename... ArgsT> std::unique_ptr<T> make_unique(ArgsT &&... Args)
+	{ return std::unique_ptr<T>(new T(std::forward<ArgsT>(Args)...)); }
 
 // Default stuff for shared pointers and unique pointers
 template <typename ValueT> void make_shared(std::shared_ptr<ValueT> &Target) { Target = std::make_shared<ValueT>(); }

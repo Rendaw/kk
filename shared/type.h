@@ -1,6 +1,9 @@
 #ifndef type_h
 #define type_h
 
+// FIXME
+// I think OptionalT doesn't work if inner type is const
+
 #include <cassert>
 #include "extrastandard.h"
 #include <string>

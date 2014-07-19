@@ -13,6 +13,7 @@ namespace Serial
 {
 
 struct WriteObjectT;
+struct WritePrepolymorphT;
 
 struct WriteArrayT
 {
@@ -31,6 +32,7 @@ struct WriteArrayT
 			{ Binary(Key, reinterpret_cast<uint8_t const *>(&Value[0]), sizeof(IntT) * Value.size()); }
 		WriteObjectT Object(void);
 		WriteArrayT Array(void);
+		WritePrepolymorphT Polymorph(void);
 		
 	friend struct WriteObjectT;
 	protected:
@@ -56,19 +58,60 @@ struct WriteObjectT
 			{ Binary(Key, reinterpret_cast<uint8_t const *>(&Value[0]), sizeof(IntT) * Value.size()); }
 		WriteObjectT Object(std::string const &Key);
 		WriteArrayT Array(std::string const &Key);
+		WritePrepolymorphT Polymorph(std::string const &Key);
 		
 	friend struct WriteArrayT;
+	friend struct WriteT;
 	protected:
 		WriteObjectT(yajl_gen Base);
 		
 		yajl_gen Base;
 };
 
-struct WriteT : WriteObjectT
+struct WritePrepolymorphT : private WriteArrayT
+{
+	friend struct WriteArrayT;
+	friend struct WriteObjectT;
+	protected:
+		using WriteArrayT::WriteArrayT;
+
+		//operator WriteArrayT &&(void);
+};
+
+struct WritePolymorphInjectT // The C++ way: working around initialization syntactical limitations
+{
+	WritePolymorphInjectT(void);
+	WritePolymorphInjectT(std::string const &Tag, WriteArrayT &Array);
+};
+
+struct WritePolymorphT : private WriteArrayT, private WritePolymorphInjectT, WriteObjectT
+{
+	WritePolymorphT(std::string const &Tag, WritePrepolymorphT &&Other);
+	WritePolymorphT(WritePolymorphT &&Other);
+
+	// Screw C++
+	using WriteObjectT::Bool;
+	using WriteObjectT::Int;
+	using WriteObjectT::UInt;
+	using WriteObjectT::Float;
+	using WriteObjectT::String;
+	using WriteObjectT::Binary;
+	using WriteObjectT::Object;
+	using WriteObjectT::Array;
+	using WriteObjectT::Polymorph;
+};
+
+struct WriteT
 {
 	//WriteT(std::string const &Filename);
 	WriteT(void);
 	~WriteT(void);
+
+	WriteObjectT Object(void);
+	std::string Dump(void);
+
+	private:
+		yajl_gen Base;
 };
 
 struct ReadArrayT;

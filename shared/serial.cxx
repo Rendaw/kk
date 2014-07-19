@@ -36,8 +36,10 @@ static std::vector<uint8_t> FromBinary(std::string const &In)
 	std::vector<uint8_t> Out(In.size() / 2);
 	for (size_t Position = 0; Position < In.size() / 2; ++Position)
 	{
-		if (!RangeT<char>('a', 16).Contains(In[Position * 2])) return {};
-		if (!RangeT<char>('a', 16).Contains(In[Position * 2 + 1])) return {};
+		if (In[Position * 2] < 'a') return {};
+		if (In[Position * 2] >= 'a' + 16) return {};
+		if (In[Position * 2 + 1] < 'a') return {};
+		if (In[Position * 2 + 1] >= 'a' + 16) return {};
 		Out[Position] = 
 			((In[Position * 2] - 'a') << 8) +
 			(In[Position * 2 + 1] - 'a');
@@ -88,6 +90,8 @@ void WriteArrayT::Binary(uint8_t const *Bytes, size_t const Length)
 WriteObjectT WriteArrayT::Object(void) { return WriteObjectT(Base); }
 
 WriteArrayT WriteArrayT::Array(void) { return WriteArrayT(Base); }
+		
+WritePrepolymorphT WriteArrayT::Polymorph(void) { return WritePrepolymorphT(Base); }
 
 WriteArrayT::WriteArrayT(yajl_gen Base) : Base(Base) { Assert(Base); if (Base) yajl_gen_array_open(Base); }
 
@@ -173,19 +177,61 @@ WriteArrayT WriteObjectT::Array(std::string const &Key)
 	return WriteArrayT(Base);
 }
 
+WritePrepolymorphT WriteObjectT::Polymorph(std::string const &Key) 
+{ 
+	if (Base) yajl_gen_string(Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
+	else Assert(false);
+	return WritePrepolymorphT(Base); 
+}
+
 WriteObjectT::WriteObjectT(yajl_gen Base) : Base(Base) { Assert(Base); if (Base) yajl_gen_map_open(Base); }
+	
+//----------------------------------------------------------------------------------------------------------------
+// Polymorph writer
+WritePolymorphInjectT::WritePolymorphInjectT(void) {}
+
+WritePolymorphInjectT::WritePolymorphInjectT(std::string const &Tag, WriteArrayT &Array)
+{
+	Array.String(Tag);
+}
+		
+WritePolymorphT::WritePolymorphT(std::string const &Tag, WritePrepolymorphT &&Other) :
+	WriteArrayT(std::move(static_cast<WriteArrayT &&>(Other))),
+	WritePolymorphInjectT(Tag, *this),
+	WriteObjectT(WriteArrayT::Object())
+	{}
+
+WritePolymorphT::WritePolymorphT(WritePolymorphT &&Other) : 
+	WriteArrayT(std::move(static_cast<WriteArrayT &>(Other))),
+	WriteObjectT(std::move(static_cast<WriteObjectT &>(Other)))
+	{}
 
 //----------------------------------------------------------------------------------------------------------------
 // Writing start point
-WriteT::WriteT(void) : WriteObjectT(yajl_gen_alloc(nullptr))
+WriteT::WriteT(void) : Base(yajl_gen_alloc(nullptr))
 {
+	yajl_gen_config(Base, yajl_gen_beautify, 1);
 }
 
 WriteT::~WriteT(void)
 {
-	yajl_gen_map_close(Base);
 	yajl_gen_free(Base);
 	Base = nullptr;
+}
+
+WriteObjectT WriteT::Object(void)
+{
+	return WriteObjectT(Base);
+}
+
+std::string WriteT::Dump(void)
+{
+	unsigned char const *YAJLBuffer;
+	size_t YAJLBufferLength;
+	yajl_gen_get_buf(Base, &YAJLBuffer, &YAJLBufferLength);
+	std::string Out(reinterpret_cast<char const *>(YAJLBuffer), YAJLBufferLength);
+	yajl_gen_clear(Base);
+	return Out;
 }
 
 //================================================================================================================
