@@ -324,6 +324,8 @@ template <> struct VariantInternalsT<>
 	void Destroy(UnionT &Union) {}
 	
 	void Destroy(UnionT const &Union) const {}
+
+	std::string Dump(void) const { return StringT() << Tag; }
 };
 	
 template <typename... TypesT> struct VariantT : private VariantInternalsT<TypesT...>
@@ -397,6 +399,8 @@ template <typename... TypesT> struct VariantT : private VariantInternalsT<TypesT
 		template <typename TypeT> TypeT &Get(void) { return InternalsT::Get(ExplicitT<TypeT>(), Union); }
 		
 		template <typename TypeT> TypeT const &Get(void) const { return InternalsT::Get(ExplicitT<TypeT>(), Union); }
+
+		using VariantInternalsT<TypesT...>::Dump;
 };
 
 //----------------------------------------------------------------------------------------------------------------

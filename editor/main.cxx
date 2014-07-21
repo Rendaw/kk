@@ -30,7 +30,7 @@ struct WebPageT : QWebPage
 
 int main(int argc, char **argv)
 {
-	QApplication QTContext(argc, argv);
+	/*QApplication QTContext(argc, argv);
 	auto Window = new QWidget();
 	Window->setWindowTitle("KK Editor QT");
 	auto WindowLayout = new QBoxLayout(QBoxLayout::TopToBottom);
@@ -62,12 +62,21 @@ int main(int argc, char **argv)
 		"</style>"
 	);
 	VisualT BodyVisual(HTMLRoot, HTMLRoot.findFirst("body"));
-	
+
 	CoreT Core(BodyVisual);
 	WebView->Core = &Core;
 
 	Window->show();
-	return QTContext.exec();
+	return QTContext.exec();*/
+
+	VisualT BodyVisual;
+	CoreT Core(BodyVisual);
+
+	std::string Line;
+	while (std::getline(std::cin, Line))
+		Core.HandleKey(Line.substr(0, 1));
+
+	return 0;
 }
 
 

@@ -15,7 +15,19 @@ namespace Core
 {
 
 struct CoreT;
+
 struct VisualT
+{
+	VisualT(void) = default;
+	VisualT(VisualT const &) = delete;
+	void Clear(void);
+	void Add(VisualT &Other);
+	void Add(std::string const &Text);
+	void Set(std::string const &Text);
+	std::string Dump(void);
+};
+
+/*struct VisualT
 {
 	VisualT(QWebElement const &Element);
 	VisualT(QWebElement const &Root, QWebElement const &Element);
@@ -23,6 +35,7 @@ struct VisualT
 	~VisualT(void);
 	void Clear(void);
 	void Add(VisualT &Other);
+	void Add(std::string const &Text);
 	void Set(std::string const &Text);
 	std::string Dump(void);
 
@@ -31,7 +44,7 @@ struct VisualT
 	private:
 		std::string const ID;
 		std::string IDName(void);
-};
+};*/
 
 struct ActionT
 {
@@ -53,7 +66,6 @@ struct NucleusT;
 struct AtomT
 {
 	AtomT(void);
-	//AtomT(NucleusT *Nucleus);
 	AtomT(AtomT const &Other);
 	~AtomT(void);
 	NucleusT *operator ->(void);
@@ -61,7 +73,7 @@ struct AtomT
 	void Set(NucleusT *Nucleus);
 	void Clear(void);
 	
-	operator bool(void);
+	operator bool(void) const;
 	
 	typedef std::function<void(AtomT &)> AtomCallbackT;
 	AtomCallbackT Callback;
@@ -79,7 +91,7 @@ struct HoldT
 	void Set(NucleusT *Nucleus);
 	void Clear(void);
 	
-	operator bool(void);
+	operator bool(void) const;
 	
 	NucleusT *Nucleus;
 };
@@ -97,7 +109,7 @@ struct NucleusT
 {
 	public:
 		CoreT &Core;
-		AtomT Parent;
+		HoldT Parent;
 		VisualT Visual;
 
 		size_t Count = 0;
@@ -116,18 +128,20 @@ struct NucleusT
 		void Serialize(Serial::WritePrepolymorphT &&Prepolymorph);
 		virtual void Serialize(Serial::WritePolymorphT &&Polymorph);
 
-		std::unique_ptr<ActionT> Replace(HoldT Other);
+		std::unique_ptr<ActionT> ReplaceWith(HoldT Other);
 		std::unique_ptr<ActionT> Wedge(OptionalT<HoldT> NewBase);
 
 		virtual AtomTypeT &GetTypeInfo(void);
 		virtual void Place(NucleusT *Nucleus);
 		virtual OptionalT<std::unique_ptr<ActionT>> HandleKey(std::string const &Test);
 	private:
-		void ImmediateReplace(NucleusT *Replacement);
+		void ImmediateReplaceWith(NucleusT *Replacement);
 };
 
 struct AtomTypeT
 {
+	AtomTypeT(void) = default;
+	AtomTypeT(AtomTypeT const &) = delete;
 	virtual ~AtomTypeT(void);
 	virtual NucleusT *Generate(CoreT &Core);
 
@@ -150,7 +164,7 @@ struct CoreT
 
 	CoreT(VisualT &RootVisual);
 	void HandleKey(std::string const &Text);
-	OptionalT<AtomTypeT> LookUpAtom(std::string const &Text);
+	OptionalT<AtomTypeT *> LookUpAtom(std::string const &Text);
 	void Apply(OptionalT<std::unique_ptr<ActionT>> Action);
 	std::list<std::unique_ptr<ActionT>> UndoQueue, RedoQueue;
 	void Undo(void);
@@ -199,9 +213,11 @@ struct ProtoatomT : NucleusT
 	static AtomTypeT &StaticGetTypeInfo(void);
 	AtomTypeT &GetTypeInfo(void) override;
 	
+	void Place(NucleusT *Nucleus) override;
+	
 	OptionalT<std::unique_ptr<ActionT>> HandleKey(std::string const &Text) override;
 	OptionalT<std::unique_ptr<ActionT>> Finish(
-		OptionalT<AtomTypeT> Type, 
+		OptionalT<AtomTypeT *> Type, 
 		OptionalT<std::string> NewData, 
 		OptionalT<std::string> SeedData);
 	void Refresh(void);
@@ -209,11 +225,16 @@ struct ProtoatomT : NucleusT
 
 struct ElementT : NucleusT
 {
-	using NucleusT::NucleusT;
+	AtomT Base, Key;
+
+	ElementT(CoreT &Core);
+
+	void Serialize(Serial::WritePolymorphT &&Polymorph);
 	
 	static AtomTypeT &StaticGetTypeInfo(void);
 	AtomTypeT &GetTypeInfo(void) override;
 
+	void Place(NucleusT *Nucleus) override;
 	void PlaceKey(NucleusT *Nucleus);
 };
 
@@ -221,20 +242,26 @@ struct StringT : NucleusT
 {
 	std::string Data;
 	
-	using NucleusT::NucleusT;
+	StringT(CoreT &Core);
 	
 	void Serialize(Serial::WritePolymorphT &&Polymorph) override;
 	
 	static AtomTypeT &StaticGetTypeInfo(void);
 	AtomTypeT &GetTypeInfo(void) override;
+
+	void Refresh(void);
 };
 
 struct AssignmentT : NucleusT
 {
-	using NucleusT::NucleusT;
+	AtomT Left, Right;
+
+	AssignmentT(CoreT &Core);
 	
 	static AtomTypeT &StaticGetTypeInfo(void);
 	AtomTypeT &GetTypeInfo(void) override;
+	
+	void Place(NucleusT *Nucleus) override;
 };
 
 struct IntT : NucleusT
