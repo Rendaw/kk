@@ -65,34 +65,43 @@ struct NucleusT;
 
 struct AtomT
 {
-	AtomT(void);
-	AtomT(AtomT const &Other);
+	AtomT(AtomT &&Other);
+	AtomT &operator =(AtomT &&Other);
+	AtomT(AtomT const &Other) = delete;
+	AtomT(CoreT &Core);
 	~AtomT(void);
 	NucleusT *operator ->(void);
-	AtomT &operator =(NucleusT *Nucleus);
-	void Set(NucleusT *Nucleus);
-	void Clear(void);
-	
+	NucleusT const *operator ->(void) const;
 	operator bool(void) const;
+
+	void ImmediateSet(NucleusT *Nucleus);
+	std::unique_ptr<ActionT> Set(NucleusT *Nucleus);
 	
 	typedef std::function<void(AtomT &)> AtomCallbackT;
+	CoreT &Core;
 	AtomCallbackT Callback;
+	NucleusT *Parent;
 	NucleusT *Nucleus;
+
+	private:
+		void Clear(void);
 };
 
 struct HoldT
 {
-	HoldT(void);
-	HoldT(NucleusT *Nucleus);
+	HoldT(CoreT &Core);
+	HoldT(CoreT &Core, NucleusT *Nucleus);
 	HoldT(HoldT const &Other);
 	~HoldT(void);
 	NucleusT *operator ->(void);
+	NucleusT const *operator ->(void) const;
 	HoldT &operator =(NucleusT *Nucleus);
 	void Set(NucleusT *Nucleus);
 	void Clear(void);
 	
 	operator bool(void) const;
 	
+	CoreT &Core;
 	NucleusT *Nucleus;
 };
 
@@ -101,6 +110,11 @@ enum ArityT
 	Nullary,
 	Unary,
 	Binary
+};
+
+struct InputT
+{
+	std::string Text;
 };
 
 struct AtomTypeT;
@@ -113,7 +127,7 @@ struct NucleusT
 		VisualT Visual;
 
 		size_t Count = 0;
-		std::set<AtomT *> Atoms;
+		AtomT *Atom;
 		
 		NucleusT(CoreT &Core);
 		virtual ~NucleusT(void);
@@ -125,17 +139,14 @@ struct NucleusT
 			return {}; 
 		}
 
-		void Serialize(Serial::WritePrepolymorphT &&Prepolymorph);
-		virtual void Serialize(Serial::WritePolymorphT &&Polymorph);
+		void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const;
+		virtual void Serialize(Serial::WritePolymorphT &&Polymorph) const;
 
-		std::unique_ptr<ActionT> ReplaceWith(HoldT Other);
-		std::unique_ptr<ActionT> Wedge(OptionalT<HoldT> NewBase);
-
-		virtual AtomTypeT &GetTypeInfo(void);
-		virtual void Place(NucleusT *Nucleus);
-		virtual OptionalT<std::unique_ptr<ActionT>> HandleKey(std::string const &Test);
-	private:
-		void ImmediateReplaceWith(NucleusT *Replacement);
+		virtual AtomTypeT const &GetTypeInfo(void) const;
+		virtual void Refocus(void); // If bool is false, optional must not be set
+		virtual void Refresh(void);
+		virtual std::unique_ptr<ActionT> Place(NucleusT *Nucleus);
+		virtual OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input);
 };
 
 struct AtomTypeT
@@ -158,19 +169,28 @@ struct CoreT
 {
 	VisualT &RootVisual;
 	AtomT Root;
-	AtomT Focus;
+	HoldT Focus;
 	
 	std::map<std::string, AtomTypeT *> Types;
 
+	std::set<NucleusT *> DeletionCandidates;
+	std::set<NucleusT *> NeedRefresh;
+
 	CoreT(VisualT &RootVisual);
-	void HandleKey(std::string const &Text);
+	void HandleInput(InputT const &Input);
 	OptionalT<AtomTypeT *> LookUpAtom(std::string const &Text);
 	void Apply(OptionalT<std::unique_ptr<ActionT>> Action);
 	std::list<std::unique_ptr<ActionT>> UndoQueue, RedoQueue;
 	void Undo(void);
 	void Redo(void);
 
+	// Used by atoms (internal)
 	bool IsIdentifierClass(std::string const &Reference);
+	void Refocus(void);
+
+	std::unique_ptr<ActionT> ActionHandleInput(InputT const &Input);
+
+	std::string Dump(void) const;
 };
 
 struct ModuleT : NucleusT
@@ -179,23 +199,33 @@ struct ModuleT : NucleusT
 
 	ModuleT(CoreT &Core);
 		
-	void Serialize(Serial::WritePolymorphT &&Polymorph) override;
+	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
 	
 	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT &GetTypeInfo(void) override;
+	AtomTypeT const &GetTypeInfo(void) const override;
+	void Refocus(void) override;
+	void Refresh(void) override;
 };
 
 struct GroupT : NucleusT
 {
 	AtomT::AtomCallbackT AtomCallback;
 	std::vector<AtomT> Statements;
+	size_t Focus;
 	
 	GroupT(CoreT &Core);
 	
-	void Serialize(Serial::WritePolymorphT &&Polymorph) override;
+	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
 	
 	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT &GetTypeInfo(void) override;
+	AtomTypeT const &GetTypeInfo(void) const override;
+	void Refocus(void) override;
+	void Refresh(void) override;
+
+	void AddStatement(size_t Index);
+	void RemoveStatement(size_t Index);
+	std::unique_ptr<ActionT> ModifyStatements(bool Add, size_t Index);
+	std::unique_ptr<ActionT> Set(size_t Index, NucleusT *Value);
 };
 
 struct ProtoatomT : NucleusT
@@ -208,34 +238,38 @@ struct ProtoatomT : NucleusT
 
 	ProtoatomT(CoreT &Core);
 	
-	void Serialize(Serial::WritePolymorphT &&Polymorph) override;
+	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
 	
 	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT &GetTypeInfo(void) override;
+	AtomTypeT const &GetTypeInfo(void) const override;
+	void Refocus(void) override;
+	void Refresh(void) override;
 	
-	void Place(NucleusT *Nucleus) override;
+	void Lift(NucleusT *Nucleus);
 	
-	OptionalT<std::unique_ptr<ActionT>> HandleKey(std::string const &Text) override;
+	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
 	OptionalT<std::unique_ptr<ActionT>> Finish(
 		OptionalT<AtomTypeT *> Type, 
 		OptionalT<std::string> NewData, 
-		OptionalT<std::string> SeedData);
-	void Refresh(void);
+		OptionalT<InputT> SeedData);
 };
 
 struct ElementT : NucleusT
 {
 	AtomT Base, Key;
+	bool BaseFocused;
 
 	ElementT(CoreT &Core);
 
-	void Serialize(Serial::WritePolymorphT &&Polymorph);
+	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
 	
 	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT &GetTypeInfo(void) override;
+	AtomTypeT const &GetTypeInfo(void) const override;
+	void Refocus(void) override;
+	void Refresh(void) override;
 
-	void Place(NucleusT *Nucleus) override;
-	void PlaceKey(NucleusT *Nucleus);
+	std::unique_ptr<ActionT> Place(NucleusT *Nucleus) override;
+	std::unique_ptr<ActionT> PlaceKey(NucleusT *Nucleus);
 };
 
 struct StringT : NucleusT
@@ -244,24 +278,30 @@ struct StringT : NucleusT
 	
 	StringT(CoreT &Core);
 	
-	void Serialize(Serial::WritePolymorphT &&Polymorph) override;
+	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
 	
 	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT &GetTypeInfo(void) override;
+	AtomTypeT const &GetTypeInfo(void) const override;
+	void Refresh(void) override;
 
-	void Refresh(void);
+	std::unique_ptr<ActionT> Set(std::string const &Text);
 };
 
 struct AssignmentT : NucleusT
 {
 	AtomT Left, Right;
+	bool LeftFocused;
 
 	AssignmentT(CoreT &Core);
 	
-	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT &GetTypeInfo(void) override;
+	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
 	
-	void Place(NucleusT *Nucleus) override;
+	static AtomTypeT &StaticGetTypeInfo(void);
+	AtomTypeT const &GetTypeInfo(void) const override;
+	void Refocus(void) override;
+	void Refresh(void) override;
+	
+	std::unique_ptr<ActionT> Place(NucleusT *Nucleus) override;
 };
 
 struct IntT : NucleusT

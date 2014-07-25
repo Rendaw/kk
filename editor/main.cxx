@@ -15,7 +15,7 @@ struct WebViewT : QWebView
 	CoreT *Core;
 	void keyPressEvent(QKeyEvent *Event)
 	{
-		Core->HandleKey(Event->text().toUtf8().data());
+		Core->HandleInput({Event->text().toUtf8().data()});
 	}
 };
 
@@ -74,7 +74,7 @@ int main(int argc, char **argv)
 
 	std::string Line;
 	while (std::getline(std::cin, Line))
-		Core.HandleKey(Line.substr(0, 1));
+		Core.HandleInput({Line.substr(0, 1)});
 
 	return 0;
 }

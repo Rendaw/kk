@@ -98,12 +98,23 @@ std::unique_ptr<ActionT> ActionGroupT::Apply(void)
 	return std::unique_ptr<ActionT>(std::move(Out));
 }
 
-AtomT::AtomT(void) : Nucleus(nullptr) {}
-
-AtomT::AtomT(AtomT const &Other) : Callback(Other.Callback), Nucleus(nullptr)
+AtomT::AtomT(AtomT &&Other) : Core(Other.Core), Callback(Other.Callback), Parent(Other.Parent), Nucleus(Other.Nucleus)
 {
-	Set(Other.Nucleus);
+	if (Nucleus) Nucleus->Atom = this;
+	Other.Nucleus = nullptr;
 }
+	
+AtomT &AtomT::operator =(AtomT &&Other)
+{
+	AssertE(&Core, &Other.Core);
+	Callback = Other.Callback;
+	Parent = Other.Parent;
+	Nucleus = Other.Nucleus;
+	Other.Nucleus = nullptr;
+	return *this;
+}
+
+AtomT::AtomT(CoreT &Core) : Core(Core), Parent(nullptr), Nucleus(nullptr) {}
 
 AtomT::~AtomT(void) 
 {
@@ -115,44 +126,64 @@ NucleusT *AtomT::operator ->(void)
 	return Nucleus; 
 }
 
-AtomT &AtomT::operator =(NucleusT *Nucleus)
-{
-	Clear();
-	Set(Nucleus);
-	return *this;
+NucleusT const *AtomT::operator ->(void) const
+{ 
+	return Nucleus; 
 }
 
-void AtomT::Set(NucleusT *Nucleus)
+AtomT::operator bool(void) const { return Nucleus; }
+
+void AtomT::ImmediateSet(NucleusT *Nucleus)
 {
-	if (!Nucleus) return;
+	Clear();
 	this->Nucleus = Nucleus;
-	Nucleus->Count += 1;
-	Nucleus->Atoms.insert(this);
+	this->Nucleus->Count += 1;
+	Assert(!this->Nucleus->Atom);
+	this->Nucleus->Atom = this;
+	this->Nucleus->Parent = Parent;
 	if (Callback) Callback(*this);
+}
+
+std::unique_ptr<ActionT> AtomT::Set(NucleusT *Nucleus)
+{
+	struct SetT : ActionT
+	{
+		AtomT &Atom;
+		HoldT Replacement;
+
+		SetT(AtomT &Atom, HoldT const &Replacement) : Atom(Atom), Replacement(Replacement) { }
+		
+		std::unique_ptr<ActionT> Apply(void)
+		{
+			auto Out = new SetT(Atom, {Atom.Core, Atom.Nucleus});
+			Atom.ImmediateSet(Replacement.Nucleus);
+			Atom.Core.Refocus();
+			std::cout << "Set result: " << Atom.Core.Dump() << std::endl;
+			return std::unique_ptr<ActionT>(std::move(Out));
+		}
+	};
+	return std::unique_ptr<ActionT>(new SetT(*this, {Core, Nucleus}));
 }
 
 void AtomT::Clear(void)
 {
-	if (!this->Nucleus) return;
-	this->Nucleus->Atoms.erase(this);
-	this->Nucleus->Count -= 1;
-	if (this->Nucleus->Count == 0)
-	{
-		std::cout << "DEBUG: Deleting " << this->Nucleus << std::endl;
-		delete this->Nucleus;
-	}
+	if (!Nucleus) return;
+	AssertE(Nucleus->Atom, this);
+	Nucleus->Parent = nullptr;
+	Nucleus->Atom = nullptr;
+	Nucleus->Count -= 1;
+	if (Nucleus->Count == 0) Core.DeletionCandidates.insert(Nucleus);
+	Nucleus = nullptr;
 }
 	
-AtomT::operator bool(void) const { return Nucleus; }
+HoldT::HoldT(CoreT &Core) : Core(Core), Nucleus(nullptr) {}
 
-HoldT::HoldT(void) : Nucleus(nullptr) {}
-
-HoldT::HoldT(NucleusT *Nucleus) : Nucleus(nullptr)
+HoldT::HoldT(CoreT &Core, NucleusT *Nucleus) : Core(Core), Nucleus(nullptr)
 {
 	Set(Nucleus);
 }
 
-HoldT::HoldT(HoldT const &Other) : Nucleus(nullptr)
+HoldT::HoldT(HoldT const &Other) : Core(Other.Core), Nucleus(nullptr)
 {
 	Set(Other.Nucleus);
 }
@@ -163,6 +194,11 @@ HoldT::~HoldT(void)
 }
 
 NucleusT *HoldT::operator ->(void) 
+{ 
+	return Nucleus; 
+}
+
+NucleusT const *HoldT::operator ->(void) const
 { 
 	return Nucleus; 
 }
@@ -183,107 +219,50 @@ void HoldT::Set(NucleusT *Nucleus)
 
 void HoldT::Clear(void)
 {
-	if (!this->Nucleus) return;
-	this->Nucleus->Count -= 1;
-	if (this->Nucleus->Count == 0)
-	{
-		std::cout << "DEBUG: Deleting " << this->Nucleus << std::endl;
-		delete this->Nucleus;
-	}
+	if (!Nucleus) return;
+	Nucleus->Count -= 1;
+	if (Nucleus->Count == 0)
+		Core.DeletionCandidates.insert(Nucleus);
+	Nucleus = nullptr;
 }
 
 HoldT::operator bool(void) const { return Nucleus; }
 
-NucleusT::NucleusT(CoreT &Core) : Core(Core)/*, Visual(Core.RootVisual.Root)*/ { }
+NucleusT::NucleusT(CoreT &Core) : Core(Core), Parent(Core), Atom(nullptr)/*, Visual(Core.RootVisual.Root)*/ { }
 
 NucleusT::~NucleusT(void) {}
 
-void NucleusT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph)
+void NucleusT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
 {
 	//Serialize(Serial::WritePolymorphT(GetTypeInfo().Tag, std::move(Prepolymorph)));
 	auto Polymorph = Serial::WritePolymorphT(GetTypeInfo().Tag, std::move(Prepolymorph));
 	Polymorph.String("this", ::StringT() << this);
 	Polymorph.String("parent", ::StringT() << Parent.Nucleus);
+	Polymorph.String("atom", ::StringT() << Atom);
 	Serialize(std::move(Polymorph));
 }
 		
-void NucleusT::Serialize(Serial::WritePolymorphT &&WritePolymorph) {}
+void NucleusT::Serialize(Serial::WritePolymorphT &&WritePolymorph) const {}
 
-std::unique_ptr<ActionT> NucleusT::ReplaceWith(HoldT Other)
-{
-	struct ReplaceT : ActionT
-	{
-		HoldT Original, Replacement;
-		
-		ReplaceT(HoldT const &Original, HoldT const &Replacement) : Original(Original), Replacement(Replacement) { }
-		
-		std::unique_ptr<ActionT> Apply(void)
-		{
-			auto Out = new ReplaceT(Replacement, Original);
-			Original->ImmediateReplaceWith(Replacement.Nucleus);
-			return std::unique_ptr<ActionT>(std::move(Out));
-		}
-	};
-	return std::unique_ptr<ActionT>(new ReplaceT(HoldT(this), Other));
-}
-
-std::unique_ptr<ActionT> NucleusT::Wedge(OptionalT<HoldT> NewBase)
-{
-	struct WedgeT : ActionT
-	{
-		bool Wedge; // C++ is so lame
-		HoldT Original, Replacement;
-
-		WedgeT(bool Wedge, HoldT const &Original, HoldT const &Replacement) : Wedge(Wedge), Original(Original), Replacement(Replacement) 
-		{ 
-			if (Wedge) Assert(Replacement);
-		}
-		
-		std::unique_ptr<ActionT> Apply(void)
-		{
-			if (Wedge)
-			{
-				auto Out = new WedgeT(false, Original, nullptr);
-				Original->ImmediateReplaceWith(Replacement.Nucleus);
-				Replacement->Place(Original.Nucleus);
-				return std::unique_ptr<ActionT>(std::move(Out));
-			}
-			else
-			{
-				auto Out = new WedgeT(true, Original, HoldT(Original->Parent.Nucleus));
-				Original->Parent->ImmediateReplaceWith(Original.Nucleus);
-				return std::unique_ptr<ActionT>(std::move(Out));
-			}
-		}
-	};
-	if (NewBase) return std::unique_ptr<ActionT>(new WedgeT(true, HoldT(this), *NewBase));
-	else return std::unique_ptr<ActionT>(new WedgeT(false, HoldT(this), nullptr));
-}
-		
-AtomTypeT &NucleusT::GetTypeInfo(void)
+AtomTypeT const &NucleusT::GetTypeInfo(void) const
 {
 	static AtomTypeT Type;
 	return Type;
 }
-
-void NucleusT::Place(NucleusT *Nucleus) { Assert(false); }
 		
-OptionalT<std::unique_ptr<ActionT>> NucleusT::HandleKey(std::string const &Text) { return {}; }
+void NucleusT::Refocus(void) { }
 
-void NucleusT::ImmediateReplaceWith(NucleusT *Replacement)
-{
-	auto Parent = this->Parent;
-	auto OldAtoms = Atoms;
-	for (auto Atom : OldAtoms) *Atom = Replacement;
-	assert(Atoms.empty());
-	if (Replacement) Replacement->Parent = Parent;
-}
-	
+void NucleusT::Refresh(void) { Assert(false); }
+
+std::unique_ptr<ActionT> NucleusT::Place(NucleusT *Nucleus) { Assert(false); return {}; }
+		
+OptionalT<std::unique_ptr<ActionT>> NucleusT::HandleInput(InputT const &Input) { return {}; }
+
 AtomTypeT::~AtomTypeT(void) {}
 
 NucleusT *AtomTypeT::Generate(CoreT &Core) { Assert(false); return nullptr; }
 
-CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual)
+CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focus(*this)
 {
 	Types["."] = &ElementT::StaticGetTypeInfo();
 	Types["'"] = &StringT::StaticGetTypeInfo();
@@ -294,27 +273,16 @@ CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual)
 	{
 		this->RootVisual.Clear();
 		this->RootVisual.Add(This->Visual);
-		std::cout << "Added to root visual" << std::endl;
 	};
 	
-	auto Module = new ModuleT(*this);
-	auto Group = new GroupT(*this);
-	Module->Top = Group;
-	Root = Module;
+	Apply(Root.Set(new ModuleT(*this)));
 }
 
-void CoreT::HandleKey(std::string const &Text)
+void CoreT::HandleInput(InputT const &Input)
 {
-	assert(Focus);
-	std::cout << "Core handle key: [" << Text << "]" << std::endl;
-	Apply(Focus->HandleKey(Text));
-	Serial::WriteT Writer;
-	{
-		auto WriteRoot = Writer.Object();
-		Root->Serialize(WriteRoot.Polymorph("Root"));
-	}
-	//std::cout << RootVisual.Dump() << std::endl;
-	std::cout << Writer.Dump() << std::endl;
+	Assert(Focus);
+	std::cout << "Core handle key: [" << Input.Text << "]" << std::endl;
+	Apply(Focus->HandleInput(Input));
 }
 
 OptionalT<AtomTypeT *> CoreT::LookUpAtom(std::string const &Text)
@@ -327,13 +295,30 @@ OptionalT<AtomTypeT *> CoreT::LookUpAtom(std::string const &Text)
 void CoreT::Apply(OptionalT<std::unique_ptr<ActionT>> Action)
 {
 	if (!Action) return;
-	auto Result = (*Action)->Apply();
+
+	auto Reaction = (*Action)->Apply();
+
 	if (!UndoQueue.empty())
 	{
-		if (!UndoQueue.front()->Combine(Result))
-			UndoQueue.push_front(std::move(Result));
+		if (!UndoQueue.front()->Combine(Reaction))
+			UndoQueue.push_front(std::move(Reaction));
 	}
 	RedoQueue.clear();
+
+	for (auto &Refreshable : NeedRefresh)
+		Refreshable->Refresh();
+	NeedRefresh.clear();
+
+	for (auto &Candidate : DeletionCandidates)
+		if (Candidate->Count == 0) 
+		{
+			std::cout << "DEBUG: Deleting " << Candidate << std::endl;
+			delete Candidate;
+		}
+	DeletionCandidates.clear();
+	
+	//std::cout << RootVisual.Dump() << std::endl;
+	std::cout << Dump() << std::endl;
 }
 
 void CoreT::Undo(void)
@@ -356,18 +341,59 @@ bool CoreT::IsIdentifierClass(std::string const &Reference)
 {
 	return IdentifierClass(Reference);
 }
+
+void CoreT::Refocus(void)
+{
+	Focus = nullptr;
+	Root->Refocus();
+}
+
+std::unique_ptr<ActionT> CoreT::ActionHandleInput(InputT const &Input)
+{
+	struct NOPT : ActionT
+	{
+		std::unique_ptr<ActionT> Apply(void) { return std::unique_ptr<ActionT>(new NOPT); }
+	};
+	struct HandleInputT : ActionT
+	{
+		CoreT &Core;
+		InputT const Input;
+
+		HandleInputT(CoreT &Core, InputT const &Input) : Core(Core), Input(Input) {}
+
+		std::unique_ptr<ActionT> Apply(void)
+		{
+			Assert(Core.Focus);
+			auto Result = Core.Focus->HandleInput(Input);
+			if (Result) return (*Result)->Apply();
+			return std::unique_ptr<ActionT>(new NOPT);
+		};
+	};
+	return std::unique_ptr<ActionT>(new HandleInputT(*this, Input));
+}
 	
-ModuleT::ModuleT(CoreT &Core) : NucleusT(Core)
+std::string CoreT::Dump(void) const
+{
+	if (!Root) return {};
+	Serial::WriteT Writer;
+	{
+		auto WriteRoot = Writer.Object();
+		Root->Serialize(WriteRoot.Polymorph("Root"));
+	}
+	return Writer.Dump();
+}
+	
+ModuleT::ModuleT(CoreT &Core) : NucleusT(Core), Top(Core)
 {
 	Top.Callback = [this](AtomT &This)
 	{
-		this->Visual.Clear();
-		this->Visual.Add(This->Visual);
-		std::cout << "Added to module visual" << std::endl;
+		this->Core.NeedRefresh.insert(this);
 	};
+	Top.Parent = this;
+	Top.ImmediateSet(new GroupT(Core));
 }
 	
-void ModuleT::Serialize(Serial::WritePolymorphT &&WritePolymorph)
+void ModuleT::Serialize(Serial::WritePolymorphT &&WritePolymorph) const
 {
 	if (Top) Top->Serialize(WritePolymorph.Polymorph("Top"));
 }
@@ -386,29 +412,34 @@ AtomTypeT &ModuleT::StaticGetTypeInfo(void)
 	return Type;
 }
 
-AtomTypeT &ModuleT::GetTypeInfo(void)
+AtomTypeT const &ModuleT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
+	
+void ModuleT::Refocus(void)
 {
-	return StaticGetTypeInfo();
+	if (!Top) return;
+	Top->Refocus();
 }
 
-GroupT::GroupT(CoreT &Core) : NucleusT(Core)
+void ModuleT::Refresh(void)
+{
+	this->Visual.Clear();
+	this->Visual.Add(Top->Visual);
+}
+
+GroupT::GroupT(CoreT &Core) : NucleusT(Core), Focus(0)
 {
 	AtomCallback = [this](AtomT &This)
 	{
-		this->Visual.Clear();
-		for (auto &Statement : Statements)
-			this->Visual.Add(Statement->Visual);
-		std::cout << "Reset group visual" << std::endl;
+		this->Core.NeedRefresh.insert(this);
 	};
-	Statements.push_back(AtomT());
-	Statements.back().Callback = AtomCallback;
-	Statements.back() = new ProtoatomT(Core);
+	AddStatement(0);
+	Statements[0].ImmediateSet(new ProtoatomT(Core));
 }
 
-void GroupT::Serialize(Serial::WritePolymorphT &&WritePolymorph)
+void GroupT::Serialize(Serial::WritePolymorphT &&WritePolymorph) const
 {
 	auto WriteStatements = WritePolymorph.Array("Statements");
-	for (auto &Statement : Statements) Statement->Serialize(WriteStatements.Polymorph());
+	for (auto &Statement : Statements) if (Statement) Statement->Serialize(WriteStatements.Polymorph());
 }
 
 AtomTypeT &GroupT::StaticGetTypeInfo(void)
@@ -430,17 +461,84 @@ AtomTypeT &GroupT::StaticGetTypeInfo(void)
 	return Type;
 }
 
-AtomTypeT &GroupT::GetTypeInfo(void)
-{
-	return StaticGetTypeInfo();
-}
+AtomTypeT const &GroupT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
 	
-ProtoatomT::ProtoatomT(CoreT &Core) : NucleusT(Core)
+void GroupT::Refocus(void)
 {
-	Core.Focus = this;
+	if (Focus >= Statements.size()) return;
+	Statements[Focus]->Refocus();
 }
 
-void ProtoatomT::Serialize(Serial::WritePolymorphT &&WritePolymorph)
+void GroupT::Refresh(void)
+{
+	this->Visual.Clear();
+	for (auto &Statement : Statements)
+		this->Visual.Add(Statement->Visual);
+}
+
+void GroupT::AddStatement(size_t Index)
+{
+	auto Iterator = Statements.begin();
+	std::advance(Iterator, Index); // Portrait of a well designed api
+	auto Statement = Statements.insert(Iterator, AtomT(Core)); // Emplace tries copy constructor, nice job
+	Statement->Parent = this;
+	Statement->Callback = [this](AtomT &This)
+	{
+		Core.NeedRefresh.insert(this);
+	};
+}
+
+void GroupT::RemoveStatement(size_t Index)
+{
+	auto Iterator = Statements.begin();
+	std::advance(Iterator, Index);
+	Statements.erase(Iterator);
+}
+
+std::unique_ptr<ActionT> GroupT::ModifyStatements(bool Add, size_t Index)
+{
+	struct ModifyStatementsT : ActionT
+	{
+		GroupT &Base;
+		bool Add;
+		size_t Index;
+
+		ModifyStatementsT(GroupT &Base, bool Add, size_t Index) : Base(Base), Add(Add), Index(Index) {}
+
+		std::unique_ptr<ActionT> Apply(void)
+		{
+			auto Out = new ModifyStatementsT(Base, !Add, Index);
+			if (Add) Base.AddStatement(Index);
+			else Base.RemoveStatement(Index);
+			return std::unique_ptr<ActionT>(Out);
+		}
+	};
+	return std::unique_ptr<ActionT>(new ModifyStatementsT(*this, Add, Index));
+}
+	
+std::unique_ptr<ActionT> GroupT::Set(size_t Index, NucleusT *Value)
+{
+	struct SetT : ActionT
+	{
+		GroupT &Base;
+		size_t Index;
+		HoldT Value;
+
+		SetT(GroupT &Base, size_t Index, HoldT const &Value) : Base(Base), Index(Index), Value(Value) {}
+
+		std::unique_ptr<ActionT> Apply(void)
+		{
+			return Base.Statements[Index].Set(Value.Nucleus)->Apply();
+		}
+	};
+	return std::unique_ptr<ActionT>(new SetT(*this, Index, {Core, Value}));
+}
+	
+ProtoatomT::ProtoatomT(CoreT &Core) : NucleusT(Core), Lifted(Core)
+{
+}
+
+void ProtoatomT::Serialize(Serial::WritePolymorphT &&WritePolymorph) const
 {
 	if (IsIdentifier) WritePolymorph.Bool("IsIdentifier", *IsIdentifier);
 	WritePolymorph.String("Data", Data);
@@ -462,18 +560,27 @@ AtomTypeT &ProtoatomT::StaticGetTypeInfo(void)
 	return Type;
 }
 
-AtomTypeT &ProtoatomT::GetTypeInfo(void)
+AtomTypeT const &ProtoatomT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
+	
+void ProtoatomT::Refocus(void)
 {
-	return StaticGetTypeInfo();
+	Core.Focus = this;
+}
+
+void ProtoatomT::Refresh(void)
+{
+	Visual.Clear();
+	if (Lifted) Visual.Add(Lifted->Visual);
+	Visual.Add(Data);
 }
 	
-void ProtoatomT::Place(NucleusT *Nucleus)
+void ProtoatomT::Lift(NucleusT *Nucleus)
 {
 	Assert(!Lifted);
 	Lifted = Nucleus;
 }
 
-OptionalT<std::unique_ptr<ActionT>> ProtoatomT::HandleKey(std::string const &Text)
+OptionalT<std::unique_ptr<ActionT>> ProtoatomT::HandleInput(InputT const &Input)
 {
 	struct SetT : ActionT
 	{
@@ -481,14 +588,14 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::HandleKey(std::string const &Tex
 		unsigned int Position;
 		std::string Data;
 		
-		SetT(ProtoatomT &Base, std::string const &Data) : Base(Base), Position(Base.Position), Data(Data) {}
+		SetT(ProtoatomT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) {}
 		
 		std::unique_ptr<ActionT> Apply(void)
 		{
-			auto Out = new SetT(Base, Base.Data);
+			auto Out = new SetT(Base, Base.Position, Base.Data);
 			Base.Data = Data;
 			Base.Position = Position;
-			Base.Refresh();
+			Base.Core.NeedRefresh.insert(&Base);
 			return std::unique_ptr<ActionT>(Out);
 		}
 		
@@ -503,131 +610,123 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::HandleKey(std::string const &Tex
 		}
 	};
 	
-	if (Text == " ") return Finish({}, {}, {});
-	else if (IsIdentifier && *IsIdentifier != Core.IsIdentifierClass(Text)) return Finish({}, {}, {Text});
+	if (Input.Text == " ") return Finish({}, {}, {});
+	else if (IsIdentifier && *IsIdentifier != Core.IsIdentifierClass(Input.Text)) return Finish({}, {}, {Input});
 	else 
 	{
-		if (!IsIdentifier) IsIdentifier = Core.IsIdentifierClass(Text);
+		if (!IsIdentifier) IsIdentifier = Core.IsIdentifierClass(Input.Text);
 		auto NewData = Data;
-	       	NewData.insert(Position, Text);
-		Position += 1;
-		if (Position == NewData.size()) // Only do auto conversion if appending text
+	       	NewData.insert(Position, Input.Text);
+		auto NewPosition = Position + 1;
+		if (NewPosition == NewData.size()) // Only do auto conversion if appending text
 		{
 			auto Found = Core.LookUpAtom(NewData);
 			if (Found && Found->ReplaceImmediately) 
 				return Finish(Found, NewData, {});
 		}
-		return std::unique_ptr<ActionT>(new SetT(*this, Data + Text));
+		return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, Data + Input.Text));
 	}
 }
 
 OptionalT<std::unique_ptr<ActionT>> ProtoatomT::Finish(
 	OptionalT<AtomTypeT *> Type, 
 	OptionalT<std::string> NewData, 
-	OptionalT<std::string> SeedData)
+	OptionalT<InputT> SeedData)
 {
 	std::string Text = NewData ? *NewData : Data;
 	Type = Type ? Type : Core.LookUpAtom(Data);
+	auto Actions = new ActionGroupT;
 	if (Type)
 	{
 		Assert(!SeedData);
+		Assert(Atom);
 		if (((*Type)->Arity == ArityT::Nullary) || (*Type)->Prefix)
 		{
-			if (Lifted) return {};
+			if (Lifted) 
+			{
+				std::cout << "NOTE: Can't finish to nullary or prefixed op if protoatom has lifed." << std::endl; 
+				return {}; 
+			}
 			auto Replacement = new ProtoatomT(Core);
-			Replacement->Parent = Parent;
-			if (SeedData) Replacement->Data = *SeedData;
 			auto Finished = Type->Generate(Core);
-			Replacement->Place(Finished);
-			return ReplaceWith(Replacement);
+			Actions->Add(Replacement->Place(Finished));
+			if ((*Type)->Arity != ArityT::Nullary)
+			{
+				auto Proto = new ProtoatomT(Core);
+				Actions->Add(Finished->Place(Proto));
+			}
+			Actions->Add(Atom->Set(Replacement));
 		}
 		else
 		{
-			auto ActionGroup = new ActionGroupT();
-			if (Lifted) ActionGroup->Add(ReplaceWith(Lifted));
-			AtomT Child; Child = Lifted ? Lifted.Nucleus : this;
-			auto Parent = this->Parent;
-			while (Parent && 
+			auto Child = Lifted ? Lifted.Nucleus : new ProtoatomT(Core);
+			Actions->Add(Atom->Set(Child));
+			AtomT *WedgeAtom = Atom;
+			while (WedgeAtom->Parent && 
 				(
-					(Parent->GetTypeInfo().Precedence > (*Type)->Precedence) || 
+					(WedgeAtom->Parent->GetTypeInfo().Precedence > (*Type)->Precedence) || 
 					(
-						(Parent->GetTypeInfo().Precedence == (*Type)->Precedence) &&
-						(Parent->GetTypeInfo().LeftAssociative)
+						(WedgeAtom->Parent->GetTypeInfo().Precedence == (*Type)->Precedence) &&
+						(WedgeAtom->Parent->GetTypeInfo().LeftAssociative)
 					)
 				))
 			{
-				Child = Parent.Nucleus;
-				Parent = Parent->Parent;
+				WedgeAtom = WedgeAtom->Parent->Atom;
+				Child = WedgeAtom->Nucleus;
 			}
 			auto Finished = (*Type)->Generate(Core);
 			Assert(Finished);
-			if (Child) ActionGroup->Add(Child->Wedge(HoldT(Finished)));
-			else ActionGroup->Add(ReplaceWith(Finished));
-			return std::unique_ptr<ActionT>(ActionGroup);
+			Actions->Add(WedgeAtom->Set(Finished));
+			Actions->Add(Finished->Place(Child));
 		}
 	}
 	else
 	{
-		if (Lifted) return {};
-
+		if (Lifted) 
+		{ 
+			std::cout << "NOTE: Can't finish as new element if protoatom has lifed." << std::endl; 
+			return {};
+		}
+			
 		auto String = new StringT(Core);
-		String->Data = Text;
-		String->Refresh();
+		Actions->Add(String->Set(Text));
 
 		auto Protoatom = new ProtoatomT(Core);
-		AtomT ProtoatomAtom; ProtoatomAtom = Protoatom;
 
 		if (Parent->As<ElementT>())
 		{
-			Protoatom->Place(String);
+			Protoatom->Lift(String);
 		}
 		else
 		{
 			auto Element = new ElementT(Core);
-			Element->PlaceKey(String);
-			Protoatom->Place(Element);
+			Element->Key.ImmediateSet(String);
+			Protoatom->Lifted.Set(Element);
 		}
 
-		if (SeedData)
-		{
-			auto Group = new ActionGroupT();
-			Group->Add(ReplaceWith(Protoatom));
-			auto KeyResult = Protoatom->HandleKey(*SeedData);
-			if (KeyResult) Group->Add(std::move(*KeyResult));
-			return std::unique_ptr<ActionT>(Group);
-		}
-		else return ReplaceWith(Protoatom);
+		std::cout << Core.Dump() << std::endl; // DEBUG
+		Actions->Add(Atom->Set(Protoatom));
+
+		if (SeedData) Actions->Add(Core.ActionHandleInput(*SeedData));
 	}
+
+	return std::unique_ptr<ActionT>(Actions);
 }
 
-void ProtoatomT::Refresh(void)
-{
-	Visual.Clear();
-	if (Lifted) Visual.Add(Lifted->Visual);
-	Visual.Add(Data);
-}
-
-ElementT::ElementT(CoreT &Core) : NucleusT(Core)
+ElementT::ElementT(CoreT &Core) : NucleusT(Core), Base(Core), Key(Core), BaseFocused(false)
 {
 	Base.Callback = Key.Callback = [this](AtomT &This)
 	{
-		this->Visual.Clear();
-		if (Base)
-		{
-			this->Visual.Add(Base->Visual);
-			this->Visual.Add(".");
-		}
-		Assert(Key);
-		this->Visual.Add(Key->Visual);
+		this->Core.NeedRefresh.insert(this);
 	};
-
-	Key = new ProtoatomT(Core);
-	Key->Parent = this;
+	Base.Parent = Key.Parent = this;
+	Base.ImmediateSet(new ProtoatomT(Core));
+	Key.ImmediateSet(new ProtoatomT(Core));
 }
 
-void ElementT::Serialize(Serial::WritePolymorphT &&Polymorph)
+void ElementT::Serialize(Serial::WritePolymorphT &&Polymorph) const
 {
-	if (Base) Base->Serialize(Polymorph.Polymorph("Base"));
+	Base->Serialize(Polymorph.Polymorph("Base"));
 	Key->Serialize(Polymorph.Polymorph("Key"));
 }
 
@@ -644,27 +743,39 @@ AtomTypeT &ElementT::StaticGetTypeInfo(void)
 			Arity = ArityT::Binary;
 			Prefix = false;
 			Precedence = 900;
-			LeftAssociative = false;
+			LeftAssociative = true;
 		}
 	} static Type;
 	return Type;
 }
 
-AtomTypeT &ElementT::GetTypeInfo(void)
-{
-	return StaticGetTypeInfo();
-}
+AtomTypeT const &ElementT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
 	
-void ElementT::Place(NucleusT *Nucleus)
+void ElementT::Refocus(void)
 {
-	Nucleus->Parent = this;
-	Base = Nucleus;
+	if (BaseFocused) { if (Base) Base->Refocus(); }
+	else { if (Key) Key->Refocus(); }
 }
 
-void ElementT::PlaceKey(NucleusT *Nucleus) 
+void ElementT::Refresh(void)
 {
-	Nucleus->Parent = this;
-	Key = Nucleus;
+	this->Visual.Clear();
+	if (Base)
+	{
+		this->Visual.Add(Base->Visual);
+		this->Visual.Add(".");
+	}
+	if (Key) this->Visual.Add(Key->Visual);
+}
+	
+std::unique_ptr<ActionT> ElementT::Place(NucleusT *Nucleus)
+{
+	return Base.Set(Nucleus);
+}
+
+std::unique_ptr<ActionT> ElementT::PlaceKey(NucleusT *Nucleus)
+{
+	return Key.Set(Nucleus);
 }
 
 StringT::StringT(CoreT &Core) : NucleusT(Core) 
@@ -689,35 +800,53 @@ AtomTypeT &StringT::StaticGetTypeInfo(void)
 	return Type;
 }
 	
-void StringT::Serialize(Serial::WritePolymorphT &&Polymorph)
+void StringT::Serialize(Serial::WritePolymorphT &&Polymorph) const
 {
 	Polymorph.String("Data", Data);
 }
 
-AtomTypeT &StringT::GetTypeInfo(void)
-{
-	return StaticGetTypeInfo();
-}
-
+AtomTypeT const &StringT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
+	
 void StringT::Refresh(void)
 {
 	Visual.Set("'" + Data + "'");
 }
 	
-AssignmentT::AssignmentT(CoreT &Core) : NucleusT(Core)
+std::unique_ptr<ActionT> StringT::Set(std::string const &Text)
+{
+	struct SetT : ActionT
+	{
+		StringT &Base;
+		std::string Text;
+
+		SetT(StringT &Base, std::string const &Text) : Base(Base), Text(Text) {}
+
+		std::unique_ptr<ActionT> Apply(void)
+		{
+			auto Out = new SetT(Base, Base.Data);
+			Base.Data = Text;
+			Base.Core.NeedRefresh.insert(&Base);
+			return std::unique_ptr<ActionT>(Out);
+		}
+	};
+	return std::unique_ptr<ActionT>(new SetT(*this, Text));
+}
+
+AssignmentT::AssignmentT(CoreT &Core) : NucleusT(Core), Left(Core), Right(Core), LeftFocused(false)
 {
 	Left.Callback = Right.Callback = [this](AtomT &This)
 	{
-		this->Visual.Clear();
-		if (Left) this->Visual.Add(Left->Visual);
-		this->Visual.Add("=");
-		if (Right) this->Visual.Add(Right->Visual);
+		this->Core.NeedRefresh.insert(this);
 	};
-
-	Left = new ProtoatomT(Core);
-	Left->Parent = this;
-	Right = new ProtoatomT(Core);
-	Right->Parent = this;
+	Left.Parent = Right.Parent = this;
+	Left.ImmediateSet(new ProtoatomT(Core));
+	Right.ImmediateSet(new ProtoatomT(Core));
+}
+	
+void AssignmentT::Serialize(Serial::WritePolymorphT &&Polymorph) const
+{
+	Left->Serialize(Polymorph.Polymorph("Left"));
+	Right->Serialize(Polymorph.Polymorph("Right"));
 }
 
 AtomTypeT &AssignmentT::StaticGetTypeInfo(void)
@@ -733,21 +862,31 @@ AtomTypeT &AssignmentT::StaticGetTypeInfo(void)
 			Arity = ArityT::Binary;
 			Prefix = false;
 			Precedence = 100;
-			LeftAssociative = true;
+			LeftAssociative = false;
 		}
 	} static Type;
 	return Type;
 }
 
-AtomTypeT &AssignmentT::GetTypeInfo(void)
+AtomTypeT const &AssignmentT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
+	
+void AssignmentT::Refocus(void)
 {
-	return StaticGetTypeInfo();
+	if (LeftFocused) { if (Left) Left->Refocus(); }
+	else { if (Right) Right->Refocus(); }
 }
 
-void AssignmentT::Place(NucleusT *Nucleus)
+void AssignmentT::Refresh(void)
 {
-	Nucleus->Parent = this;
-	Left = Nucleus;
+	this->Visual.Clear();
+	if (Left) this->Visual.Add(Left->Visual);
+	this->Visual.Add("=");
+	if (Right) this->Visual.Add(Right->Visual);
+}
+
+std::unique_ptr<ActionT> AssignmentT::Place(NucleusT *Nucleus)
+{
+	return Left.Set(Nucleus);
 }
 
 }
