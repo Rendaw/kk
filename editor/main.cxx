@@ -15,7 +15,22 @@ struct WebViewT : QWebView
 	CoreT *Core;
 	void keyPressEvent(QKeyEvent *Event)
 	{
-		Core->HandleInput({Event->text().toUtf8().data()});
+		switch (Event->key())
+		{
+			case Qt::Key_Left: Core->HandleInput({InputT::MainT::Left}); return;
+			case Qt::Key_Right: Core->HandleInput({InputT::MainT::Right}); return;
+			case Qt::Key_Up: Core->HandleInput({InputT::MainT::Up}); return;
+			case Qt::Key_Down: Core->HandleInput({InputT::MainT::Down}); return;
+			case Qt::Key_Backspace: Core->HandleInput({InputT::MainT::Backspace}); return;
+			case Qt::Key_Delete: Core->HandleInput({InputT::MainT::Delete}); return;
+			case Qt::Key_Return: Core->HandleInput({InputT::MainT::NewStatement}); return;
+		}
+		std::string const Text = Event->text().toUtf8().data();
+		if (!Text.empty() && (Text.size() == 1) && (Text[0] >= 33) && (Text[0] <= 126))
+		{
+			Core->HandleInput({ExplicitT<InputT::TextT>(), Text});
+			return;
+		}
 	}
 };
 
@@ -30,7 +45,7 @@ struct WebPageT : QWebPage
 
 int main(int argc, char **argv)
 {
-	/*QApplication QTContext(argc, argv);
+	QApplication QTContext(argc, argv);
 	auto Window = new QWidget();
 	Window->setWindowTitle("KK Editor QT");
 	auto WindowLayout = new QBoxLayout(QBoxLayout::TopToBottom);
@@ -59,6 +74,18 @@ int main(int argc, char **argv)
 			"	padding: 2px;"
 			"	display: inline-block;"
 			"}"
+			
+			".tag"
+			"{"
+			"	display: block;"
+			"	font-size: 0.6em;"
+			"	border: none;"
+			"}"
+
+			".group > div"
+			"{"
+			"	display: block;"
+			"}"
 		"</style>"
 	);
 	VisualT BodyVisual(HTMLRoot, HTMLRoot.findFirst("body"));
@@ -67,16 +94,20 @@ int main(int argc, char **argv)
 	WebView->Core = &Core;
 
 	Window->show();
-	return QTContext.exec();*/
+	return QTContext.exec();
 
-	VisualT BodyVisual;
+	/*VisualT BodyVisual;
 	CoreT Core(BodyVisual);
 
 	std::string Line;
 	while (std::getline(std::cin, Line))
-		Core.HandleInput({Line.substr(0, 1)});
+	{
+		auto Text = Line.substr(0, 1);
+		if (Text == "") Core.HandleInput({InputT::MainT::NewStatement});
+		else Core.HandleInput({Line.substr(0, 1)});
+	}
 
-	return 0;
+	return 0;*/
 }
 
 
