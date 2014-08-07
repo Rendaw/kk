@@ -86,6 +86,7 @@ struct VisualT
 	~VisualT(void);
 
 	void SetClass(std::string const &Class);
+	void UnsetClass(std::string const &Class);
 	VisualT &Tag(void);
 
 	void Start(void);
@@ -169,9 +170,8 @@ enum ArityT
 	Binary
 };
 
-struct InputTypesT
+struct InputT
 {
-	typedef std::string TextT;
 	enum struct MainT
 	{
 		// Spatial keys
@@ -179,18 +179,16 @@ struct InputTypesT
 		Right,
 		Up,
 		Down,
-		Backspace,
-		Delete,
+		TextBackspace,
 
 		// Relative keys
+		Delete,
+		Enter,
+		Exit,
 		NewStatement
 	};
-};
-struct InputT : InputTypesT, VariantT<InputTypesT::TextT, InputTypesT::MainT>
-{
-	using VariantT::VariantT;
-	using InputTypesT::TextT;
-	using InputTypesT::MainT;
+	OptionalT<MainT> Main;
+	OptionalT<std::string> Text;
 };
 
 enum struct FocusDirectionT
@@ -227,13 +225,16 @@ struct NucleusT
 	virtual AtomTypeT const &GetTypeInfo(void) const;
 	virtual void Focus(FocusDirectionT Direction);
 	virtual void Defocus(void);
-	virtual void Refocus(void); // If bool is false, optional must not be set
+	virtual void AssumeFocus(void); // If bool is false, optional must not be set
 	virtual void Refresh(void);
-	virtual std::unique_ptr<ActionT> Place(NucleusT *Nucleus);
+	virtual std::unique_ptr<ActionT> Set(NucleusT *Nucleus);
+	virtual std::unique_ptr<ActionT> Set(std::string const &Text); // TODO StringTypePartT/Common- should add a SetT class to the StringDataPartT class, protoatom should use that set and this should be removed
 	virtual OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input);
 
 	virtual void FocusPrevious(void);
 	virtual void FocusNext(void);
+		
+	void FlagRefresh(void);
 };
 
 struct AtomTypeT
@@ -258,6 +259,12 @@ struct CoreT
 	AtomT Root;
 	HoldT Focused;
 	
+	std::unique_ptr<AtomTypeT> 
+		ModuleType, 
+		GroupType, 
+		ElementType, 
+		AssignmentType, 
+		StringType;
 	std::map<std::string, AtomTypeT *> Types;
 
 	std::set<NucleusT *> DeletionCandidates;
@@ -274,9 +281,7 @@ struct CoreT
 	void Redo(void);
 
 	// Used by atoms (internal)
-	void Focus(NucleusT *Target);
-	
-	void Refocus(void);
+	void AssumeFocus(void);
 
 	std::unique_ptr<ActionT> ActionHandleInput(InputT const &Input);
 
@@ -284,45 +289,6 @@ struct CoreT
 
 	private:
 		void Refresh(void);
-};
-
-struct ModuleT : NucleusT
-{
-	AtomT Top;
-
-	ModuleT(CoreT &Core);
-		
-	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
-	
-	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT const &GetTypeInfo(void) const override;
-	void Refocus(void) override;
-	void Refresh(void) override;
-};
-
-struct GroupT : NucleusT
-{
-	AtomT::AtomCallbackT AtomCallback;
-	std::vector<AtomT> Statements;
-	size_t Focus;
-	
-	GroupT(CoreT &Core);
-	
-	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
-	
-	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT const &GetTypeInfo(void) const override;
-	void Refocus(void) override;
-	void Refresh(void) override;
-
-	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
-	
-	void FocusPrevious(void) override;
-	void FocusNext(void) override;
-
-	void AddStatement(size_t Index);
-	void RemoveStatement(size_t Index);
-	std::unique_ptr<ActionT> AddRemoveStatement(size_t Index, OptionalT<NucleusT *> Add, bool Focus = true);
 };
 
 struct ProtoatomT : NucleusT
@@ -341,10 +307,10 @@ struct ProtoatomT : NucleusT
 	static AtomTypeT &StaticGetTypeInfo(void);
 	AtomTypeT const &GetTypeInfo(void) const override;
 
-	void Focus(void) override;
+	void Focus(FocusDirectionT Direction) override;
 	void Defocus(void) override;
 
-	void Refocus(void) override;
+	void AssumeFocus(void) override;
 	void Refresh(void) override;
 	
 	void Lift(NucleusT *Nucleus);
@@ -353,76 +319,7 @@ struct ProtoatomT : NucleusT
 	OptionalT<std::unique_ptr<ActionT>> Finish(
 		OptionalT<AtomTypeT *> Type, 
 		OptionalT<std::string> NewData, 
-		OptionalT<InputT> SeedData); // TODO SeedData should probably just be std::string
-
-	private:
-		void FlagRefresh(void);
-};
-
-struct ElementT : NucleusT
-{
-	AtomT Base, Key;
-	enum struct FocusT
-	{
-		Self, Base, Key
-	} Focused;
-
-	ElementT(CoreT &Core);
-
-	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
-	
-	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT const &GetTypeInfo(void) const override;
-	void Refocus(void) override;
-	void Refresh(void) override;
-	
-	void FocusPrevious(void) override;
-	void FocusNext(void) override;
-
-	std::unique_ptr<ActionT> Place(NucleusT *Nucleus) override;
-	std::unique_ptr<ActionT> PlaceKey(NucleusT *Nucleus);
-};
-
-struct StringT : NucleusT
-{
-	std::string Data;
-	
-	StringT(CoreT &Core);
-	
-	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
-	
-	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT const &GetTypeInfo(void) const override;
-	void Refresh(void) override;
-	
-	std::unique_ptr<ActionT> Set(std::string const &Text);
-};
-
-struct AssignmentT : NucleusT
-{
-	AtomT Left, Right;
-	enum struct FocusT
-	{
-		Self, Left, Right
-	} Focused;
-
-	AssignmentT(CoreT &Core);
-	
-	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
-	
-	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT const &GetTypeInfo(void) const override;
-	void Refocus(void) override;
-	void Refresh(void) override;
-	
-	void FocusPrevious(void) override;
-	void FocusNext(void) override;
-
-	std::unique_ptr<ActionT> Place(NucleusT *Nucleus) override;
-};
-
-struct IntT : NucleusT
-{
+		OptionalT<InputT> SeedData);
 };
 
 }

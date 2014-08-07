@@ -15,22 +15,31 @@ struct WebViewT : QWebView
 	CoreT *Core;
 	void keyPressEvent(QKeyEvent *Event)
 	{
+		InputT::MainT Main;
+		OptionalT<std::string> Text;
+		std::string RawText = std::string(Event->text().toUtf8().data());
+		if (!RawText.empty() && (RawText.size() == 1) && (RawText[0] >= 33) && (RawText[0] <= 126)) Text = RawText;
 		switch (Event->key())
 		{
-			case Qt::Key_Left: Core->HandleInput({InputT::MainT::Left}); return;
-			case Qt::Key_Right: Core->HandleInput({InputT::MainT::Right}); return;
-			case Qt::Key_Up: Core->HandleInput({InputT::MainT::Up}); return;
-			case Qt::Key_Down: Core->HandleInput({InputT::MainT::Down}); return;
-			case Qt::Key_Backspace: Core->HandleInput({InputT::MainT::Backspace}); return;
-			case Qt::Key_Delete: Core->HandleInput({InputT::MainT::Delete}); return;
-			case Qt::Key_Return: Core->HandleInput({InputT::MainT::NewStatement}); return;
+			case Qt::Key_Left: Main = InputT::MainT::Left; break;
+			case Qt::Key_Right: Main = InputT::MainT::Right; break;
+			case Qt::Key_Up: Main = InputT::MainT::Up; break;
+			case Qt::Key_Down: Main = InputT::MainT::Down; break;
+			case Qt::Key_Backspace: Main = InputT::MainT::TextBackspace; break;
+			case Qt::Key_Delete: Main = InputT::MainT::Delete; break;
+			case Qt::Key_Return: Main = InputT::MainT::Enter; Text = std::string("\n"); break;
+			case Qt::Key_Escape: Main = InputT::MainT::Exit; break;
+			default: break;
 		}
-		std::string const Text = Event->text().toUtf8().data();
-		if (!Text.empty() && (Text.size() == 1) && (Text[0] >= 33) && (Text[0] <= 126))
+		if (Text)
 		{
-			Core->HandleInput({ExplicitT<InputT::TextT>(), Text});
-			return;
+			if (*Text == "x") Main = InputT::MainT::Delete;
+			else if (*Text == "h") Main = InputT::MainT::Left;
+			else if (*Text == "j") Main = InputT::MainT::Down;
+			else if (*Text == "k") Main = InputT::MainT::Up;
+			else if (*Text == "l") Main = InputT::MainT::Right;
 		}
+		Core->HandleInput({Main, Text});
 	}
 };
 
@@ -69,10 +78,15 @@ int main(int argc, char **argv)
 			"	display: inline; "
 			"	font-family: monospace;"
 			"	"
-			"	border: 1px solid black;"
+			"	border: 1px solid LightSteelBlue;"
 			"	margin: 2px;"
 			"	padding: 2px;"
 			"	display: inline-block;"
+			"}"
+
+			"div.flag-focused"
+			"{ "
+			"	border-color: black;"
 			"}"
 			
 			".tag"

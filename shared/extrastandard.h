@@ -101,6 +101,42 @@ template <typename GotType, typename ExpectedType> inline void AssertImplementat
 #endif
 }
 
+template <typename GotType, typename ExpectedType> inline void AssertImplementationLTE(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
+{
+#ifndef NDEBUG
+	bool Result = Got <= Expected;
+	if (!Result)
+	{
+		AssertStamp(File, Function, Line);
+		std::cerr << "Got (" << GotString << ") '" << Got << "' <= expected (" << ExpectedString << ") '" << Expected << "'" << std::endl;
+		throw false;
+	}
+#endif
+}
+template <typename GotType, typename ExpectedType> inline void AssertImplementationGT(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
+{
+#ifndef NDEBUG
+	bool Result = Got > Expected;
+	if (!Result)
+	{
+		AssertStamp(File, Function, Line);
+		std::cerr << "Got (" << GotString << ") '" << Got << "' > expected (" << ExpectedString << ") '" << Expected << "'" << std::endl;
+		throw false;
+	}
+#endif
+}
+template <typename GotType, typename ExpectedType> inline void AssertImplementationGTE(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
+{
+#ifndef NDEBUG
+	bool Result = Got >= Expected;
+	if (!Result)
+	{
+		AssertStamp(File, Function, Line);
+		std::cerr << "Got (" << GotString << ") '" << Got << "' >= expected (" << ExpectedString << ") '" << Expected << "'" << std::endl;
+		throw false;
+	}
+#endif
+}
 template <typename Got1Type, typename Got2Type> inline void AssertImplementationOr(char const *File, char const *Function, int Line, char const *Got1String, Got1Type const &Got1, char const *Got2String, Got2Type const &Got2)
 {
 #ifndef NDEBUG
@@ -118,6 +154,9 @@ template <typename Got1Type, typename Got2Type> inline void AssertImplementation
 #define AssertE(Arg1, Arg2) AssertImplementationE(__FILE__, __FUNCTION__, __LINE__, #Arg1, Arg1, #Arg2, Arg2)
 #define AssertNE(Arg1, Arg2) AssertImplementationNE(__FILE__, __FUNCTION__, __LINE__, #Arg1, Arg1, #Arg2, Arg2)
 #define AssertLT(Arg1, Arg2) AssertImplementationLT(__FILE__, __FUNCTION__, __LINE__, #Arg1, Arg1, #Arg2, Arg2)
+#define AssertLTE(Arg1, Arg2) AssertImplementationLTE(__FILE__, __FUNCTION__, __LINE__, #Arg1, Arg1, #Arg2, Arg2)
+#define AssertGT(Arg1, Arg2) AssertImplementationGT(__FILE__, __FUNCTION__, __LINE__, #Arg1, Arg1, #Arg2, Arg2)
+#define AssertGTE(Arg1, Arg2) AssertImplementationGTE(__FILE__, __FUNCTION__, __LINE__, #Arg1, Arg1, #Arg2, Arg2)
 #define AssertOr(Arg1, Arg2) AssertImplementationOr(__FILE__, __FUNCTION__, __LINE__, #Arg1, Arg1, #Arg2, Arg2)
 
 #endif

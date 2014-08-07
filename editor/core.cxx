@@ -108,7 +108,13 @@ VisualT::~VisualT(void)
 void VisualT::SetClass(std::string const &Class)
 {
 	EvaluateJS(Root, ::StringT()
-		<< ID << ".className = '" << JSSlash(Class) << "';");
+		<< ID << ".classList.add('" << JSSlash(Class) << "');");
+}
+
+void VisualT::UnsetClass(std::string const &Class)
+{
+	EvaluateJS(Root, ::StringT()
+		<< ID << ".classList.remove('" << JSSlash(Class) << "');");
 }
 	
 VisualT &VisualT::Tag(void)
@@ -217,8 +223,8 @@ void AtomT::ImmediateSet(NucleusT *Nucleus)
 	this->Nucleus->Atom = this;
 	this->Nucleus->Parent = Parent;
 	if (Callback) Callback(*this);
-	Core.Refocus();
 	std::cout << "Set result: " << Core.Dump() << std::endl;
+	Core.AssumeFocus();
 }
 
 std::unique_ptr<ActionT> AtomT::Set(NucleusT *Nucleus)
@@ -314,9 +320,9 @@ void NucleusT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
 {
 	//Serialize(Serial::WritePolymorphT(GetTypeInfo().Tag, std::move(Prepolymorph)));
 	auto Polymorph = Serial::WritePolymorphT(GetTypeInfo().Tag, std::move(Prepolymorph));
-	/*Polymorph.String("this", ::StringT() << this);
+	Polymorph.String("this", ::StringT() << this);
 	Polymorph.String("parent", ::StringT() << Parent.Nucleus);
-	Polymorph.String("atom", ::StringT() << Atom);*/
+	Polymorph.String("atom", ::StringT() << Atom);
 	Serialize(std::move(Polymorph));
 }
 		
@@ -330,20 +336,24 @@ AtomTypeT const &NucleusT::GetTypeInfo(void) const
 
 void NucleusT::Focus(FocusDirectionT Direction) 
 {
+	if (Core.Focused.Nucleus == this) return;
 	if (Core.Focused)
 	{
 		Core.Focused->Defocus();
 	}
 	Core.Focused = this;
+	std::cout << "FOCUSED " << this << std::endl;
 }
 
 void NucleusT::Defocus(void) {}
 		
-void NucleusT::Refocus(void) { }
+void NucleusT::AssumeFocus(void) { }
 
 void NucleusT::Refresh(void) { Assert(false); }
 
-std::unique_ptr<ActionT> NucleusT::Place(NucleusT *Nucleus) { Assert(false); return {}; }
+std::unique_ptr<ActionT> NucleusT::Set(NucleusT *Nucleus) { Assert(false); return {}; }
+	
+std::unique_ptr<ActionT> NucleusT::Set(std::string const &Text) { Assert(false); return {}; }
 		
 OptionalT<std::unique_ptr<ActionT>> NucleusT::HandleInput(InputT const &Input) 
 { 
@@ -355,16 +365,870 @@ void NucleusT::FocusPrevious(void) {}
 
 void NucleusT::FocusNext(void) {}
 
+void NucleusT::FlagRefresh(void) 
+{
+	Core.NeedRefresh.insert(this);
+}
+
 AtomTypeT::~AtomTypeT(void) {}
 
 NucleusT *AtomTypeT::Generate(CoreT &Core) { Assert(false); return nullptr; }
 
+template <typename DataT> struct CommonAtomTypeT;
+
+template <typename DataT> struct CommonNucleusT : NucleusT
+{
+	friend struct CommonAtomTypeT<DataT>;
+	private:
+		CommonNucleusT(CoreT &Core, CommonAtomTypeT<DataT> &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), Data(Core) 
+		{ 
+			Visual.Tag().Add(TypeInfo.Tag);
+			FlagRefresh();
+		}
+
+		struct SelfFocusedT {};
+		typedef size_t PartFocusedT;
+		VariantT<SelfFocusedT, PartFocusedT> Focused;
+
+	public:
+		CommonAtomTypeT<DataT> const &TypeInfo;
+		
+		DataT Data;
+
+		void Serialize(Serial::WritePolymorphT &&Polymorph) const override
+		{
+			for (auto &Part : TypeInfo.Parts)
+				Part->Serialize(*this, Polymorph);
+		}
+		
+		AtomTypeT const &GetTypeInfo(void) const override { return TypeInfo; }
+
+		void Focus(FocusDirectionT Direction) override
+		{
+			NucleusT::Focus(Direction);
+			Focused = SelfFocusedT{};
+			Visual.SetClass("flag-focused");
+		}
+
+		void Defocus(void) override 
+		{
+			Assert(Focused);
+			if (Focused.template Is<PartFocusedT>())
+			{
+				TypeInfo.Parts[Focused.template Get<PartFocusedT>()]->Defocus(*this);
+			}
+			else
+			{
+				Assert(Focused.template Is<SelfFocusedT>());
+				Visual.UnsetClass("flag-focused");
+			}
+			Focused = {};
+		}
+
+		void AssumeFocus(void) override
+		{
+			if (Focused) 
+			{
+				if (Focused.template Is<PartFocusedT>()) TypeInfo.Parts[Focused.template Get<PartFocusedT>()]->AssumeFocus(*this);
+				else if (Focused.template Is<SelfFocusedT>()) Focus(FocusDirectionT::Direct);
+				else Assert(false);
+			}
+			else
+			{
+				for (size_t Index = 0; Index < TypeInfo.Parts.size(); ++Index)
+				{
+					auto &Part = TypeInfo.Parts[Index];
+					if (!Part->FocusDefault) continue;
+					Focused = PartFocusedT(Index);
+					Part->AssumeFocus(*this);
+					return;
+				}
+				Focus(FocusDirectionT::Direct);
+			}
+		}
+		
+		std::unique_ptr<ActionT> Set(NucleusT *Nucleus) override
+		{
+			for (size_t Index = 0; Index < TypeInfo.Parts.size(); ++Index)
+			{
+				auto &Part = TypeInfo.Parts[Index];
+				if (!Part->SetDefault) continue;
+				auto Result = Part->Set(*this, Nucleus);
+				Assert(Result);
+				return std::move(Result);
+			}
+			Assert(false);
+			return {};
+		}
+
+		std::unique_ptr<ActionT> Set(std::string const &Text) override
+		{
+			for (size_t Index = 0; Index < TypeInfo.Parts.size(); ++Index)
+			{
+				auto &Part = TypeInfo.Parts[Index];
+				if (!Part->SetDefault) continue;
+				auto Result = Part->Set(*this, Text);
+				Assert(Result);
+				return std::move(Result);
+			}
+			Assert(false);
+			return {};
+		}
+
+		void Refresh(void) override
+		{
+			Visual.Start();
+			for (auto &Part : TypeInfo.Parts)
+			{
+				Part->Refresh(*this);
+				Visual.Add(Part->GetVisual(*this));
+			}
+			std::cout << "Refreshed " << this << " " << typeid(*this).name() << std::endl;
+		}
+
+		OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override
+		{
+			Assert(Focused);
+			if (Focused.template Is<SelfFocusedT>())
+			{
+				if (Input.Main)
+				{
+					switch (*Input.Main)
+					{
+						case InputT::MainT::Left: if (Parent) Parent->FocusPrevious(); return {};
+						case InputT::MainT::Right: if (Parent) Parent->FocusNext(); return {};
+						case InputT::MainT::Enter: 
+						{
+							Focused = PartFocusedT(0);
+							TypeInfo.Parts[0]->Focus(*this, FocusDirectionT::Direct);
+							return {};
+						}
+						case InputT::MainT::Exit: if (Parent) Parent->Focus(FocusDirectionT::Direct); return {};
+						default: break;
+					}
+				}
+			}
+			else
+			{
+				if (Input.Main)
+				{
+					switch (*Input.Main)
+					{
+						case InputT::MainT::Exit: Focus(FocusDirectionT::Direct); return {};
+						default: break;
+					}
+				}
+
+				auto &Index = Focused.template Get<PartFocusedT>();
+				return TypeInfo.Parts[Index]->HandleInput(*this, Input);
+			}
+			
+			if (Parent) return Parent->HandleInput(Input);
+
+			return {};
+		}
+
+		void FocusPrevious(void) override
+		{
+			Assert(Focused);
+			Assert(Focused.template Is<PartFocusedT>());
+			auto &Index = Focused.template Get<PartFocusedT>();
+			if (Index == 0) 
+			{
+				if (Parent) Parent->FocusPrevious();
+			}
+			else
+			{
+				TypeInfo.Parts[Index]->Defocus(*this);
+				Index -= 1;
+				TypeInfo.Parts[Index]->Focus(*this, FocusDirectionT::FromAhead);
+			}
+		}
+
+		void FocusNext(void) override
+		{
+			Assert(Focused);
+			Assert(Focused.template Is<PartFocusedT>());
+			auto &Index = Focused.template Get<PartFocusedT>();
+			AssertGTE(TypeInfo.Parts.size(), 1);
+			if (Index < TypeInfo.Parts.size() - 1) 
+			{
+				TypeInfo.Parts[Index]->Defocus(*this);
+				Index += 1;
+				TypeInfo.Parts[Index]->Focus(*this, FocusDirectionT::FromBehind);
+			}
+			else
+			{
+				if (Parent) Parent->FocusNext();
+			}
+		}
+};
+
+template <typename DataT> struct CommonAtomPartT
+{
+	virtual ~CommonAtomPartT(void) {}
+
+	typedef CommonNucleusT<DataT> BaseT;
+
+	virtual void Construct(BaseT &Base) = 0;
+	virtual VisualT &GetVisual(BaseT &Base) const = 0;
+	virtual void Serialize(BaseT const &Base, Serial::WritePolymorphT &Polymorph) const = 0;
+	virtual void Focus(BaseT &Base, FocusDirectionT Direction) const = 0;
+	virtual void Defocus(BaseT &Base) const {}
+	virtual void AssumeFocus(BaseT &Base) const = 0;
+	virtual void Refresh(BaseT &Base) const = 0;
+	virtual OptionalT<std::unique_ptr<ActionT>> HandleInput(BaseT &Base, InputT const &Input) const = 0;
+
+	virtual std::unique_ptr<ActionT> Set(BaseT &Base, NucleusT *Nucleus) { Assert(false); return {}; }
+	virtual std::unique_ptr<ActionT> Set(BaseT &Base, std::string const &Text) { Assert(false); return {}; }
+	
+	// Unconfigurable
+	std::string Identifier;
+	bool FocusDefault = false;
+	bool SetDefault = false;
+
+	// Configurable
+	std::string Prefix;
+	std::string Suffix;
+};
+
+template <typename DataT> struct CommonAtomTypeT : AtomTypeT
+{
+	NucleusT *Generate(CoreT &Core) override
+	{
+		auto Out = new CommonNucleusT<DataT>(Core, *this);
+		for (auto &Part : Parts) Part->Construct(*Out);
+		return Out;
+	}
+
+	std::vector<std::unique_ptr<CommonAtomPartT<DataT>>> Parts;
+};
+
+template <typename DataT> struct AtomTypePartT : CommonAtomPartT<DataT>
+{
+	std::string Identifier;
+
+	using BaseT = typename CommonAtomPartT<DataT>::BaseT;
+
+	AtomT &(*Access)(BaseT &);
+	AtomT const &(*AccessConst)(BaseT const &);
+
+	AtomTypePartT(void) {}
+
+	void Construct(BaseT &Base)
+	{
+		auto &Atom = Access(Base);
+		Atom.Callback = [&Base](AtomT &This) { Base.FlagRefresh(); };
+		Atom.Parent = &Base;
+		Atom.ImmediateSet(new ProtoatomT(Base.Core));
+	}
+
+	VisualT &GetVisual(BaseT &Base) const override { return Access(Base)->Visual; }
+
+	void Serialize(BaseT const &Base, Serial::WritePolymorphT &Polymorph) const override
+		{ AccessConst(Base)->Serialize(Polymorph.Polymorph(Identifier)); }
+
+	void Focus(BaseT &Base, FocusDirectionT Direction) const override
+		{ Access(Base)->Focus(Direction); }
+
+	void AssumeFocus(BaseT &Base) const override
+		{ Access(Base)->AssumeFocus(); }
+
+	void Refresh(BaseT &Base) const override
+		{ Access(Base)->Refresh(); }
+
+	OptionalT<std::unique_ptr<ActionT>> HandleInput(BaseT &Base, InputT const &Input) const override
+		{ return Access(Base)->HandleInput(Input); }
+};
+
+struct AtomListElementT 
+{
+	VisualT Visual;
+	AtomT Atom;
+	AtomListElementT(CoreT &Core) : Visual(Core.RootVisual.Root), Atom(Core) {}
+};
+struct AtomListDataPartT
+{
+	std::vector<std::unique_ptr<AtomListElementT>> List;
+	VisualT Visual;
+	OptionalT<size_t> Focused;
+	AtomListDataPartT(CoreT &Core) : Visual(Core.RootVisual.Root) {}
+};
+
+template <typename DataT> struct AtomListTypePartT : CommonAtomPartT<DataT>
+{
+	using BaseT = typename CommonAtomPartT<DataT>::BaseT; // Of course, normal typedef doesn't work
+	using CommonAtomPartT<DataT>::Identifier; // Why? This is so stupid
+	using CommonAtomPartT<DataT>::Prefix;
+	using CommonAtomPartT<DataT>::Suffix;
+
+	AtomListDataPartT &(*Access)(BaseT &);
+	AtomListDataPartT const &(*AccessConst)(BaseT const &);
+
+	AtomListTypePartT(void) {}
+
+	void Construct(BaseT &Base) override
+	{
+		AddStatement(Base, 0);
+		Access(Base).List[0]->Atom.Callback = [&Base](AtomT &This)
+		{
+			Base.FlagRefresh();
+		};
+		Access(Base).List[0]->Atom.ImmediateSet(new ProtoatomT(Base.Core));
+	}
+
+	VisualT &GetVisual(BaseT &Base) const override { return Access(Base).Visual; }
+
+	void Serialize(BaseT const &Base, Serial::WritePolymorphT &Polymorph) const override
+	{ 
+		auto Array = Polymorph.Array(Identifier);
+		for (auto &Statement : AccessConst(Base).List)
+			Statement->Atom->Serialize(Array.Polymorph());
+	}
+
+	void Focus(BaseT &Base, FocusDirectionT Direction) const override
+	{ 
+		auto &List = Access(Base).List;
+		auto &Focused = Access(Base).Focused;
+		Assert(!List.empty());
+		switch (Direction)
+		{
+			case FocusDirectionT::FromAhead: 
+			{
+				Focused = List.size() - 1; 
+				break;
+			}
+			case FocusDirectionT::FromBehind:
+			{
+				Focused = 0; 
+				break;
+			}
+			case FocusDirectionT::Direct:
+			{
+				Focused = 0; 
+				break;
+			}
+		}
+		List[*Focused]->Atom->Focus(Direction);
+	}
+
+	void AssumeFocus(BaseT &Base) const override
+	{ 
+		auto &Focused = Access(Base).Focused;
+		if (!Focused) Focused = 0;
+		Access(Base).List[*Focused]->Atom->AssumeFocus();
+	}
+
+	void Refresh(BaseT &Base) const override
+	{ 
+		Base.Visual.Start();
+		for (auto &Element : Access(Base).List)
+		{
+			Element->Visual.Start();
+			if (!Prefix.empty()) Element->Visual.Add(Prefix);
+			Element->Visual.Add(Element->Atom->Visual);
+			if (!Suffix.empty()) Element->Visual.Add(Suffix);
+			Base.Visual.Add(Element->Visual);
+		}
+	}
+
+	void AddStatement(BaseT &Base, size_t Index) const
+	{
+		auto &List = Access(Base).List;
+		auto Iterator = List.begin();
+		std::advance(Iterator, Index); // Portrait of a well designed api
+		auto Element = List.insert(Iterator, make_unique<AtomListElementT>(Base.Core)); // Emplace tries copy constructor, nice job
+		(*Element)->Atom.Parent = &Base;
+		(*Element)->Atom.Callback = [&Base](AtomT &This)
+		{
+			Base.FlagRefresh();
+		};
+	}
+
+	void RemoveStatement(BaseT &Base, size_t Index) const
+	{
+		auto &List = Access(Base).List;
+		auto Iterator = List.begin();
+		std::advance(Iterator, Index);
+		List.erase(Iterator);
+	}
+
+	OptionalT<std::unique_ptr<ActionT>> HandleInput(BaseT &Base, InputT const &Input) const override
+	{
+		if (Input.Main && (*Input.Main == InputT::MainT::NewStatement))
+		{
+			Assert(Access(Base).Focused);
+			struct AddRemoveStatementT : ActionT
+			{
+				AtomListTypePartT const &Type;
+				BaseT &Base;
+				size_t Index;
+				OptionalT<HoldT> Add;
+				
+				AddRemoveStatementT(AtomListTypePartT const &Type, BaseT &Base, size_t Index, OptionalT<HoldT> Add) : Type(Type), Base(Base), Index(Index), Add(Add) {}
+
+				std::unique_ptr<ActionT> Apply(void)
+				{
+					auto &List = Type.Access(Base).List;
+					ActionT *Out;
+					if (Add) 
+					{
+						Assert(Index <= List.size());
+						Out = new AddRemoveStatementT(Type, Base, Index, OptionalT<HoldT>{});
+						Type.AddStatement(Base, Index);
+						List[Index]->Atom.ImmediateSet(Add->Nucleus);
+					}
+					else 
+					{
+						Assert(Index < List.size());
+						Out = new AddRemoveStatementT(Type, Base, Index, HoldT(Base.Core, Type.Access(Base).List[Index]->Atom.Nucleus));
+						Type.RemoveStatement(Base, Index);
+					}
+					return std::unique_ptr<ActionT>(Out);
+				}
+			};
+			return std::unique_ptr<ActionT>(new AddRemoveStatementT(*this, Base, std::max(*Access(Base).Focused + 1, Access(Base).List.size()), HoldT(Base.Core, new ProtoatomT(Base.Core))));
+		}
+		if (Base.Parent) return Base.Parent->HandleInput(Input);
+		return {};
+	}
+};
+
+struct StringDataPartT
+{
+	VisualT Visual;
+	size_t Position;
+	std::string Text;
+	
+	StringDataPartT(CoreT &Core) : Visual(Core.RootVisual.Root), Position(0) {}
+};
+template <typename DataT> struct StringTypePartT : CommonAtomPartT<DataT>
+{
+	using BaseT = typename CommonAtomPartT<DataT>::BaseT;
+
+	using CommonAtomPartT<DataT>::Identifier;
+	using CommonAtomPartT<DataT>::Prefix;
+	using CommonAtomPartT<DataT>::Suffix;
+	
+	StringDataPartT &(*Access)(BaseT &);
+	StringDataPartT const &(*AccessConst)(BaseT const &);
+
+	StringTypePartT(void) {}
+	
+	void Construct(BaseT &Base) {}
+
+	VisualT &GetVisual(BaseT &Base) const override { return Access(Base).Visual; }
+
+	void Serialize(BaseT const &Base, Serial::WritePolymorphT &Polymorph) const override
+		{ Polymorph.String(Identifier, AccessConst(Base).Text); }
+
+	void Focus(BaseT &Base, FocusDirectionT Direction) const override
+	{ 
+		static_cast<NucleusT &>(Base).Focus(Direction);
+		switch (Direction)
+		{
+			case FocusDirectionT::FromAhead: Access(Base).Position = Access(Base).Text.size(); break;
+			case FocusDirectionT::FromBehind: Access(Base).Position = 0; break;
+			case FocusDirectionT::Direct: Access(Base).Position = 0; break;
+		}
+		Access(Base).Visual.SetClass("flag-focused");
+		static_cast<NucleusT &>(Base).Focus(Direction);
+		Base.FlagRefresh();
+	}
+
+	void Defocus(BaseT &Base) const override
+	{
+		Access(Base).Visual.UnsetClass("flag-focused");
+	}
+
+	void AssumeFocus(BaseT &Base) const override
+		{ static_cast<NucleusT &>(Base).Focus(FocusDirectionT::Direct); }
+
+	void Refresh(BaseT &Base) const override
+	{ 
+		auto &Visual = Access(Base).Visual;
+		Visual.Start();
+		if (!Prefix.empty()) Visual.Add(Prefix);
+		Visual.Add(Access(Base).Text);
+		if (!Suffix.empty()) Visual.Add(Suffix);
+	}
+		
+	struct SetT : ActionT
+	{
+		StringTypePartT const &Type;
+		BaseT &Base;
+		unsigned int Position;
+		std::string Text;
+		
+		SetT(StringTypePartT const &Type, BaseT &Base, unsigned int Position, std::string const &Text) : Type(Type), Base(Base), Position(Position), Text(Text) {}
+		
+		std::unique_ptr<ActionT> Apply(void)
+		{
+			auto Out = new SetT(Type, Base, Type.Access(Base).Position, Type.Access(Base).Text);
+			auto &Data = Type.Access(Base);
+			Data.Text = Text;
+			Data.Position = Position;
+			Base.FlagRefresh();
+			return std::unique_ptr<ActionT>(Out);
+		}
+		
+		bool Combine(std::unique_ptr<ActionT> &Other) override
+		{
+			auto Set = dynamic_cast<SetT *>(Other.get());
+			if (!Set) return false;
+			if (&Set->Base != &Base) return false;
+			Position = Set->Position;
+			Text = Set->Text;
+			return true;
+		}
+	};
+
+	OptionalT<std::unique_ptr<ActionT>> HandleInput(BaseT &Base, InputT const &Input) const override
+	{ 
+		if (Input.Text)
+		{
+			return std::unique_ptr<ActionT>(new SetT(
+				*this, 
+				Base, 
+				Access(Base).Position + 1, 
+				Access(Base).Text.substr(0, Access(Base).Position) + 
+					*Input.Text + 
+					Access(Base).Text.substr(Access(Base).Position)));
+		}
+		else if (Input.Main)
+		{
+			auto &Data = Access(Base);
+			switch (*Input.Main)
+			{
+				case InputT::MainT::Left:
+				{
+					if (Data.Position == 0) 
+					{
+						Base.FocusPrevious();
+					}
+					else
+					{
+						Data.Position -= 1;
+						Base.FlagRefresh();
+					}
+					return {};
+				}
+				case InputT::MainT::Right:
+				{
+					if (Data.Position == Data.Text.size()) 
+					{
+						Base.FocusNext();
+					}
+					else
+					{
+						Data.Position += 1;
+						Base.FlagRefresh();
+					}
+					return {};
+				}
+				case InputT::MainT::TextBackspace:
+				{
+					if (Data.Position == 0) return {};
+					Data.Text.erase(Data.Position - 1, 1);
+					Data.Position -= 1;
+					Base.FlagRefresh();
+					return {};
+				}
+				case InputT::MainT::Delete:
+				{
+					if (Data.Position == Data.Text.size()) return {};
+					Data.Text.erase(Data.Position, 1);
+					Base.FlagRefresh();
+					return {};
+				}
+				default: break;
+			}
+		}
+		if (Base.Parent) return Base.Parent->HandleInput(Input);
+		return {};
+	}
+	
+	std::unique_ptr<ActionT> Set(BaseT &Base, std::string const &Text) override
+	{
+		return std::unique_ptr<ActionT>(new SetT(*this, Base, Text.size(), Text));
+	}
+};
+
+struct EnumDataPartT
+{
+	VisualT Visual;
+	size_t Index;
+	EnumDataPartT(CoreT &Core) : Visual(Core.RootVisual.Root), Index(0) {}
+};
+template <typename DataT> struct EnumTypePartT : CommonAtomPartT<DataT>
+{
+	std::string Identifier;
+
+	std::vector<std::string> Values;
+
+	using BaseT = typename CommonAtomPartT<DataT>::BaseT;
+
+	EnumDataPartT &(*Access)(BaseT &);
+	EnumDataPartT const &(*AccessConst)(BaseT const &);
+
+	EnumTypePartT(void) {}
+	
+	void Construct(BaseT &Base)
+	{
+		Access(Base).Index = 0;
+	}
+
+	VisualT &GetVisual(BaseT &Base) const override { return Access(Base).Visual; }
+
+	void Serialize(BaseT const &Base, Serial::WritePolymorphT &Polymorph) const override
+	{ 
+		if (AccessConst(Base).Index >= Values.size())
+		{
+			Assert(false);
+			Polymorph.String(Identifier, "Invalid");
+		}
+		else
+		{
+			Polymorph.String(Identifier, Values[AccessConst(Base).Index]);
+		}
+	}
+
+	void Focus(BaseT &Base, FocusDirectionT Direction) const override
+	{ 
+		static_cast<NucleusT &>(Base).Focus(Direction);
+		Access(Base).Visual.SetClass("flag-focused");
+	}
+	
+	void Defocus(BaseT &Base) const override
+	{
+		Access(Base).Visual.UnsetClass("flag-focused");
+	}
+
+	void AssumeFocus(BaseT &Base) const override
+		{ static_cast<NucleusT &>(Base).Focus(FocusDirectionT::Direct); }
+
+	void Refresh(BaseT &Base) const override
+	{ 
+		auto &Data = Access(Base);
+		Data.Visual.Start();
+		if (Data.Index >= Values.size())
+		{
+			Assert(false);
+			Data.Visual.Add("Invalid");
+		}
+		else
+		{
+			Data.Visual.Add(Values[Access(Base).Index]);
+		}
+	}
+
+	OptionalT<std::unique_ptr<ActionT>> HandleInput(BaseT &Base, InputT const &Input) const override
+	{ 
+		if (Input.Main)
+		{
+			auto &Index = Access(Base).Index;
+			switch (*Input.Main)
+			{
+				case InputT::MainT::Left: Base.FocusPrevious(); return {};
+				case InputT::MainT::Right: Base.FocusNext(); return {};
+				case InputT::MainT::Enter: 
+				{
+					struct SetT : ActionT
+					{
+						EnumTypePartT const &Type;
+						BaseT &Base;
+						size_t Index;
+
+						SetT(EnumTypePartT const &Type, BaseT &Base, size_t Index) : Type(Type), Base(Base), Index(Index)
+						{
+						}
+
+						std::unique_ptr<ActionT> Apply(void)
+						{
+							auto Out = new SetT(Type, Base, Type.Access(Base).Index);
+							Type.Access(Base).Index = Index;
+							Base.FlagRefresh();
+							return std::unique_ptr<ActionT>(Out);
+						}
+					};
+					return std::unique_ptr<ActionT>(new SetT(*this, Base, (Index + 1) % Values.size()));
+				}
+				default: break;
+			}
+		}
+		if (Base.Parent) return Base.Parent->HandleInput(Input);
+		return {};
+	}
+};
+
+struct ModuleDataT
+{
+	EnumDataPartT Entry;
+	AtomT Top;
+	ModuleDataT(CoreT &Core) : Entry(Core), Top(Core) {}
+};
+struct ModuleTypeT : CommonAtomTypeT<ModuleDataT>
+{
+	ModuleTypeT(void)
+	{
+		Tag = "Module";
+		{
+			auto Part = make_unique<EnumTypePartT<ModuleDataT>>();
+			Part->Identifier = "Entry";
+			Part->Values.push_back("<Has Entry>");
+			Part->Values.push_back("<No Entry>");
+			Part->Access = [](CommonNucleusT<ModuleDataT> &Nucleus) -> EnumDataPartT & { return Nucleus.Data.Entry; };
+			Part->AccessConst = [](CommonNucleusT<ModuleDataT> const &Nucleus) -> EnumDataPartT const & { return Nucleus.Data.Entry; };
+			Parts.emplace_back(std::move(Part));
+		}
+		{
+			auto Part = make_unique<AtomTypePartT<ModuleDataT>>();
+			Part->Identifier = "Top";
+			Part->FocusDefault = true;
+			Part->SetDefault = true;
+			Part->Access = [](CommonNucleusT<ModuleDataT> &Nucleus) -> AtomT & { return Nucleus.Data.Top; };
+			Part->AccessConst = [](CommonNucleusT<ModuleDataT> const &Nucleus) -> AtomT const & { return Nucleus.Data.Top; };
+			Parts.emplace_back(std::move(Part));
+		}
+	}
+};
+typedef CommonNucleusT<ModuleDataT> ModuleT;
+
+struct GroupDataT
+{
+	AtomListDataPartT Statements;
+	GroupDataT(CoreT &Core) : Statements(Core) {}
+};
+struct GroupTypeT : CommonAtomTypeT<GroupDataT>
+{
+	GroupTypeT(void)
+	{
+		Tag = "Group";
+		ReplaceImmediately = true;
+		Arity = ArityT::Nullary;
+		Prefix = true;
+		Precedence = 0;
+		LeftAssociative = true;
+		{
+			auto Part = make_unique<AtomListTypePartT<GroupDataT>>();
+			Part->Identifier = "Statements";
+			Part->FocusDefault = true;
+			Part->SetDefault = true;
+			Part->Suffix = ";";
+			Part->Access = [](CommonNucleusT<GroupDataT> &Nucleus) -> AtomListDataPartT & { return Nucleus.Data.Statements; };
+			Part->AccessConst = [](CommonNucleusT<GroupDataT> const &Nucleus) -> AtomListDataPartT const & { return Nucleus.Data.Statements; };
+			Parts.emplace_back(std::move(Part));
+		}
+	}
+};
+
+struct ElementDataT
+{
+	AtomT Base;
+	AtomT Key;
+	ElementDataT(CoreT &Core) : Base(Core), Key(Core) {}
+};
+struct ElementTypeT : CommonAtomTypeT<ElementDataT>
+{
+	ElementTypeT(void)
+	{
+		Tag = "Element";
+		ReplaceImmediately = true;
+		Arity = ArityT::Binary;
+		Prefix = false;
+		Precedence = 900;
+		LeftAssociative = true;
+		{
+			auto Part = make_unique<AtomTypePartT<ElementDataT>>();
+			Part->Identifier = "Base";
+			Part->Suffix = ".";
+			Part->SetDefault = true;
+			Part->Access = [](CommonNucleusT<ElementDataT> &Nucleus) -> AtomT & { return Nucleus.Data.Base; };
+			Part->AccessConst = [](CommonNucleusT<ElementDataT> const &Nucleus) -> AtomT const & { return Nucleus.Data.Base; };
+			Parts.emplace_back(std::move(Part));
+		}
+		{
+			auto Part = make_unique<AtomTypePartT<ElementDataT>>();
+			Part->Identifier = "Key";
+			Part->FocusDefault = true;
+			Part->Access = [](CommonNucleusT<ElementDataT> &Nucleus) -> AtomT & { return Nucleus.Data.Key; };
+			Part->AccessConst = [](CommonNucleusT<ElementDataT> const &Nucleus) -> AtomT const & { return Nucleus.Data.Key; };
+			Parts.emplace_back(std::move(Part));
+		}
+	}
+};
+typedef CommonNucleusT<ElementDataT> ElementT;
+
+struct AssignmentDataT
+{
+	AtomT Left;
+	AtomT Right;
+	AssignmentDataT(CoreT &Core) : Left(Core), Right(Core) {}
+};
+struct AssignmentTypeT : CommonAtomTypeT<AssignmentDataT>
+{
+	AssignmentTypeT(void)
+	{
+		Tag = "Assignment";
+		ReplaceImmediately = true;
+		Arity = ArityT::Binary;
+		Prefix = false;
+		Precedence = 900;
+		LeftAssociative = true;
+		{
+			auto Part = make_unique<AtomTypePartT<AssignmentDataT>>();
+			Part->Identifier = "Left";
+			Part->SetDefault = true;
+			Part->Suffix = "=";
+			Part->Access = [](CommonNucleusT<AssignmentDataT> &Nucleus) -> AtomT & { return Nucleus.Data.Left; };
+			Part->AccessConst = [](CommonNucleusT<AssignmentDataT> const &Nucleus) -> AtomT const & { return Nucleus.Data.Left; };
+			Parts.emplace_back(std::move(Part));
+		}
+		{
+			auto Part = make_unique<AtomTypePartT<AssignmentDataT>>();
+			Part->Identifier = "Right";
+			Part->FocusDefault = true;
+			Part->Access = [](CommonNucleusT<AssignmentDataT> &Nucleus) -> AtomT & { return Nucleus.Data.Right; };
+			Part->AccessConst = [](CommonNucleusT<AssignmentDataT> const &Nucleus) -> AtomT const & { return Nucleus.Data.Right; };
+			Parts.emplace_back(std::move(Part));
+		}
+	}
+};
+
+typedef StringDataPartT StringDataT;
+struct StringTypeT : CommonAtomTypeT<StringDataT>
+{
+	StringTypeT(void) 
+	{
+		Tag = "String";
+		ReplaceImmediately = true;
+		Arity = ArityT::Nullary;
+		Prefix = true;
+		{
+			auto Part = make_unique<StringTypePartT<StringDataT>>();
+			Part->Identifier = "String";
+			Part->SetDefault = true;
+			Part->FocusDefault = true;
+			Part->Prefix = "'";
+			Part->Suffix = "'";
+			Part->Access = [](CommonNucleusT<StringDataT> &Nucleus) -> StringDataPartT & { return Nucleus.Data; };
+			Part->AccessConst = [](CommonNucleusT<StringDataT> const &Nucleus) -> StringDataPartT const & { return Nucleus.Data; };
+			Parts.emplace_back(std::move(Part));
+		}
+	}
+};
+
 CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused(*this), CursorVisual(RootVisual.Root)
 {
-	Types["."] = &ElementT::StaticGetTypeInfo();
-	Types["'"] = &StringT::StaticGetTypeInfo();
-	Types["="] = &AssignmentT::StaticGetTypeInfo();
-	Types["{"] = &GroupT::StaticGetTypeInfo();
+	ModuleType.reset(new ModuleTypeT());
+	GroupType.reset(new GroupTypeT());
+	AssignmentType.reset(new AssignmentTypeT());
+	ElementType.reset(new ElementTypeT());
+	StringType.reset(new StringTypeT());
+	Types["."] = ElementType.get();
+	Types["'"] = StringType.get();
+	Types["="] = AssignmentType.get();
+	Types["{"] = GroupType.get();
 	
 	Root.Callback = [this](AtomT &This)
 	{
@@ -372,16 +1236,20 @@ CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused
 		this->RootVisual.Add(This->Visual);
 	};
 	
-	Apply(Root.Set(new ModuleT(*this)));
+	Root.ImmediateSet(ModuleType->Generate(*this));
+	(*Root->As<ModuleT>())->Data.Top.ImmediateSet(GroupType->Generate(*this));
+	Refresh();
 }
 
 void CoreT::HandleInput(InputT const &Input)
 {
 	Assert(Focused);
-	if (Input.Is<InputT::TextT>())
-		std::cout << "Core handle key: [" << Input.Get<InputT::TextT>() << "]" << std::endl;
-	else if (Input.Is<InputT::MainT>())
-		std::cout << "Core handle key: main [" << (int)Input.Get<InputT::MainT>() << "]" << std::endl;
+	std::cout << "Core handle key:\n";
+	if (Input.Text)
+		std::cout << "\t[" << *Input.Text << "]\n";
+	if (Input.Main)
+		std::cout << "\tmain [" << (int)*Input.Main << "]\n";
+	std::cout << std::flush;
 	Apply(Focused->HandleInput(Input));
 	Refresh();
 }
@@ -417,7 +1285,7 @@ void CoreT::Apply(OptionalT<std::unique_ptr<ActionT>> Action)
 	DeletionCandidates.clear();
 	
 	//std::cout << RootVisual.Dump() << std::endl;
-	std::cout << Dump() << std::endl;
+	//std::cout << Dump() << std::endl;
 }
 
 void CoreT::Undo(void)
@@ -434,27 +1302,14 @@ void CoreT::Redo(void)
 	RedoQueue.pop_front();
 }
 	
-void CoreT::Focus(NucleusT *Target)
+void CoreT::AssumeFocus(void)
 {
-	if (Focused.Nucleus == Target) return;
-
-	if (Focused)
+	if (Root) 
 	{
-		Focused->Defocus();
-		Focused = nullptr;
+		std::cout << "Assuming focus..." << std::endl;
+		Root->AssumeFocus();
+		std::cout << "Assuming focus... DONE" << std::endl;
 	}
-
-	Focused = Target;
-
-	if (Focused)
-	{
-		Focused->Focus();
-	}
-}
-	
-void CoreT::Refocus(void)
-{
-	if (Root) Root->Refocus();
 }
 
 std::unique_ptr<ActionT> CoreT::ActionHandleInput(InputT const &Input)
@@ -499,181 +1354,6 @@ void CoreT::Refresh(void)
 	NeedRefresh.clear();
 }
 	
-ModuleT::ModuleT(CoreT &Core) : NucleusT(Core), Top(Core)
-{
-	Visual.SetClass("module");
-	Visual.Tag().Add(GetTypeInfo().Tag);
-
-	Top.Callback = [this](AtomT &This)
-	{
-		this->Core.NeedRefresh.insert(this);
-	};
-	Top.Parent = this;
-	Top.ImmediateSet(new GroupT(Core));
-}
-	
-void ModuleT::Serialize(Serial::WritePolymorphT &&WritePolymorph) const
-{
-	if (Top) Top->Serialize(WritePolymorph.Polymorph("Top"));
-}
-
-AtomTypeT &ModuleT::StaticGetTypeInfo(void)
-{
-	struct TypeT : AtomTypeT
-	{
-		NucleusT *Generate(CoreT &Core) override { return new ElementT(Core); }
-
-		TypeT(void)
-		{
-			Tag = "Module";
-		}
-	} static Type;
-	return Type;
-}
-
-AtomTypeT const &ModuleT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
-	
-void ModuleT::Refocus(void)
-{
-	if (!Top) return;
-	Top->Refocus();
-}
-
-void ModuleT::Refresh(void)
-{
-	this->Visual.Start();
-	this->Visual.Add(Top->Visual);
-}
-
-GroupT::GroupT(CoreT &Core) : NucleusT(Core), Focus(0)
-{
-	Visual.SetClass("group");
-	Visual.Tag().Add(GetTypeInfo().Tag);
-	AtomCallback = [this](AtomT &This)
-	{
-		this->Core.NeedRefresh.insert(this);
-	};
-	AddStatement(0);
-	Statements[0].ImmediateSet(new ProtoatomT(Core));
-}
-
-void GroupT::Serialize(Serial::WritePolymorphT &&WritePolymorph) const
-{
-	WritePolymorph.Int("Focus", Focus);
-	auto WriteStatements = WritePolymorph.Array("Statements");
-	for (auto &Statement : Statements) if (Statement) Statement->Serialize(WriteStatements.Polymorph());
-}
-
-AtomTypeT &GroupT::StaticGetTypeInfo(void)
-{
-	struct TypeT : AtomTypeT
-	{
-		NucleusT *Generate(CoreT &Core) override { return new GroupT(Core); }
-
-		TypeT(void)
-		{
-			Tag = "Group";
-			ReplaceImmediately = true;
-			Arity = ArityT::Nullary;
-			Prefix = true;
-			Precedence = 0;
-			LeftAssociative = true;
-		}
-	} static Type;
-	return Type;
-}
-
-AtomTypeT const &GroupT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
-	
-void GroupT::Refocus(void)
-{
-	if (Focus >= Statements.size()) return;
-	std::cout << "Group refocus " << Focus << std::endl;
-	Statements[Focus]->Refocus();
-}
-
-void GroupT::Refresh(void)
-{
-	this->Visual.Start();
-	for (auto &Statement : Statements)
-		this->Visual.Add(Statement->Visual);
-}
-	
-OptionalT<std::unique_ptr<ActionT>> GroupT::HandleInput(InputT const &Input)
-{
-	if (Input.Is<InputT::MainT>() && (Input.Get<InputT::MainT>() == InputT::MainT::NewStatement))
-		return AddRemoveStatement(std::max(Focus + 1, Statements.size()), new ProtoatomT(Core), true);
-	else return NucleusT::HandleInput(Input);
-}
-	
-void GroupT::FocusPrevious(void) 
-{
-	if ((Focus == 0) && Parent) { Parent->FocusPrevious(); return; }
-	Focus -= 1;
-	Statements[Focus]->Focus(FocusDirectionT::FromAhead);
-}
-
-void GroupT::FocusNext(void)
-{
-	Assert(!Statements.empty());
-	if ((Focus + 1 == Statements.size()) && Parent) { Parent->FocusNext(); return; }
-	Focus += 1;
-	Statements[Focus]->Focus(FocusDirectionT::FromBehind);
-}
-
-void GroupT::AddStatement(size_t Index)
-{
-	auto Iterator = Statements.begin();
-	std::advance(Iterator, Index); // Portrait of a well designed api
-	auto Statement = Statements.insert(Iterator, AtomT(Core)); // Emplace tries copy constructor, nice job
-	Statement->Parent = this;
-	Statement->Callback = [this](AtomT &This)
-	{
-		Core.NeedRefresh.insert(this);
-	};
-}
-
-void GroupT::RemoveStatement(size_t Index)
-{
-	auto Iterator = Statements.begin();
-	std::advance(Iterator, Index);
-	Statements.erase(Iterator);
-}
-
-std::unique_ptr<ActionT> GroupT::AddRemoveStatement(size_t Index, OptionalT<NucleusT *> Add, bool Focus)
-{
-	struct AddRemoveStatementT : ActionT
-	{
-		GroupT &Base;
-		size_t Index;
-		OptionalT<HoldT> Add;
-		bool Focus;
-		
-		AddRemoveStatementT(GroupT &Base, size_t Index, OptionalT<HoldT> Add, bool Focus) : Base(Base), Index(Index), Add(Add), Focus(Focus) {}
-
-		std::unique_ptr<ActionT> Apply(void)
-		{
-			ActionT *Out;
-			if (Add) 
-			{
-				Assert(Index <= Base.Statements.size());
-				Out = new AddRemoveStatementT(Base, Index, OptionalT<HoldT>{}, true);
-				Base.AddStatement(Index);
-				Base.Focus = Index;
-				Base.Statements[Index].ImmediateSet(Add->Nucleus);
-			}
-			else 
-			{
-				Assert(Index < Base.Statements.size());
-				Out = new AddRemoveStatementT(Base, Index, HoldT(Base.Core, Base.Statements[Index].Nucleus), true);
-				Base.RemoveStatement(Index);
-			}
-			return std::unique_ptr<ActionT>(Out);
-		}
-	};
-	return std::unique_ptr<ActionT>(new AddRemoveStatementT(*this, Index, Add ? HoldT(Core, *Add) : OptionalT<HoldT>{}, Focus));
-}
-	
 ProtoatomT::ProtoatomT(CoreT &Core) : NucleusT(Core), Lifted(Core) 
 {
 	Visual.Tag().Add(GetTypeInfo().Tag);
@@ -691,8 +1371,6 @@ AtomTypeT &ProtoatomT::StaticGetTypeInfo(void)
 {
 	struct TypeT : AtomTypeT
 	{
-		NucleusT *Generate(CoreT &Core) override { return new ElementT(Core); }
-
 		TypeT(void)
 		{
 			Tag = "Protoatom";
@@ -703,9 +1381,9 @@ AtomTypeT &ProtoatomT::StaticGetTypeInfo(void)
 
 AtomTypeT const &ProtoatomT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
 	
-void ProtoatomT::Focus(FocusDirectionT &Direction)
+void ProtoatomT::Focus(FocusDirectionT Direction)
 {
-	if (Direcion == FocusDirectionT::FromBehind)
+	if (Direction == FocusDirectionT::FromBehind)
 	{
 		Position = 0;
 		if (Lifted)
@@ -719,6 +1397,7 @@ void ProtoatomT::Focus(FocusDirectionT &Direction)
 		Position = Data.size();
 	}
 	Focused = true;
+	Visual.SetClass("flag-focused");
 	FlagRefresh();
 	NucleusT::Focus(Direction);
 }
@@ -726,12 +1405,13 @@ void ProtoatomT::Focus(FocusDirectionT &Direction)
 void ProtoatomT::Defocus(void) 
 {
 	Focused = false;
+	Visual.UnsetClass("flag-focused");
 	FlagRefresh();
 }
 
-void ProtoatomT::Refocus(void)
+void ProtoatomT::AssumeFocus(void)
 {
-	Core.Focus(this);
+	Focus(FocusDirectionT::Direct);
 }
 
 void ProtoatomT::Refresh(void)
@@ -755,14 +1435,16 @@ void ProtoatomT::Lift(NucleusT *Nucleus)
 
 OptionalT<std::unique_ptr<ActionT>> ProtoatomT::HandleInput(InputT const &Input)
 {
-	if (Input.Is<InputT::TextT>())
+	if (Input.Text)
 	{
-		auto Text = Input.Get<InputT::TextT>();
+		auto Text = *Input.Text;
 
 		static auto IdentifierClass = Regex::ParserT<>("[a-zA-Z0-9_]");
 		auto NewIsIdentifier = IdentifierClass(Text);
 		
 		if (Text == " ") return Finish({}, {}, {});
+		else if (Text == "\n") return Finish({}, {}, InputT{InputT::MainT::NewStatement, {}});
+		else if (Text == ";") return Finish({}, {}, InputT{InputT::MainT::NewStatement, {}});
 		else if (!IsIdentifier || (*IsIdentifier == NewIsIdentifier))
 		{
 			if (!IsIdentifier) IsIdentifier = NewIsIdentifier;
@@ -789,7 +1471,7 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::HandleInput(InputT const &Input)
 					auto Out = new SetT(Base, Base.Position, Base.Data);
 					Base.Data = Data;
 					Base.Position = Position;
-					Base.Core.NeedRefresh.insert(&Base);
+					Base.FlagRefresh();
 					return std::unique_ptr<ActionT>(Out);
 				}
 				
@@ -810,9 +1492,9 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::HandleInput(InputT const &Input)
 			return Finish({}, {}, {Input});
 		}
 	}
-	else if (Input.Is<InputT::MainT>())
+	else if (Input.Main)
 	{
-		switch (Input.Get<InputT::MainT>())
+		switch (*Input.Main)
 		{
 			case InputT::MainT::Left: 
 			{
@@ -838,7 +1520,7 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::HandleInput(InputT const &Input)
 					FlagRefresh();
 				}
 			} return {};
-			case InputT::MainT::Backspace:
+			case InputT::MainT::TextBackspace:
 			{
 				if (Position == 0) return {};
 				Data.erase(Position - 1, 1);
@@ -889,11 +1571,11 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::Finish(
 			}
 			auto Replacement = new ProtoatomT(Core);
 			auto Finished = Type->Generate(Core);
-			Actions->Add(Replacement->Place(Finished));
+			Actions->Add(Replacement->Set(Finished));
 			if ((*Type)->Arity != ArityT::Nullary)
 			{
 				auto Proto = new ProtoatomT(Core);
-				Actions->Add(Finished->Place(Proto));
+				Actions->Add(Finished->Set(Proto));
 			}
 			Actions->Add(Atom->Set(Replacement));
 		}
@@ -917,7 +1599,7 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::Finish(
 			auto Finished = (*Type)->Generate(Core);
 			Assert(Finished);
 			Actions->Add(WedgeAtom->Set(Finished));
-			Actions->Add(Finished->Place(Child));
+			Actions->Add(Finished->Set(Child));
 		}
 	}
 	else
@@ -931,11 +1613,11 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::Finish(
 				return Atom->Set(Lifted.Nucleus);
 			}
 
-			std::cout << "NOTE: Can't finish as new element if protoatom has lifed." << std::endl; 
+			std::cout << "NOTE: Can't finish as new element if protoatom has lifted." << std::endl; 
 			return {};
 		}
 			
-		auto String = new StringT(Core);
+		auto String = Core.StringType->Generate(Core);
 		Actions->Add(String->Set(Text));
 
 		auto Protoatom = new ProtoatomT(Core);
@@ -946,9 +1628,10 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::Finish(
 		}
 		else
 		{
-			auto Element = new ElementT(Core);
-			Element->Key.ImmediateSet(String);
-			Protoatom->Lifted.Set(Element);
+			auto Nucleus = Core.ElementType->Generate(Core);
+			auto Element = Nucleus->As<ElementT>();
+			(*Element)->Data.Key.ImmediateSet(String);
+			Protoatom->Lifted.Set(Nucleus);
 		}
 
 		std::cout << Core.Dump() << std::endl; // DEBUG
@@ -959,244 +1642,6 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::Finish(
 	}
 
 	return std::unique_ptr<ActionT>(Actions);
-}
-		
-void ProtoatomT::FlagRefresh(void) 
-{
-	Core.NeedRefresh.insert(this);
-}
-
-ElementT::ElementT(CoreT &Core) : NucleusT(Core), Base(Core), Key(Core)
-{
-	Focused = FocusT::Key;
-	Visual.SetClass("element");
-	Visual.Tag().Add(GetTypeInfo().Tag);
-	Base.Callback = Key.Callback = [this](AtomT &This)
-	{
-		this->Core.NeedRefresh.insert(this);
-	};
-	Base.Parent = Key.Parent = this;
-	Base.ImmediateSet(new ProtoatomT(Core));
-	Key.ImmediateSet(new ProtoatomT(Core));
-}
-
-void ElementT::Serialize(Serial::WritePolymorphT &&Polymorph) const
-{
-	Base->Serialize(Polymorph.Polymorph("Base"));
-	Key->Serialize(Polymorph.Polymorph("Key"));
-}
-
-AtomTypeT &ElementT::StaticGetTypeInfo(void)
-{
-	struct TypeT : AtomTypeT
-	{
-		NucleusT *Generate(CoreT &Core) override { return new ElementT(Core); }
-
-		TypeT(void)
-		{
-			Tag = "Element";
-			ReplaceImmediately = true;
-			Arity = ArityT::Binary;
-			Prefix = false;
-			Precedence = 900;
-			LeftAssociative = true;
-		}
-	} static Type;
-	return Type;
-}
-
-AtomTypeT const &ElementT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
-	
-void ElementT::Refocus(void)
-{
-	switch (Focused)
-	{
-		case FocusT::Self: return;
-		case FocusT::Base: if (Base) Base
-	}
-	if (BaseFocused) { if (Base) Base->Refocus(); }
-	else { if (Key) Key->Refocus(); }
-}
-
-void ElementT::Refresh(void)
-{
-	this->Visual.Start();
-	if (Base)
-	{
-		this->Visual.Add(Base->Visual);
-		this->Visual.Add(".");
-	}
-	if (Key) this->Visual.Add(Key->Visual);
-}
-	
-void ElementT::FocusPrevious(void)
-{
-	switch (Focused)
-	{
-		case FocusT::Key: 
-			if (Base) 
-			{
-				Base->Focus(FocusDirectionT::FromAhead); 
-				Focused = FocusT::Base; 
-				break;
-			} 
-		case FocusT::Base: Focus(FocusDirectionT::Direct); Focused = FocusT::Self; break;
-		case FocusT::Self: if (Parent) Parent->FocusPrevious(); break;
-	}
-}
-
-void ElementT::FocusNext(void)
-{
-	switch (Focused)
-	{
-		case FocusT::Self: 
-			if (Base) 
-			{
-				Base->Focus(FocusDirectionT::FromBehind); 
-				Focused = FocusT::Base; 
-				break;
-			}
-		case FocusT::Base: 
-			if (Key) 
-			{
-				Key->Focus(FocusDirectionT::Direct); 
-				Focused = FocusT::Key; 
-				break;
-			}
-		case FocusT::Key: if (Parent) Parent->FocusNext(); break;
-	}
-}
-
-std::unique_ptr<ActionT> ElementT::Place(NucleusT *Nucleus)
-{
-	return Base.Set(Nucleus);
-}
-
-std::unique_ptr<ActionT> ElementT::PlaceKey(NucleusT *Nucleus)
-{
-	return Key.Set(Nucleus);
-}
-
-StringT::StringT(CoreT &Core) : NucleusT(Core) 
-{
-	Visual.Tag().Add(GetTypeInfo().Tag);
-	Refresh();
-}
-
-AtomTypeT &StringT::StaticGetTypeInfo(void)
-{
-	struct TypeT : AtomTypeT
-	{
-		NucleusT *Generate(CoreT &Core) override { return new StringT(Core); }
-
-		TypeT(void)
-		{
-			Tag = "String";
-			ReplaceImmediately = true;
-			Arity = ArityT::Nullary;
-			Prefix = true;
-		}
-	} static Type;
-	return Type;
-}
-	
-void StringT::Serialize(Serial::WritePolymorphT &&Polymorph) const
-{
-	Polymorph.String("Data", Data);
-}
-
-AtomTypeT const &StringT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
-	
-void StringT::Refresh(void)
-{
-	Visual.Set("'" + Data + "'");
-}
-	
-void StringT::FocusPrevious(void)
-{
-
-}
-
-void FocusNext(void)
-{
-}
-	
-std::unique_ptr<ActionT> StringT::Set(std::string const &Text)
-{
-	struct SetT : ActionT
-	{
-		StringT &Base;
-		std::string Text;
-
-		SetT(StringT &Base, std::string const &Text) : Base(Base), Text(Text) {}
-
-		std::unique_ptr<ActionT> Apply(void)
-		{
-			auto Out = new SetT(Base, Base.Data);
-			Base.Data = Text;
-			Base.Core.NeedRefresh.insert(&Base);
-			return std::unique_ptr<ActionT>(Out);
-		}
-	};
-	return std::unique_ptr<ActionT>(new SetT(*this, Text));
-}
-
-AssignmentT::AssignmentT(CoreT &Core) : NucleusT(Core), Left(Core), Right(Core), LeftFocused(false)
-{
-	Visual.Tag().Add(GetTypeInfo().Tag);
-	Left.Callback = Right.Callback = [this](AtomT &This)
-	{
-		this->Core.NeedRefresh.insert(this);
-	};
-	Left.Parent = Right.Parent = this;
-	Left.ImmediateSet(new ProtoatomT(Core));
-	Right.ImmediateSet(new ProtoatomT(Core));
-}
-	
-void AssignmentT::Serialize(Serial::WritePolymorphT &&Polymorph) const
-{
-	Left->Serialize(Polymorph.Polymorph("Left"));
-	Right->Serialize(Polymorph.Polymorph("Right"));
-}
-
-AtomTypeT &AssignmentT::StaticGetTypeInfo(void)
-{
-	struct TypeT : AtomTypeT
-	{
-		NucleusT *Generate(CoreT &Core) override { return new AssignmentT(Core); }
-
-		TypeT(void)
-		{
-			Tag = "Assignment";
-			ReplaceImmediately = true;
-			Arity = ArityT::Binary;
-			Prefix = false;
-			Precedence = 100;
-			LeftAssociative = false;
-		}
-	} static Type;
-	return Type;
-}
-
-AtomTypeT const &AssignmentT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
-	
-void AssignmentT::Refocus(void)
-{
-	if (LeftFocused) { if (Left) Left->Refocus(); }
-	else { if (Right) Right->Refocus(); }
-}
-
-void AssignmentT::Refresh(void)
-{
-	this->Visual.Start();
-	if (Left) this->Visual.Add(Left->Visual);
-	this->Visual.Add("=");
-	if (Right) this->Visual.Add(Right->Visual);
-}
-
-std::unique_ptr<ActionT> AssignmentT::Place(NucleusT *Nucleus)
-{
-	return Left.Set(Nucleus);
 }
 
 }
