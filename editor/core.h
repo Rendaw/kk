@@ -121,30 +121,6 @@ struct ActionGroupT : ActionT
 
 struct NucleusT;
 
-struct AtomT
-{
-	AtomT(AtomT &&Other);
-	AtomT &operator =(AtomT &&Other);
-	AtomT(AtomT const &Other) = delete;
-	AtomT(CoreT &Core);
-	~AtomT(void);
-	NucleusT *operator ->(void);
-	NucleusT const *operator ->(void) const;
-	operator bool(void) const;
-
-	void ImmediateSet(NucleusT *Nucleus);
-	std::unique_ptr<ActionT> Set(NucleusT *Nucleus);
-	
-	typedef std::function<void(AtomT &)> AtomCallbackT;
-	CoreT &Core;
-	AtomCallbackT Callback;
-	NucleusT *Parent;
-	NucleusT *Nucleus;
-
-	private:
-		void Clear(void);
-};
-
 struct HoldT
 {
 	HoldT(CoreT &Core);
@@ -161,6 +137,38 @@ struct HoldT
 	
 	CoreT &Core;
 	NucleusT *Nucleus;
+};
+
+struct AtomT
+{
+	AtomT(AtomT &&Other);
+	AtomT &operator =(AtomT &&Other);
+	AtomT(AtomT const &Other) = delete;
+	AtomT(CoreT &Core);
+	~AtomT(void);
+	NucleusT *operator ->(void);
+	NucleusT const *operator ->(void) const;
+	operator bool(void) const;
+
+	struct SetT : ActionT
+	{
+		AtomT &Atom;
+		HoldT Replacement;
+
+		SetT(AtomT &Atom, NucleusT *Replacement);
+		
+		std::unique_ptr<ActionT> Apply(void);
+	};
+	void Set(NucleusT *Nucleus);
+	
+	typedef std::function<void(AtomT &)> AtomCallbackT;
+	CoreT &Core;
+	AtomCallbackT Callback;
+	NucleusT *Parent;
+	NucleusT *Nucleus;
+
+	private:
+		void Clear(void);
 };
 
 enum ArityT
@@ -218,9 +226,11 @@ struct NucleusT
 		if (Out) return Out; 
 		return {}; 
 	}
+	
+	virtual void Parented(void);
 
 	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const;
-	virtual void Serialize(Serial::WritePolymorphT &&Polymorph) const;
+	virtual void Serialize(Serial::WritePolymorphT &Polymorph) const;
 
 	virtual AtomTypeT const &GetTypeInfo(void) const;
 	virtual void Focus(FocusDirectionT Direction);
@@ -289,37 +299,6 @@ struct CoreT
 
 	private:
 		void Refresh(void);
-};
-
-struct ProtoatomT : NucleusT
-{
-	OptionalT<bool> IsIdentifier;
-	std::string Data;
-	bool Focused;
-	size_t Position = 0;
-
-	HoldT Lifted;
-
-	ProtoatomT(CoreT &Core);
-	
-	void Serialize(Serial::WritePolymorphT &&Polymorph) const override;
-	
-	static AtomTypeT &StaticGetTypeInfo(void);
-	AtomTypeT const &GetTypeInfo(void) const override;
-
-	void Focus(FocusDirectionT Direction) override;
-	void Defocus(void) override;
-
-	void AssumeFocus(void) override;
-	void Refresh(void) override;
-	
-	void Lift(NucleusT *Nucleus);
-	
-	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
-	OptionalT<std::unique_ptr<ActionT>> Finish(
-		OptionalT<AtomTypeT *> Type, 
-		OptionalT<std::string> NewData, 
-		OptionalT<InputT> SeedData);
 };
 
 }
