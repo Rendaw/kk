@@ -7,6 +7,9 @@
 #include <QWebElement>
 
 #include "core.h"
+#include "../shared/extrastandard.h"
+
+#include <fstream>
 
 using namespace Core;
 
@@ -66,42 +69,83 @@ int main(int argc, char **argv)
 
 	auto HTMLRoot = WebView->page()->mainFrame()->documentElement(); // QWebElement
 	// QT bug since 2010: http://www.qtcentre.org/threads/36609-Set-html-lt-style-gt-with-QWebElement
-	HTMLRoot.findFirst("head").setInnerXml(
+	HTMLRoot.findFirst("head").setInnerXml((
+		StringT() << 
+			"<style type=\"text/css\">" << 
+			std::ifstream("editor.css").rdbuf() << 
+			"</style>").str().c_str());
+	/*HTMLRoot.findFirst("head").setInnerXml(
 		"<style type=\"text/css\">"
-			"* { margin: 0; padding: 0; }"
+			"* { margin: 0; padding: 0; visibility: visible; }"
 
 			"body { font-size: 16px; }"
 
 			"div"
-			"{ "
-			"	text-align: left;"
-			"	display: inline; "
-			"	font-family: monospace;"
-			"	"
-			"	border: 1px solid LightSteelBlue;"
-			"	margin: 2px;"
-			"	padding: 2px;"
-			"	display: inline-block;"
+			"{"
+				"text-align: left;"
+				"display: inline; "
+				"font-family: monospace;"
+				
+				"display: inline-block;"
+			"}"
+			
+			"div.type"
+			"{"
+				"border: 1px solid LightSteelBlue;"
+				"margin: 2px;"
+				"padding: 2px;"
+			"}"
+			
+			"div.part"
+			"{"
+				"border: 1px solid Lavender;"
+				"margin: 2px;"
+				"padding: 2px;"
 			"}"
 
 			"div.flag-focused"
-			"{ "
-			"	border-color: black;"
+			"{"
+				"border-color: black;"
 			"}"
 			
 			".tag"
 			"{"
-			"	display: block;"
-			"	font-size: 0.6em;"
-			"	border: none;"
+				"display: block;"
+				"font-size: 0.6em;"
+			"}"
+			
+			"div.flag-vertical > div.part, "
+			"div.flag-vertical > div.part > div"
+			"{"
+				"display: block"
 			"}"
 
-			".group > div"
+			"div.type-Element > div.part:nth-child(2) > div.type-String > div.affix-outer,"
+			"div.type-Module > div > div.type-Group > div.affix-outer"
 			"{"
-			"	display: block;"
+				"display: none;"
+			"}"
+
+			"div.type-module > div > div.type-Group.flag-vertical > div.part > div"
+			"{"
+				"margin-left: 0;"
+			"}"
+			
+			"div.type-Group.flag-vertical > div.part > div"
+			"{ "
+				"margin-left: 64px;"
+			"}"
+			
+			"div.type-cursor"
+			"{"
+				"display: inline-block;"
+				"width: 0;"
+				"overflow: visible;"
+				"padding: 0;"
+				"margin: 0;"
 			"}"
 		"</style>"
-	);
+	);*/
 	VisualT BodyVisual(HTMLRoot, HTMLRoot.findFirst("body"));
 
 	CoreT Core(BodyVisual);

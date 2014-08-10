@@ -5,9 +5,14 @@
 namespace Core
 {
 
-CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo) 
+CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), InfixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), EffectivelyVertical(TypeInfo.SpatiallyVertical)
 {
 	Visual.Tag().Add(TypeInfo.Tag);
+	Visual.SetClass("type");
+	Visual.SetClass(StringT() << "type-" << TypeInfo.Tag);
+	PrefixVisual.SetClass("affix-outer");
+	InfixVisual.SetClass("affix-outer");
+	SuffixVisual.SetClass("affix-outer");
 }
 
 void CompositeT::Serialize(Serial::WritePolymorphT &Polymorph) const
@@ -72,17 +77,37 @@ void CompositeT::AssumeFocus(void)
 
 void CompositeT::Refresh(void)
 {
+	if (TypeInfo.DisplayPrefix) 
+	{
+		PrefixVisual.Start();
+		PrefixVisual.Add(*TypeInfo.DisplayPrefix);
+	}
+	if (TypeInfo.DisplayInfix) 
+	{
+		InfixVisual.Start();
+		InfixVisual.Add(*TypeInfo.DisplayInfix);
+	}
+	if (TypeInfo.DisplaySuffix) 
+	{
+		SuffixVisual.Start();
+		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
+	}
+	
 	Visual.Start();
-	if (TypeInfo.DisplayPrefix) Visual.Add(*TypeInfo.DisplayPrefix);
+	
+	if (EffectivelyVertical)
+ 		Visual.SetClass("flag-vertical");
+	else Visual.UnsetClass("flag-vertical");
+	
+	Visual.Add(PrefixVisual);
 	size_t Index = 0;
 	for (auto &Part : Parts)
 	{
-		if ((Index == 1) && TypeInfo.DisplayInfix)
-			Visual.Add(*TypeInfo.DisplayInfix);
+		if (Index == 1) Visual.Add(InfixVisual);
 		Visual.Add(Part->Visual);
 		++Index;
 	}
-	if (TypeInfo.DisplaySuffix) Visual.Add(*TypeInfo.DisplaySuffix);
+	Visual.Add(SuffixVisual);
 }
 
 std::unique_ptr<ActionT> CompositeT::Set(NucleusT *Nucleus)
@@ -138,7 +163,7 @@ OptionalT<std::unique_ptr<ActionT>> CompositeT::HandleInput(InputT const &Input)
 		}
 		if (Focused.Is<SelfFocusedT>())
 		{
-			if (Atom) return std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, new ProtoatomT(Core)));
+			if (Atom) return std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Core.ProtoatomType->Generate(Core)));
 		}
 	}
 	if (Parent) return Parent->HandleInput(Input);
@@ -188,10 +213,29 @@ NucleusT *AtomPartTypeT::Generate(CoreT &Core)
 	return new AtomPartT(Core, *this);
 }
 
-AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), Data(Core)
+AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Data(Core)
 {
-	Data.Callback = [this](AtomT &Changed) { FlagRefresh(); };
-	Data.Set(new ProtoatomT(Core));
+	Visual.SetClass("part");
+	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
+	PrefixVisual.SetClass("affix-inner");
+	SuffixVisual.SetClass("affix-inner");
+	Data.Callback = [this, &Core](NucleusT *Nucleus) 
+	{ 
+		if (Data)
+		{
+			auto Protoatom = AsProtoatom(Data);
+			if (Protoatom) VectorRemove(
+				Protoatom->FocusDependents, 
+				[this](HoldT &Hold) { return Hold.Nucleus == this; });
+		}
+		if (Nucleus) 
+		{
+			auto Protoatom = AsProtoatom(Nucleus);
+			if (Protoatom) Protoatom->FocusDependents.emplace_back(Core, this);
+		}
+		FlagRefresh(); 
+	};
+	Data.Set(Core.ProtoatomType->Generate(Core));
 }
 
 void AtomPartT::Parented(void)
@@ -213,13 +257,26 @@ void AtomPartT::AssumeFocus(void) { Data->AssumeFocus(); }
 
 void AtomPartT::Refresh(void) 
 {
+	if (TypeInfo.DisplayPrefix) 
+	{
+		PrefixVisual.Start();
+		PrefixVisual.Add(*TypeInfo.DisplayPrefix);
+	}
+	if (TypeInfo.DisplaySuffix) 
+	{
+		SuffixVisual.Start();
+		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
+	}
+	
 	Visual.Start();
+	auto Protoatom = AsProtoatom(Data);
+	if (Protoatom && Protoatom->IsEmpty()) return;
+	Visual.Add(PrefixVisual);
 	Visual.Add(Data->Visual);
+	Visual.Add(SuffixVisual);
 }
 
-std::unique_ptr<ActionT> AtomPartT::Set(NucleusT *Nucleus) { return Data->Set(Nucleus); }
-
-std::unique_ptr<ActionT> AtomPartT::Set(std::string const &Text) { return Data->Set(Text); }
+std::unique_ptr<ActionT> AtomPartT::Set(NucleusT *Nucleus) { return std::unique_ptr<ActionT>(new AtomT::SetT(Data, Nucleus)); }
 
 OptionalT<std::unique_ptr<ActionT>> AtomPartT::HandleInput(InputT const &Input) { return Data->HandleInput(Input); }
 
@@ -234,7 +291,9 @@ NucleusT *AtomListPartTypeT::Generate(CoreT &Core)
 
 AtomListPartT::AtomListPartT(CoreT &Core, AtomListPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), FocusIndex(0)
 {
-	Add(0, new ProtoatomT(Core));
+	Visual.SetClass("part");
+	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
+	Add(0, Core.ProtoatomType->Generate(Core));
 }
 
 void AtomListPartT::Parented(void)
@@ -281,17 +340,31 @@ void AtomListPartT::Refresh(void)
 	Visual.Start();
 	for (auto &Atom : Data)
 	{
+		if (TypeInfo.DisplayPrefix) 
+		{
+			Atom->PrefixVisual.Start();
+			Atom->PrefixVisual.Add(*TypeInfo.DisplayPrefix);
+		}
+		if (TypeInfo.DisplaySuffix) 
+		{
+			Atom->SuffixVisual.Start();
+			Atom->SuffixVisual.Add(*TypeInfo.DisplaySuffix);
+		}
 		Atom->Visual.Start();
+		Atom->Visual.Add(Atom->PrefixVisual);
 		Atom->Visual.Add(Atom->Atom->Visual);
+		Atom->Visual.Add(Atom->SuffixVisual);
 		Visual.Add(Atom->Visual);
 	}
 }
 
 void AtomListPartT::Add(size_t Position, NucleusT *Nucleus)
 {
-	Data.emplace(Data.begin() + Position, new ItemT{{Core.RootVisual.Root}, {Core}});
+	Data.emplace(Data.begin() + Position, new ItemT{{Core.RootVisual.Root}, {Core.RootVisual.Root}, {Core.RootVisual.Root}, {Core}});
+	Data[Position]->PrefixVisual.SetClass("affix-inner");
+	Data[Position]->SuffixVisual.SetClass("affix-inner");
 	Data[Position]->Atom.Parent = Parent.Nucleus;
-	Data[Position]->Atom.Callback = [this](AtomT &This)
+	Data[Position]->Atom.Callback = [this](NucleusT *Nucleus)
 	{
 		FlagRefresh();
 	};
@@ -356,7 +429,7 @@ OptionalT<std::unique_ptr<ActionT>> AtomListPartT::HandleInput(InputT const &Inp
 		switch (*Input.Main)
 		{
 			case InputT::MainT::NewStatement:
-				return std::unique_ptr<ActionT>(new AddRemoveT(*this, true, FocusIndex, new ProtoatomT(Core)));
+				return std::unique_ptr<ActionT>(new AddRemoveT(*this, true, FocusIndex, Core.ProtoatomType->Generate(Core)));
 			case InputT::MainT::Delete:
 				return std::unique_ptr<ActionT>(new AddRemoveT(*this, false, FocusIndex, {}));
 			default: break;
@@ -390,8 +463,12 @@ NucleusT *StringPartTypeT::Generate(CoreT &Core)
 	return new StringPartT(Core, *this);
 }
 
-StringPartT::StringPartT(CoreT &Core, StringPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo)
+StringPartT::StringPartT(CoreT &Core, StringPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Focused(false), Position(0)
 {
+	Visual.SetClass("part");
+	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
+	PrefixVisual.SetClass("affix-inner");
+	SuffixVisual.SetClass("affix-inner");
 }
 
 void StringPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
@@ -427,8 +504,19 @@ void StringPartT::AssumeFocus(void)
 
 void StringPartT::Refresh(void) 
 {
+	if (TypeInfo.DisplayPrefix) 
+	{
+		PrefixVisual.Start();
+		PrefixVisual.Add(*TypeInfo.DisplayPrefix);
+	}
+	if (TypeInfo.DisplaySuffix) 
+	{
+		SuffixVisual.Start();
+		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
+	}
+	
 	Visual.Start();
-	if (TypeInfo.DisplayPrefix) Visual.Add(*TypeInfo.DisplayPrefix);
+	Visual.Add(PrefixVisual);
 	if (Focused)
 	{
 		Visual.Add(Data.substr(0, Position));
@@ -436,7 +524,7 @@ void StringPartT::Refresh(void)
 		Visual.Add(Data.substr(Position));
 	}
 	else Visual.Add(Data);
-	if (TypeInfo.DisplaySuffix) Visual.Add(*TypeInfo.DisplaySuffix);
+	Visual.Add(SuffixVisual);
 }
 
 std::unique_ptr<ActionT> StringPartT::Set(NucleusT *Nucleus) { Assert(false); return {}; }
@@ -532,7 +620,13 @@ NucleusT *EnumPartTypeT::Generate(CoreT &Core)
 	return new EnumPartT(Core, *this);
 }
 
-EnumPartT::EnumPartT(CoreT &Core, EnumPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), Index(0) {}
+EnumPartT::EnumPartT(CoreT &Core, EnumPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Index(0) 
+{
+	Visual.SetClass("part");
+	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
+	PrefixVisual.SetClass("affix-inner");
+	SuffixVisual.SetClass("affix-inner");
+}
 
 void EnumPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 { 
@@ -567,7 +661,19 @@ void EnumPartT::AssumeFocus(void)
 
 void EnumPartT::Refresh(void)
 { 
+	if (TypeInfo.DisplayPrefix) 
+	{
+		PrefixVisual.Start();
+		PrefixVisual.Add(*TypeInfo.DisplayPrefix);
+	}
+	if (TypeInfo.DisplaySuffix) 
+	{
+		SuffixVisual.Start();
+		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
+	}
+	
 	Visual.Start();
+	Visual.Add(PrefixVisual);
 	if (Index >= TypeInfo.Values.size())
 	{
 		Assert(false);
@@ -577,6 +683,7 @@ void EnumPartT::Refresh(void)
 	{
 		Visual.Add(TypeInfo.Values[Index]);
 	}
+	Visual.Add(SuffixVisual);
 }
 	
 EnumPartT::SetT::SetT(EnumPartT &Base, size_t Index) : Base(Base), Index(Index)

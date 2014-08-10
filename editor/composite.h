@@ -11,10 +11,13 @@ struct CompositeTypeT;
 struct CompositeT : NucleusT
 {
 	CompositeTypeT &TypeInfo;
+	VisualT PrefixVisual, InfixVisual, SuffixVisual;
 
 	struct SelfFocusedT {};
 	typedef size_t PartFocusedT;
 	VariantT<SelfFocusedT, PartFocusedT> Focused;
+	
+	bool EffectivelyVertical;
 
 	std::vector<AtomT> Parts;
 
@@ -60,7 +63,6 @@ struct CompositeTypePartT : AtomTypeT
 	CompositeTypePartT(CompositeTypeT &Parent);
 };
 
-struct AtomPartT;
 struct AtomPartTypeT : CompositeTypePartT
 {
 	using CompositeTypePartT::CompositeTypePartT;
@@ -69,6 +71,8 @@ struct AtomPartTypeT : CompositeTypePartT
 struct AtomPartT : NucleusT
 {
 	AtomPartTypeT &TypeInfo;
+	VisualT PrefixVisual, SuffixVisual;
+	
 	AtomT Data;
 
 	AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo);
@@ -82,13 +86,11 @@ struct AtomPartT : NucleusT
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
 	std::unique_ptr<ActionT> Set(NucleusT *Nucleus) override;
-	std::unique_ptr<ActionT> Set(std::string const &Text) override;
 	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
 };
 
-struct AtomListPartT;
 struct AtomListPartTypeT : CompositeTypePartT
 {
 	using CompositeTypePartT::CompositeTypePartT;
@@ -103,6 +105,7 @@ struct AtomListPartT : NucleusT
 	struct ItemT
 	{
 		VisualT Visual;
+		VisualT PrefixVisual, SuffixVisual;
 		AtomT Atom;
 	};
 	std::vector<std::unique_ptr<ItemT>> Data;
@@ -148,6 +151,7 @@ struct StringPartTypeT : CompositeTypePartT
 struct StringPartT : NucleusT
 {
 	StringPartTypeT &TypeInfo;
+	VisualT PrefixVisual, SuffixVisual;
 	bool Focused;
 	size_t Position;
 	std::string Data;
@@ -190,6 +194,7 @@ struct EnumPartTypeT : CompositeTypePartT
 struct EnumPartT : NucleusT
 {
 	EnumPartTypeT &TypeInfo;
+	VisualT PrefixVisual, SuffixVisual;
 
 	size_t Index;
 

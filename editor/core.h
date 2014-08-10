@@ -130,6 +130,7 @@ struct HoldT
 	NucleusT *operator ->(void);
 	NucleusT const *operator ->(void) const;
 	HoldT &operator =(NucleusT *Nucleus);
+	HoldT &operator =(HoldT &&Hold);
 	void Set(NucleusT *Nucleus);
 	void Clear(void);
 	
@@ -161,7 +162,7 @@ struct AtomT
 	};
 	void Set(NucleusT *Nucleus);
 	
-	typedef std::function<void(AtomT &)> AtomCallbackT;
+	typedef std::function<void(NucleusT *Nucleus)> AtomCallbackT;
 	CoreT &Core;
 	AtomCallbackT Callback;
 	NucleusT *Parent;
@@ -226,6 +227,13 @@ struct NucleusT
 		if (Out) return Out; 
 		return {}; 
 	}
+
+	template <typename AsT> OptionalT<AsT const *> As(void) const
+	{ 
+		auto Out = dynamic_cast<AsT const *>(this); 
+		if (Out) return Out; 
+		return {}; 
+	}
 	
 	virtual void Parented(void);
 
@@ -270,6 +278,7 @@ struct CoreT
 	HoldT Focused;
 	
 	std::unique_ptr<AtomTypeT> 
+		ProtoatomType,
 		ModuleType, 
 		GroupType, 
 		ElementType, 

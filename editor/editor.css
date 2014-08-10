@@ -1,0 +1,68 @@
+* { margin: 0; padding: 0; visibility: visible; }
+
+body { font-size: 16px; }
+
+div
+{
+	text-align: left;
+	display: inline; 
+	font-family: monospace;
+	
+	display: inline-block;
+}
+
+div.type
+{
+	border: 1px solid LightSteelBlue;
+	margin: 2px;
+	padding: 2px;
+}
+
+div.part
+{
+	border: 1px solid Lavender;
+	margin: 2px;
+	padding: 2px;
+}
+
+div.flag-focused
+{
+	border-color: black;
+}
+
+.tag
+{
+	display: block;
+	font-size: 0.6em;
+}
+
+div.flag-vertical > div.part, 
+div.flag-vertical > div.part > div
+{
+	display: block
+}
+
+div.type-Element > div.part-Key > div.type-String > div.part-Data > div.affix-inner,
+div.type-Module > div > div.type-Group > div.affix-outer
+{
+	display: none;
+}
+
+div.type-module > div > div.type-Group.flag-vertical > div.part > div
+{
+	margin-left: 0;
+}
+
+div.type-Group.flag-vertical > div.part-Statements > div
+{ 
+	margin-left: 64px;
+}
+
+div.type-cursor
+{
+	display: inline-block;
+	width: 0;
+	overflow: visible;
+	padding: 0;
+	margin: 0;
+}

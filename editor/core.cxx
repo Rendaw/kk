@@ -1,5 +1,6 @@
 #include "core.h"
 #include "atoms.h"
+#include "protoatom.h"
 #include "../shared/extrastandard.h"
 
 #include <regex>
@@ -227,13 +228,13 @@ std::unique_ptr<ActionT> AtomT::SetT::Apply(void)
 
 void AtomT::Set(NucleusT *Nucleus)
 {
+	if (Callback) Callback(Nucleus);
 	Clear();
 	this->Nucleus = Nucleus;
 	this->Nucleus->Count += 1;
 	Assert(!this->Nucleus->Atom);
 	this->Nucleus->Atom = this;
 	this->Nucleus->Parent = Parent;
-	if (Callback) Callback(*this);
 	Nucleus->Parented();
 	std::cout << "Set result: " << Core.Dump() << std::endl;
 	Core.AssumeFocus();
@@ -281,6 +282,14 @@ HoldT &HoldT::operator =(NucleusT *Nucleus)
 {
 	Clear();
 	Set(Nucleus);
+	return *this;
+}
+
+HoldT &HoldT::operator =(HoldT &&Hold)
+{
+	Clear();
+	Nucleus = Hold.Nucleus;
+	Hold.Nucleus = nullptr;
 	return *this;
 }
 
@@ -371,6 +380,9 @@ NucleusT *AtomTypeT::Generate(CoreT &Core) { Assert(false); return nullptr; }
 
 CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused(*this), CursorVisual(RootVisual.Root)
 {
+	CursorVisual.SetClass("type-cursor");
+	CursorVisual.Add("|");
+	ProtoatomType.reset(new ProtoatomTypeT());
 	ModuleType.reset(new ModuleTypeT());
 	GroupType.reset(new GroupTypeT());
 	AssignmentType.reset(new AssignmentTypeT());
@@ -381,10 +393,11 @@ CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused
 	Types["="] = AssignmentType.get();
 	Types["{"] = GroupType.get();
 	
-	Root.Callback = [this](AtomT &This)
+	Root.Callback = [this](NucleusT *Nucleus)
 	{
 		this->RootVisual.Start();
-		this->RootVisual.Add(This->Visual);
+		Assert(Nucleus);
+		this->RootVisual.Add(Nucleus->Visual);
 	};
 	
 	Root.Set(ModuleType->Generate(*this));

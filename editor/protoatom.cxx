@@ -7,43 +7,128 @@
 namespace Core
 {
 
-ProtoatomT::ProtoatomT(CoreT &Core) : NucleusT(Core), Lifted(Core) 
+NucleusT *HoldPartTypeT::Generate(CoreT &Core)
 {
-	Visual.Tag().Add(GetTypeInfo().Tag);
+	return new HoldPartT(Core, *this);
 }
 
-void ProtoatomT::Serialize(Serial::WritePolymorphT &WritePolymorph) const
+HoldPartT::HoldPartT(CoreT &Core, HoldPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Data(Core)
+{
+	Visual.SetClass("part");
+	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
+	PrefixVisual.SetClass("affix-inner");
+	SuffixVisual.SetClass("affix-inner");
+}
+
+void HoldPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
+{
+	if (!Data) return;
+	Data->Serialize(Polymorph.Polymorph(TypeInfo.Tag)); 
+}
+
+AtomTypeT const &HoldPartT::GetTypeInfo(void) const { return TypeInfo; }
+
+void HoldPartT::Focus(FocusDirectionT Direction) 
+{ 
+	if (Data) Data->Focus(Direction); 
+	else
+	{
+		switch (Direction)
+		{
+			case FocusDirectionT::FromBehind:
+			case FocusDirectionT::Direct: 
+				Parent->FocusNext();
+				return;
+			case FocusDirectionT::FromAhead: 
+				Parent->FocusPrevious();
+				return;
+		}
+	}
+}
+
+void HoldPartT::Defocus(void) {}
+
+void HoldPartT::AssumeFocus(void) 
+{ 
+	if (Data) Data->AssumeFocus(); 
+	else Assert(false);
+}
+
+void HoldPartT::Refresh(void) 
+{
+	if (TypeInfo.DisplayPrefix) 
+	{
+		PrefixVisual.Start();
+		PrefixVisual.Add(*TypeInfo.DisplayPrefix);
+	}
+	if (TypeInfo.DisplaySuffix) 
+	{
+		SuffixVisual.Start();
+		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
+	}
+	
+	Visual.Start();
+	if (Data)
+	{
+		auto Protoatom = AsProtoatom(Data);
+		Assert(!Protoatom);
+	}
+	Visual.Add(PrefixVisual);
+	if (Data) Visual.Add(Data->Visual);
+	Visual.Add(SuffixVisual);
+}
+
+void HoldPartT::SetHold(NucleusT *Nucleus) { Data.Set(Nucleus); }
+
+OptionalT<std::unique_ptr<ActionT>> HoldPartT::HandleInput(InputT const &Input) { return Data->HandleInput(Input); }
+
+void HoldPartT::FocusPrevious(void) { Parent->FocusPrevious(); }
+
+void HoldPartT::FocusNext(void) { Parent->FocusNext(); }
+
+ProtoatomTypeT::ProtoatomTypeT(void)
+{
+	Tag = "Protoatom";
+	{
+		auto Part = new HoldPartTypeT(*this);
+		Part->Tag = "Lifted";
+		//Part->SetDefault = true; // Unnecessary, since protoatom is only added explictly (no generic bubling sets or whatnot)
+		Parts.emplace_back(Part);
+	}
+	{
+		auto Part = new ProtoatomPartTypeT(*this);
+		Part->Tag = "Data";
+		Part->FocusDefault = true;
+		Parts.emplace_back(Part);
+	}
+}
+
+NucleusT *ProtoatomPartTypeT::Generate(CoreT &Core)
+{
+	return new ProtoatomPartT(Core, *this);
+}
+
+ProtoatomPartT::ProtoatomPartT(CoreT &Core, ProtoatomPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo)
+{
+	Visual.SetClass("part");
+	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
+}
+
+void ProtoatomPartT::Serialize(Serial::WritePolymorphT &WritePolymorph) const
 {
 	if (IsIdentifier) WritePolymorph.Bool("IsIdentifier", *IsIdentifier);
 	WritePolymorph.String("Data", Data);
 	WritePolymorph.UInt("Position", Position);
-	if (Lifted) Lifted->Serialize(WritePolymorph.Polymorph("Lifted"));
-}
-	
-AtomTypeT &ProtoatomT::StaticGetTypeInfo(void)
-{
-	struct TypeT : AtomTypeT
-	{
-		TypeT(void)
-		{
-			Tag = "Protoatom";
-		}
-	} static Type;
-	return Type;
 }
 
-AtomTypeT const &ProtoatomT::GetTypeInfo(void) const { return StaticGetTypeInfo(); }
+AtomTypeT const &ProtoatomPartT::GetTypeInfo(void) const { return TypeInfo; }
 	
-void ProtoatomT::Focus(FocusDirectionT Direction)
+void ProtoatomPartT::Focus(FocusDirectionT Direction)
 {
-	if (Direction == FocusDirectionT::FromBehind)
+	if ((Direction == FocusDirectionT::FromBehind) ||
+		(Direction == FocusDirectionT::Direct))
 	{
 		Position = 0;
-		if (Lifted)
-		{
-			Lifted->Focus(Direction);
-			return;
-		}
 	}
 	else if (Direction == FocusDirectionT::FromAhead)
 	{
@@ -53,24 +138,25 @@ void ProtoatomT::Focus(FocusDirectionT Direction)
 	Visual.SetClass("flag-focused");
 	FlagRefresh();
 	NucleusT::Focus(Direction);
+	for (auto &Atom : FocusDependents) Atom->FlagRefresh();
 }
 
-void ProtoatomT::Defocus(void) 
+void ProtoatomPartT::Defocus(void) 
 {
 	Focused = false;
 	Visual.UnsetClass("flag-focused");
 	FlagRefresh();
+	for (auto &Atom : FocusDependents) Atom->FlagRefresh();
 }
 
-void ProtoatomT::AssumeFocus(void)
+void ProtoatomPartT::AssumeFocus(void)
 {
 	Focus(FocusDirectionT::Direct);
 }
 
-void ProtoatomT::Refresh(void)
+void ProtoatomPartT::Refresh(void)
 {
 	Visual.Start();
-	if (Lifted) Visual.Add(Lifted->Visual);
 	if (Focused)
 	{
 		Visual.Add(Data.substr(0, Position));
@@ -79,14 +165,8 @@ void ProtoatomT::Refresh(void)
 	}
 	else Visual.Add(Data);
 }
-	
-void ProtoatomT::Lift(NucleusT *Nucleus)
-{
-	Assert(!Lifted);
-	Lifted = Nucleus;
-}
 
-OptionalT<std::unique_ptr<ActionT>> ProtoatomT::HandleInput(InputT const &Input)
+OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::HandleInput(InputT const &Input)
 {
 	if (Input.Text)
 	{
@@ -113,11 +193,11 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::HandleInput(InputT const &Input)
 
 			struct SetT : ActionT
 			{
-				ProtoatomT &Base;
+				ProtoatomPartT &Base;
 				unsigned int Position;
 				std::string Data;
 				
-				SetT(ProtoatomT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) {}
+				SetT(ProtoatomPartT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) {}
 				
 				std::unique_ptr<ActionT> Apply(void)
 				{
@@ -190,53 +270,58 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::HandleInput(InputT const &Input)
 		}
 	}
 	
-	auto Result = NucleusT::HandleInput(Input);
-	if (Result)
+	// TODO
+	// The issue is that AtomListPartT sets Parent to Composite, so Parent->HandleInput never goes to the AtomListPart
+	if (Parent)
 	{
-		auto ActionGroup = new ActionGroupT;
-		auto FinishResult = Finish({}, {}, {});
-		if (FinishResult) ActionGroup->Add(std::move(*FinishResult));
-		ActionGroup->Add(std::move(*Result));
-		return std::unique_ptr<ActionT>(ActionGroup);
+		auto Result = Parent->HandleInput(Input);
+		if (Result)
+		{
+			auto ActionGroup = new ActionGroupT;
+			auto FinishResult = Finish({}, {}, {});
+			if (FinishResult) ActionGroup->Add(std::move(*FinishResult));
+			ActionGroup->Add(std::move(*Result));
+			return std::unique_ptr<ActionT>(ActionGroup);
+		}
 	}
 
 	return {};
 }
 
-OptionalT<std::unique_ptr<ActionT>> ProtoatomT::Finish(
+OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(
 	OptionalT<AtomTypeT *> Type, 
 	OptionalT<std::string> NewData, 
 	OptionalT<InputT> SeedData)
 {
-	Assert(Atom);
+	Assert(Parent->Atom);
+	auto &Lifted = Parent->As<CompositeT>()->Parts[0]->As<HoldPartT>()->Data;
 	std::string Text = NewData ? *NewData : Data;
 	Type = Type ? Type : Core.LookUpAtom(Data);
 	auto Actions = new ActionGroupT;
-	if (Type)
+	if (Data.empty())
+	{
+		if (SeedData) Actions->Add(Core.ActionHandleInput(*SeedData));
+	}
+	else if (Type)
 	{
 		Assert(!SeedData);
 		if (((*Type)->Arity == ArityT::Nullary) || (*Type)->Prefix)
 		{
-			if (Lifted) 
+			if (Lifted)
 			{
 				std::cout << "NOTE: Can't finish to nullary or prefixed op if protoatom has lifed." << std::endl; 
 				return {}; 
 			}
-			auto Replacement = new ProtoatomT(Core);
+			auto Replacement = Core.ProtoatomType->Generate(Core);
 			auto Finished = Type->Generate(Core);
 			Actions->Add(Replacement->Set(Finished));
-			if ((*Type)->Arity != ArityT::Nullary)
-			{
-				auto Proto = new ProtoatomT(Core);
-				Actions->Add(Finished->Set(Proto));
-			}
-			Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Replacement)));
+			Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*Parent->Atom, Replacement)));
 		}
 		else
 		{
-			auto Child = Lifted ? Lifted.Nucleus : new ProtoatomT(Core);
-			Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Child)));
-			AtomT *WedgeAtom = Atom;
+			auto Child = Lifted ? Lifted.Nucleus : Core.ProtoatomType->Generate(Core);
+			Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*Parent->Atom, Child)));
+			AtomT *WedgeAtom = Parent->Atom;
 			while (WedgeAtom->Parent && 
 				(
 					(WedgeAtom->Parent->GetTypeInfo().Precedence > (*Type)->Precedence) || 
@@ -263,39 +348,44 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomT::Finish(
 			{
 				Assert(Atom);
 				std::cout << "Replacing " << this << " with " << Lifted.Nucleus << ", atom " << Atom << std::endl;
-				return std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Lifted.Nucleus));
+				return std::unique_ptr<ActionT>(new AtomT::SetT(*Parent->Atom, Lifted.Nucleus));
 			}
 
 			std::cout << "NOTE: Can't finish as new element if protoatom has lifted." << std::endl; 
 			return {};
 		}
-			
+		
 		auto String = Core.StringType->Generate(Core);
 		Actions->Add(String->Set(Text));
 
-		auto Protoatom = new ProtoatomT(Core);
+		auto Protoatom = Core.ProtoatomType->Generate(Core);
 
 		auto ParentAsComposite = Parent->As<CompositeT>();
 		if (ParentAsComposite && (&ParentAsComposite->TypeInfo == Core.ElementType.get()))
 		{
-			Protoatom->Lift(String);
+			Protoatom->As<CompositeT>()->Parts[0]->As<HoldPartT>()->SetHold(String);
 		}
 		else
 		{
-			auto Nucleus = Core.ElementType->Generate(Core);
-			auto Element = Nucleus->As<CompositeT>();
-			(*Element)->Parts[1]->Set(String);
-			Protoatom->Lifted.Set(Nucleus);
+			auto Element = Core.ElementType->Generate(Core);
+			Actions->Add(Element->As<CompositeT>()->Parts[1]->Set(String));
+			Protoatom->As<CompositeT>()->Parts[0]->As<HoldPartT>()->SetHold(Element);
 		}
 
 		std::cout << Core.Dump() << std::endl; // DEBUG
-		Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Protoatom)));
+		Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*Parent->Atom, Protoatom)));
 
 		if (SeedData) Actions->Add(Core.ActionHandleInput(*SeedData));
 		std::cout << "Standard no-type finish." << std::endl;
 	}
 
 	return std::unique_ptr<ActionT>(Actions);
+}
+
+bool ProtoatomPartT::IsEmpty(void) const
+{
+	auto &Lifted = Parent->As<CompositeT>()->Parts[0]->As<HoldPartT>()->Data;
+	return Data.empty() && !Lifted && !Focused;
 }
 
 }
