@@ -235,7 +235,6 @@ void AtomT::Set(NucleusT *Nucleus)
 	Assert(!this->Nucleus->Atom);
 	this->Nucleus->Atom = this;
 	this->Nucleus->Parent = Parent;
-	Nucleus->Parented();
 	std::cout << "Set result: " << Core.Dump() << std::endl;
 	Core.AssumeFocus();
 }
@@ -311,14 +310,23 @@ void HoldT::Clear(void)
 
 HoldT::operator bool(void) const { return Nucleus; }
 
+OptionalT<NucleusT *> NucleusT::PartParent(void)
+{
+	auto Test = Parent.Nucleus;
+	while (!Test->template As<CompositeT>()) // Since everything is a Composite now, this is an okay test.  Maybe add a PartParent ref to AtomT?
+	{
+		if (!Test->Parent) return {};
+		Test = Test->Parent.Nucleus;
+	}
+	return Test;
+}
+
 NucleusT::NucleusT(CoreT &Core) : Core(Core), Parent(Core), Visual(Core.RootVisual.Root), Atom(nullptr) 
 {
        Core.NeedRefresh.insert(this);	
 }
 
 NucleusT::~NucleusT(void) {}
-
-void NucleusT::Parented(void) {}
 
 void NucleusT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
 {

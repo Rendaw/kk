@@ -77,8 +77,6 @@ struct AtomPartT : NucleusT
 
 	AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo);
 
-	void Parented(void) override;
-
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;
@@ -111,8 +109,6 @@ struct AtomListPartT : NucleusT
 	std::vector<std::unique_ptr<ItemT>> Data;
 
 	AtomListPartT(CoreT &Core, AtomListPartTypeT &TypeInfo);
-
-	void Parented(void) override;
 
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;

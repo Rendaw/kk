@@ -270,8 +270,6 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::HandleInput(InputT const &In
 		}
 	}
 	
-	// TODO
-	// The issue is that AtomListPartT sets Parent to Composite, so Parent->HandleInput never goes to the AtomListPart
 	if (Parent)
 	{
 		auto Result = Parent->HandleInput(Input);
@@ -315,23 +313,23 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(
 			auto Replacement = Core.ProtoatomType->Generate(Core);
 			auto Finished = Type->Generate(Core);
 			Actions->Add(Replacement->Set(Finished));
-			Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*Parent->Atom, Replacement)));
+			Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*PartParent()->Atom, Replacement)));
 		}
 		else
 		{
 			auto Child = Lifted ? Lifted.Nucleus : Core.ProtoatomType->Generate(Core);
-			Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*Parent->Atom, Child)));
-			AtomT *WedgeAtom = Parent->Atom;
-			while (WedgeAtom->Parent && 
+			Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*PartParent()->Atom, Child)));
+			AtomT *WedgeAtom = PartParent()->Atom;
+			while ((*WedgeAtom)->PartParent() && 
 				(
-					(WedgeAtom->Parent->GetTypeInfo().Precedence > (*Type)->Precedence) || 
+					((*WedgeAtom)->PartParent()->GetTypeInfo().Precedence > (*Type)->Precedence) || 
 					(
-						(WedgeAtom->Parent->GetTypeInfo().Precedence == (*Type)->Precedence) &&
-						(WedgeAtom->Parent->GetTypeInfo().LeftAssociative)
+						((*WedgeAtom)->PartParent()->GetTypeInfo().Precedence == (*Type)->Precedence) &&
+						((*WedgeAtom)->PartParent()->GetTypeInfo().LeftAssociative)
 					)
 				))
 			{
-				WedgeAtom = WedgeAtom->Parent->Atom;
+				WedgeAtom = (*WedgeAtom)->PartParent()->Atom;
 				Child = WedgeAtom->Nucleus;
 			}
 			auto Finished = (*Type)->Generate(Core);
@@ -348,7 +346,7 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(
 			{
 				Assert(Atom);
 				std::cout << "Replacing " << this << " with " << Lifted.Nucleus << ", atom " << Atom << std::endl;
-				return std::unique_ptr<ActionT>(new AtomT::SetT(*Parent->Atom, Lifted.Nucleus));
+				return std::unique_ptr<ActionT>(new AtomT::SetT(*PartParent()->Atom, Lifted.Nucleus));
 			}
 
 			std::cout << "NOTE: Can't finish as new element if protoatom has lifted." << std::endl; 
@@ -360,7 +358,7 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(
 
 		auto Protoatom = Core.ProtoatomType->Generate(Core);
 
-		auto ParentAsComposite = Parent->As<CompositeT>();
+		auto ParentAsComposite = PartParent()->As<CompositeT>();
 		if (ParentAsComposite && (&ParentAsComposite->TypeInfo == Core.ElementType.get()))
 		{
 			Protoatom->As<CompositeT>()->Parts[0]->As<HoldPartT>()->SetHold(String);
@@ -373,7 +371,7 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(
 		}
 
 		std::cout << Core.Dump() << std::endl; // DEBUG
-		Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*Parent->Atom, Protoatom)));
+		Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*PartParent()->Atom, Protoatom)));
 
 		if (SeedData) Actions->Add(Core.ActionHandleInput(*SeedData));
 		std::cout << "Standard no-type finish." << std::endl;

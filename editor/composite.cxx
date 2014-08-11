@@ -219,6 +219,7 @@ AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), Typ
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
 	PrefixVisual.SetClass("affix-inner");
 	SuffixVisual.SetClass("affix-inner");
+	Data.Parent = this;
 	Data.Callback = [this, &Core](NucleusT *Nucleus) 
 	{ 
 		if (Data)
@@ -236,12 +237,6 @@ AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), Typ
 		FlagRefresh(); 
 	};
 	Data.Set(Core.ProtoatomType->Generate(Core));
-}
-
-void AtomPartT::Parented(void)
-{
-	Data.Parent = Parent.Nucleus;
-	if (Data) Data.Nucleus->Parent.Set(Parent.Nucleus);
 }
 
 void AtomPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
@@ -294,15 +289,6 @@ AtomListPartT::AtomListPartT(CoreT &Core, AtomListPartTypeT &TypeInfo) : Nucleus
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
 	Add(0, Core.ProtoatomType->Generate(Core));
-}
-
-void AtomListPartT::Parented(void)
-{
-	for (auto &Atom : Data)
-	{
-		Atom->Atom.Parent = Parent.Nucleus;
-		if (Atom) Atom->Atom.Nucleus->Parent.Set(Parent.Nucleus);
-	}
 }
 
 void AtomListPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
@@ -363,7 +349,7 @@ void AtomListPartT::Add(size_t Position, NucleusT *Nucleus)
 	Data.emplace(Data.begin() + Position, new ItemT{{Core.RootVisual.Root}, {Core.RootVisual.Root}, {Core.RootVisual.Root}, {Core}});
 	Data[Position]->PrefixVisual.SetClass("affix-inner");
 	Data[Position]->SuffixVisual.SetClass("affix-inner");
-	Data[Position]->Atom.Parent = Parent.Nucleus;
+	Data[Position]->Atom.Parent = this;
 	Data[Position]->Atom.Callback = [this](NucleusT *Nucleus)
 	{
 		FlagRefresh();
@@ -429,7 +415,7 @@ OptionalT<std::unique_ptr<ActionT>> AtomListPartT::HandleInput(InputT const &Inp
 		switch (*Input.Main)
 		{
 			case InputT::MainT::NewStatement:
-				return std::unique_ptr<ActionT>(new AddRemoveT(*this, true, FocusIndex, Core.ProtoatomType->Generate(Core)));
+				return std::unique_ptr<ActionT>(new AddRemoveT(*this, true, FocusIndex + 1, Core.ProtoatomType->Generate(Core)));
 			case InputT::MainT::Delete:
 				return std::unique_ptr<ActionT>(new AddRemoveT(*this, false, FocusIndex, {}));
 			default: break;

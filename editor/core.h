@@ -213,6 +213,7 @@ struct NucleusT
 {
 	CoreT &Core;
 	HoldT Parent;
+	OptionalT<NucleusT *> PartParent(void);
 	VisualT Visual;
 
 	size_t Count = 0;
@@ -235,8 +236,6 @@ struct NucleusT
 		return {}; 
 	}
 	
-	virtual void Parented(void);
-
 	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const;
 	virtual void Serialize(Serial::WritePolymorphT &Polymorph) const;
 
