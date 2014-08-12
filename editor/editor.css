@@ -61,8 +61,10 @@ div.type-Group.flag-vertical > div.part-Statements > div
 div.type-cursor
 {
 	display: inline-block;
-	width: 0;
+	width: 1em;
+	text-align: center;
 	overflow: visible;
 	padding: 0;
-	margin: 0;
+	margin-left: -0.45em;
+	margin-right: -0.55em;
 }

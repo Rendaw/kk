@@ -230,11 +230,17 @@ void AtomT::Set(NucleusT *Nucleus)
 {
 	if (Callback) Callback(Nucleus);
 	Clear();
+	if (!Nucleus) return;
 	this->Nucleus = Nucleus;
-	this->Nucleus->Count += 1;
-	Assert(!this->Nucleus->Atom);
-	this->Nucleus->Atom = this;
-	this->Nucleus->Parent = Parent;
+	Nucleus->Count += 1;
+	if (Nucleus->Atom)
+	{
+		std::cout << "Relocating atom " << Nucleus << std::endl;
+		Nucleus->Atom->Set(nullptr);
+	}
+	Assert(!Nucleus->Atom);
+	Nucleus->Atom = this;
+	Nucleus->Parent = Parent;
 	std::cout << "Set result: " << Core.Dump() << std::endl;
 	Core.AssumeFocus();
 }
@@ -312,6 +318,8 @@ HoldT::operator bool(void) const { return Nucleus; }
 
 OptionalT<NucleusT *> NucleusT::PartParent(void)
 {
+	//AssertNE(Parent.Nucleus, nullptr); // Doesn't work because C++ can't std::cout << nullptr, just as God intended
+	Assert(Parent.Nucleus != nullptr);
 	auto Test = Parent.Nucleus;
 	while (!Test->template As<CompositeT>()) // Since everything is a Composite now, this is an okay test.  Maybe add a PartParent ref to AtomT?
 	{

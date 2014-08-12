@@ -65,6 +65,8 @@ struct CompositeTypePartT : AtomTypeT
 
 struct AtomPartTypeT : CompositeTypePartT
 {
+	bool StartEmpty = false;
+	
 	using CompositeTypePartT::CompositeTypePartT;
 	NucleusT *Generate(CoreT &Core) override;
 };
@@ -116,7 +118,7 @@ struct AtomListPartT : NucleusT
 	void Defocus(void) override;
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
-	void Add(size_t Position, NucleusT *Nucleus);
+	void Add(size_t Position, NucleusT *Nucleus, bool ShouldFocus = false);
 	void Remove(size_t Position);
 	
 	struct AddRemoveT : ActionT

@@ -1,3 +1,6 @@
+// TODO
+// Backspace deletes parent if empty
+
 #include <QApplication>
 #include <QWindow>
 #include <QBoxLayout>
@@ -18,7 +21,7 @@ struct WebViewT : QWebView
 	CoreT *Core;
 	void keyPressEvent(QKeyEvent *Event)
 	{
-		InputT::MainT Main;
+		OptionalT<InputT::MainT> Main;
 		OptionalT<std::string> Text;
 		std::string RawText = std::string(Event->text().toUtf8().data());
 		if (!RawText.empty() && (RawText.size() == 1) && (RawText[0] >= 33) && (RawText[0] <= 126)) Text = RawText;
@@ -74,78 +77,6 @@ int main(int argc, char **argv)
 			"<style type=\"text/css\">" << 
 			std::ifstream("editor.css").rdbuf() << 
 			"</style>").str().c_str());
-	/*HTMLRoot.findFirst("head").setInnerXml(
-		"<style type=\"text/css\">"
-			"* { margin: 0; padding: 0; visibility: visible; }"
-
-			"body { font-size: 16px; }"
-
-			"div"
-			"{"
-				"text-align: left;"
-				"display: inline; "
-				"font-family: monospace;"
-				
-				"display: inline-block;"
-			"}"
-			
-			"div.type"
-			"{"
-				"border: 1px solid LightSteelBlue;"
-				"margin: 2px;"
-				"padding: 2px;"
-			"}"
-			
-			"div.part"
-			"{"
-				"border: 1px solid Lavender;"
-				"margin: 2px;"
-				"padding: 2px;"
-			"}"
-
-			"div.flag-focused"
-			"{"
-				"border-color: black;"
-			"}"
-			
-			".tag"
-			"{"
-				"display: block;"
-				"font-size: 0.6em;"
-			"}"
-			
-			"div.flag-vertical > div.part, "
-			"div.flag-vertical > div.part > div"
-			"{"
-				"display: block"
-			"}"
-
-			"div.type-Element > div.part:nth-child(2) > div.type-String > div.affix-outer,"
-			"div.type-Module > div > div.type-Group > div.affix-outer"
-			"{"
-				"display: none;"
-			"}"
-
-			"div.type-module > div > div.type-Group.flag-vertical > div.part > div"
-			"{"
-				"margin-left: 0;"
-			"}"
-			
-			"div.type-Group.flag-vertical > div.part > div"
-			"{ "
-				"margin-left: 64px;"
-			"}"
-			
-			"div.type-cursor"
-			"{"
-				"display: inline-block;"
-				"width: 0;"
-				"overflow: visible;"
-				"padding: 0;"
-				"margin: 0;"
-			"}"
-		"</style>"
-	);*/
 	VisualT BodyVisual(HTMLRoot, HTMLRoot.findFirst("body"));
 
 	CoreT Core(BodyVisual);
@@ -153,19 +84,6 @@ int main(int argc, char **argv)
 
 	Window->show();
 	return QTContext.exec();
-
-	/*VisualT BodyVisual;
-	CoreT Core(BodyVisual);
-
-	std::string Line;
-	while (std::getline(std::cin, Line))
-	{
-		auto Text = Line.substr(0, 1);
-		if (Text == "") Core.HandleInput({InputT::MainT::NewStatement});
-		else Core.HandleInput({Line.substr(0, 1)});
-	}
-
-	return 0;*/
 }
 
 

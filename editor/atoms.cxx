@@ -10,7 +10,7 @@ AssignmentTypeT::AssignmentTypeT(void)
 	ReplaceImmediately = true;
 	Arity = ArityT::Binary;
 	Prefix = false;
-	Precedence = 900;
+	Precedence = 800;
 	{
 		auto Part = new AtomPartTypeT(*this);
 		Part->Tag = "Left";
@@ -66,6 +66,7 @@ GroupTypeT::GroupTypeT(void)
 	Tag = "Group";
 	DisplayPrefix = "{";
 	DisplaySuffix = "}";
+	Precedence = 0;
 	SpatiallyVertical = true;
 	{
 		auto Part = new AtomListPartTypeT(*this);
@@ -79,6 +80,7 @@ GroupTypeT::GroupTypeT(void)
 ModuleTypeT::ModuleTypeT(void)
 {
 	Tag = "Module";
+	Precedence = 0;
 	SpatiallyVertical = true;
 	{
 		auto Part = new EnumPartTypeT(*this);

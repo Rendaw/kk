@@ -7,32 +7,6 @@
 namespace Core
 {
 
-struct HoldPartTypeT : CompositeTypePartT
-{
-	using CompositeTypePartT::CompositeTypePartT;
-	NucleusT *Generate(CoreT &Core) override;
-};
-struct HoldPartT : NucleusT
-{
-	HoldPartTypeT &TypeInfo;
-	VisualT PrefixVisual, SuffixVisual;
-	
-	HoldT Data;
-
-	HoldPartT(CoreT &Core, HoldPartTypeT &TypeInfo);
-
-	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
-	AtomTypeT const &GetTypeInfo(void) const override;
-	void Focus(FocusDirectionT Direction) override;
-	void Defocus(void) override;
-	void AssumeFocus(void) override;
-	void Refresh(void) override;
-	void SetHold(NucleusT *Nucleus);
-	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
-	void FocusPrevious(void) override;
-	void FocusNext(void) override;
-};
-
 struct ProtoatomTypeT : CompositeTypeT
 {
 	ProtoatomTypeT(void);
@@ -64,10 +38,7 @@ struct ProtoatomPartT : NucleusT
 	void Refresh(void) override;
 	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
 	
-	OptionalT<std::unique_ptr<ActionT>> Finish(
-		OptionalT<AtomTypeT *> Type, 
-		OptionalT<std::string> NewData, 
-		OptionalT<InputT> SeedData);
+	OptionalT<std::unique_ptr<ActionT>> Finish(OptionalT<AtomTypeT *> Type, std::string Text);
 	
 	bool IsEmpty(void) const;
 };

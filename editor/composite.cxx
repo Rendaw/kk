@@ -163,7 +163,13 @@ OptionalT<std::unique_ptr<ActionT>> CompositeT::HandleInput(InputT const &Input)
 		}
 		if (Focused.Is<SelfFocusedT>())
 		{
-			if (Atom) return std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Core.ProtoatomType->Generate(Core)));
+			switch (*Input.Main)
+			{
+				case InputT::MainT::Delete:
+					if (Atom) return std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Core.ProtoatomType->Generate(Core)));
+					return {};
+				default: break;
+			}
 		}
 	}
 	if (Parent) return Parent->HandleInput(Input);
@@ -184,12 +190,18 @@ void CompositeT::FocusPrevious(void)
 
 void CompositeT::FocusNext(void)
 {
+	std::cout << "Fra " << this << std::endl;
 	Assert(Focused.Is<PartFocusedT>());
 	auto &Index = Focused.Get<PartFocusedT>();
-	if (Index + 1 == Parts.size()) { if (Parent) Parent->FocusNext(); }
+	if (Index + 1 == Parts.size()) 
+	{ 
+		std::cout << "Parent of " << this << " is " << Parent.Nucleus << std::endl;
+		if (Parent) Parent->FocusNext(); 
+	}
 	else 
 	{
 		Index += 1;
+		std::cout << "Inc " << this << " now at " << Index << std::endl;
 		Parts[Index]->Focus(FocusDirectionT::FromBehind);
 	}
 }
@@ -236,22 +248,52 @@ AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), Typ
 		}
 		FlagRefresh(); 
 	};
-	Data.Set(Core.ProtoatomType->Generate(Core));
+	if (!TypeInfo.StartEmpty)
+		Data.Set(Core.ProtoatomType->Generate(Core));
 }
 
 void AtomPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
-	{ Data->Serialize(Polymorph.Polymorph(TypeInfo.Tag)); }
+{ 
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);
+	if (Data) Data->Serialize(Polymorph.Polymorph(TypeInfo.Tag)); 
+}
 
 AtomTypeT const &AtomPartT::GetTypeInfo(void) const { return TypeInfo; }
 
-void AtomPartT::Focus(FocusDirectionT Direction) { Data->Focus(Direction); }
+void AtomPartT::Focus(FocusDirectionT Direction) 
+{
+	if (Data) Data->Focus(Direction); 
+	else
+	{
+		switch (Direction)
+		{
+			case FocusDirectionT::FromAhead: 
+				Parent->FocusPrevious(); 
+				break;
+			case FocusDirectionT::FromBehind: 
+			case FocusDirectionT::Direct: 
+				Parent->FocusNext(); 
+				break;
+		}
+	}
+}
 
 void AtomPartT::Defocus(void) {}
 
-void AtomPartT::AssumeFocus(void) { Data->AssumeFocus(); }
+void AtomPartT::AssumeFocus(void) 
+{ 
+	if (Data) Data->AssumeFocus(); 
+	else Parent->FocusNext(); 
+}
 
 void AtomPartT::Refresh(void) 
 {
+	Visual.Start();
+	
+	if (!Data) return;
+	
 	if (TypeInfo.DisplayPrefix) 
 	{
 		PrefixVisual.Start();
@@ -263,7 +305,6 @@ void AtomPartT::Refresh(void)
 		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
 	}
 	
-	Visual.Start();
 	auto Protoatom = AsProtoatom(Data);
 	if (Protoatom && Protoatom->IsEmpty()) return;
 	Visual.Add(PrefixVisual);
@@ -273,7 +314,7 @@ void AtomPartT::Refresh(void)
 
 std::unique_ptr<ActionT> AtomPartT::Set(NucleusT *Nucleus) { return std::unique_ptr<ActionT>(new AtomT::SetT(Data, Nucleus)); }
 
-OptionalT<std::unique_ptr<ActionT>> AtomPartT::HandleInput(InputT const &Input) { return Data->HandleInput(Input); }
+OptionalT<std::unique_ptr<ActionT>> AtomPartT::HandleInput(InputT const &Input) { return Parent->HandleInput(Input); }
 
 void AtomPartT::FocusPrevious(void) { Parent->FocusPrevious(); }
 
@@ -293,6 +334,9 @@ AtomListPartT::AtomListPartT(CoreT &Core, AtomListPartTypeT &TypeInfo) : Nucleus
 
 void AtomListPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 {
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);
 	auto Array = Polymorph.Array(TypeInfo.Tag);
 	for (auto &Atom : Data)
 		{ Atom->Atom->Serialize(Array.Polymorph()); }
@@ -344,7 +388,7 @@ void AtomListPartT::Refresh(void)
 	}
 }
 
-void AtomListPartT::Add(size_t Position, NucleusT *Nucleus)
+void AtomListPartT::Add(size_t Position, NucleusT *Nucleus, bool ShouldFocus)
 {
 	Data.emplace(Data.begin() + Position, new ItemT{{Core.RootVisual.Root}, {Core.RootVisual.Root}, {Core.RootVisual.Root}, {Core}});
 	Data[Position]->PrefixVisual.SetClass("affix-inner");
@@ -355,6 +399,12 @@ void AtomListPartT::Add(size_t Position, NucleusT *Nucleus)
 		FlagRefresh();
 	};
 	Data[Position]->Atom.Set(Nucleus);
+	
+	if (ShouldFocus)
+	{
+		FocusIndex = Position;
+		Data[Position]->Atom->Focus(FocusDirectionT::FromBehind);
+	}
 }
 
 void AtomListPartT::Remove(size_t Position)
@@ -362,7 +412,6 @@ void AtomListPartT::Remove(size_t Position)
 	Assert(Position < Data.size());
 	Data.erase(Data.begin() + Position);
 }
-
 
 AtomListPartT::AddRemoveT::AddRemoveT(AtomListPartT &Base, bool Add, size_t Position, NucleusT *Nucleus) : Base(Base), Add(Add), Position(Position), Nucleus(Base.Core, Nucleus) { }
 
@@ -372,7 +421,7 @@ std::unique_ptr<ActionT> AtomListPartT::AddRemoveT::Apply(void)
 	if (Add) 
 	{
 		Out.reset(new AddRemoveT(Base, false, Position, nullptr));
-		Base.Add(Position, Nucleus.Nucleus);
+		Base.Add(Position, Nucleus.Nucleus, true);
 	}
 	else 
 	{
@@ -458,7 +507,12 @@ StringPartT::StringPartT(CoreT &Core, StringPartTypeT &TypeInfo) : NucleusT(Core
 }
 
 void StringPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
-	{ Polymorph.String(TypeInfo.Tag, Data); }
+{ 
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);
+	Polymorph.String(TypeInfo.Tag, Data); 
+}
 
 AtomTypeT const &StringPartT::GetTypeInfo(void) const { return TypeInfo; }
 
@@ -583,17 +637,17 @@ OptionalT<std::unique_ptr<ActionT>> StringPartT::HandleInput(InputT const &Input
 			case InputT::MainT::TextBackspace:
 			{
 				if (Position == 0) return {};
-				Data.erase(Position - 1, 1);
-				Position -= 1;
-				FlagRefresh();
-				return {};
+				auto NewData = Data;
+				NewData.erase(Position - 1, 1);
+				auto NewPosition = Position - 1;
+				return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, NewData));
 			}
 			case InputT::MainT::Delete:
 			{
 				if (Position == Data.size()) return {};
-				Data.erase(Position, 1);
-				FlagRefresh();
-				return {};
+				auto NewData = Data;
+				NewData.erase(Position, 1);
+				return std::unique_ptr<ActionT>(new SetT(*this, Position, NewData));
 			}
 			default: break;
 		}
@@ -616,6 +670,9 @@ EnumPartT::EnumPartT(CoreT &Core, EnumPartTypeT &TypeInfo) : NucleusT(Core), Typ
 
 void EnumPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 { 
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);
 	if (Index >= TypeInfo.Values.size())
 	{
 		Assert(false);

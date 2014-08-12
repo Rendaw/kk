@@ -7,92 +7,14 @@
 namespace Core
 {
 
-NucleusT *HoldPartTypeT::Generate(CoreT &Core)
-{
-	return new HoldPartT(Core, *this);
-}
-
-HoldPartT::HoldPartT(CoreT &Core, HoldPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Data(Core)
-{
-	Visual.SetClass("part");
-	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
-	PrefixVisual.SetClass("affix-inner");
-	SuffixVisual.SetClass("affix-inner");
-}
-
-void HoldPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
-{
-	if (!Data) return;
-	Data->Serialize(Polymorph.Polymorph(TypeInfo.Tag)); 
-}
-
-AtomTypeT const &HoldPartT::GetTypeInfo(void) const { return TypeInfo; }
-
-void HoldPartT::Focus(FocusDirectionT Direction) 
-{ 
-	if (Data) Data->Focus(Direction); 
-	else
-	{
-		switch (Direction)
-		{
-			case FocusDirectionT::FromBehind:
-			case FocusDirectionT::Direct: 
-				Parent->FocusNext();
-				return;
-			case FocusDirectionT::FromAhead: 
-				Parent->FocusPrevious();
-				return;
-		}
-	}
-}
-
-void HoldPartT::Defocus(void) {}
-
-void HoldPartT::AssumeFocus(void) 
-{ 
-	if (Data) Data->AssumeFocus(); 
-	else Assert(false);
-}
-
-void HoldPartT::Refresh(void) 
-{
-	if (TypeInfo.DisplayPrefix) 
-	{
-		PrefixVisual.Start();
-		PrefixVisual.Add(*TypeInfo.DisplayPrefix);
-	}
-	if (TypeInfo.DisplaySuffix) 
-	{
-		SuffixVisual.Start();
-		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
-	}
-	
-	Visual.Start();
-	if (Data)
-	{
-		auto Protoatom = AsProtoatom(Data);
-		Assert(!Protoatom);
-	}
-	Visual.Add(PrefixVisual);
-	if (Data) Visual.Add(Data->Visual);
-	Visual.Add(SuffixVisual);
-}
-
-void HoldPartT::SetHold(NucleusT *Nucleus) { Data.Set(Nucleus); }
-
-OptionalT<std::unique_ptr<ActionT>> HoldPartT::HandleInput(InputT const &Input) { return Data->HandleInput(Input); }
-
-void HoldPartT::FocusPrevious(void) { Parent->FocusPrevious(); }
-
-void HoldPartT::FocusNext(void) { Parent->FocusNext(); }
-
 ProtoatomTypeT::ProtoatomTypeT(void)
 {
 	Tag = "Protoatom";
 	{
-		auto Part = new HoldPartTypeT(*this);
+		auto Part = new AtomPartTypeT(*this);
 		Part->Tag = "Lifted";
 		//Part->SetDefault = true; // Unnecessary, since protoatom is only added explictly (no generic bubling sets or whatnot)
+		Part->StartEmpty = true;
 		Parts.emplace_back(Part);
 	}
 	{
@@ -114,11 +36,14 @@ ProtoatomPartT::ProtoatomPartT(CoreT &Core, ProtoatomPartTypeT &TypeInfo) : Nucl
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
 }
 
-void ProtoatomPartT::Serialize(Serial::WritePolymorphT &WritePolymorph) const
+void ProtoatomPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 {
-	if (IsIdentifier) WritePolymorph.Bool("IsIdentifier", *IsIdentifier);
-	WritePolymorph.String("Data", Data);
-	WritePolymorph.UInt("Position", Position);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);
+	if (IsIdentifier) Polymorph.Bool("IsIdentifier", *IsIdentifier);
+	Polymorph.String("Data", Data);
+	Polymorph.UInt("Position", Position);
 }
 
 AtomTypeT const &ProtoatomPartT::GetTypeInfo(void) const { return TypeInfo; }
@@ -168,6 +93,35 @@ void ProtoatomPartT::Refresh(void)
 
 OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::HandleInput(InputT const &Input)
 {
+	struct SetT : ActionT
+	{
+		ProtoatomPartT &Base;
+		unsigned int Position;
+		std::string Data;
+		
+		SetT(ProtoatomPartT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) {}
+		
+		std::unique_ptr<ActionT> Apply(void)
+		{
+			auto Out = new SetT(Base, Base.Position, Base.Data);
+			Base.Data = Data;
+			Base.Position = Position;
+			if (Data.empty()) Base.IsIdentifier.Unset();
+			Base.FlagRefresh();
+			return std::unique_ptr<ActionT>(Out);
+		}
+		
+		bool Combine(std::unique_ptr<ActionT> &Other) override
+		{
+			auto Set = dynamic_cast<SetT *>(Other.get());
+			if (!Set) return false;
+			if (&Set->Base != &Base) return false;
+			Position = Set->Position;
+			Data = Set->Data;
+			return true;
+		}
+	};
+	
 	if (Input.Text)
 	{
 		auto Text = *Input.Text;
@@ -175,9 +129,16 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::HandleInput(InputT const &In
 		static auto IdentifierClass = Regex::ParserT<>("[a-zA-Z0-9_]");
 		auto NewIsIdentifier = IdentifierClass(Text);
 		
-		if (Text == " ") return Finish({}, {}, {});
-		else if (Text == "\n") return Finish({}, {}, InputT{InputT::MainT::NewStatement, {}});
-		else if (Text == ";") return Finish({}, {}, InputT{InputT::MainT::NewStatement, {}});
+		if (Text == " ") return Finish({}, Data);
+		else if ((Text == "\n") || (Text == ";")) 
+		{
+			auto Actions = new ActionGroupT;
+			auto Finished = Finish({}, Data);
+			if (Finished) Actions->Add(std::move(*Finished));
+			auto InputResult = Parent->HandleInput(InputT{InputT::MainT::NewStatement, {}});
+			if (InputResult) Actions->Add(std::move(*InputResult));
+			return std::unique_ptr<ActionT>(Actions);
+		}
 		else if (!IsIdentifier || (*IsIdentifier == NewIsIdentifier))
 		{
 			if (!IsIdentifier) IsIdentifier = NewIsIdentifier;
@@ -188,41 +149,19 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::HandleInput(InputT const &In
 			{
 				auto Found = Core.LookUpAtom(NewData);
 				if (Found && Found->ReplaceImmediately) 
-					return Finish(Found, NewData, {});
+					return Finish(Found, NewData);
 			}
-
-			struct SetT : ActionT
-			{
-				ProtoatomPartT &Base;
-				unsigned int Position;
-				std::string Data;
-				
-				SetT(ProtoatomPartT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) {}
-				
-				std::unique_ptr<ActionT> Apply(void)
-				{
-					auto Out = new SetT(Base, Base.Position, Base.Data);
-					Base.Data = Data;
-					Base.Position = Position;
-					Base.FlagRefresh();
-					return std::unique_ptr<ActionT>(Out);
-				}
-				
-				bool Combine(std::unique_ptr<ActionT> &Other) override
-				{
-					auto Set = dynamic_cast<SetT *>(Other.get());
-					if (!Set) return false;
-					if (&Set->Base != &Base) return false;
-					Position = Set->Position;
-					Data = Set->Data;
-					return true;
-				}
-			};
-			return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, Data + Text));
+			return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, NewData));
 		}
 		else if (IsIdentifier && (*IsIdentifier != NewIsIdentifier))
 		{
-			return Finish({}, {}, {Input});
+			Assert(!Data.empty());
+			auto Finished = Finish({}, Data);
+			Assert(Finished);
+			auto ActionGroup = new ActionGroupT();
+			ActionGroup->Add(std::move(*Finished));
+			ActionGroup->Add(Core.ActionHandleInput(Input));
+			return std::unique_ptr<ActionT>(ActionGroup);
 		}
 	}
 	else if (Input.Main)
@@ -256,53 +195,47 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::HandleInput(InputT const &In
 			case InputT::MainT::TextBackspace:
 			{
 				if (Position == 0) return {};
-				Data.erase(Position - 1, 1);
-				Position -= 1;
-				FlagRefresh();
+				auto NewData = Data;
+				NewData.erase(Position - 1, 1);
+				auto NewPosition = Position - 1;
+				return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, NewData));
 			} return {};
 			case InputT::MainT::Delete:
 			{
 				if (Position == Data.size()) return {};
-				Data.erase(Position, 1);
-				FlagRefresh();
+				auto NewData = Data;
+				NewData.erase(Position, 1);
+				return std::unique_ptr<ActionT>(new SetT(*this, Position, NewData));
 			} return {};
 			default: break;
 		}
 	}
 	
-	if (Parent)
+	auto Result = Parent->HandleInput(Input);
+	if (Result)
 	{
-		auto Result = Parent->HandleInput(Input);
-		if (Result)
+		auto FinishResult = Finish({}, Data);
+		if (FinishResult) 
 		{
 			auto ActionGroup = new ActionGroupT;
-			auto FinishResult = Finish({}, {}, {});
-			if (FinishResult) ActionGroup->Add(std::move(*FinishResult));
+			ActionGroup->Add(std::move(*FinishResult));
 			ActionGroup->Add(std::move(*Result));
 			return std::unique_ptr<ActionT>(ActionGroup);
 		}
+		else return std::move(Result);
 	}
 
 	return {};
 }
 
-OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(
-	OptionalT<AtomTypeT *> Type, 
-	OptionalT<std::string> NewData, 
-	OptionalT<InputT> SeedData)
+OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT *> Type, std::string Text)
 {
 	Assert(Parent->Atom);
-	auto &Lifted = Parent->As<CompositeT>()->Parts[0]->As<HoldPartT>()->Data;
-	std::string Text = NewData ? *NewData : Data;
+	auto &Lifted = Parent->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Data;
 	Type = Type ? Type : Core.LookUpAtom(Data);
 	auto Actions = new ActionGroupT;
-	if (Data.empty())
+	if (Type)
 	{
-		if (SeedData) Actions->Add(Core.ActionHandleInput(*SeedData));
-	}
-	else if (Type)
-	{
-		Assert(!SeedData);
 		if (((*Type)->Arity == ArityT::Nullary) || (*Type)->Prefix)
 		{
 			if (Lifted)
@@ -361,19 +294,18 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(
 		auto ParentAsComposite = PartParent()->As<CompositeT>();
 		if (ParentAsComposite && (&ParentAsComposite->TypeInfo == Core.ElementType.get()))
 		{
-			Protoatom->As<CompositeT>()->Parts[0]->As<HoldPartT>()->SetHold(String);
+			Actions->Add(Protoatom->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Set(String));
 		}
 		else
 		{
 			auto Element = Core.ElementType->Generate(Core);
 			Actions->Add(Element->As<CompositeT>()->Parts[1]->Set(String));
-			Protoatom->As<CompositeT>()->Parts[0]->As<HoldPartT>()->SetHold(Element);
+			Actions->Add(Protoatom->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Set(Element));
 		}
 
 		std::cout << Core.Dump() << std::endl; // DEBUG
 		Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*PartParent()->Atom, Protoatom)));
 
-		if (SeedData) Actions->Add(Core.ActionHandleInput(*SeedData));
 		std::cout << "Standard no-type finish." << std::endl;
 	}
 
@@ -382,7 +314,7 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(
 
 bool ProtoatomPartT::IsEmpty(void) const
 {
-	auto &Lifted = Parent->As<CompositeT>()->Parts[0]->As<HoldPartT>()->Data;
+	auto &Lifted = Parent->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Data;
 	return Data.empty() && !Lifted && !Focused;
 }
 
