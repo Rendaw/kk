@@ -46,11 +46,33 @@ inline std::ostream &operator <<(std::ostream &Stream, StringT const &Value)
 	{ return Stream << (std::string)Value; }
 
 //----------------------------------------------------------------------------------------------------------------
+// Unambiguous string display
+inline std::string ClarifyString(std::string const &In)
+{
+	StringT Out;
+	Out << "[";
+	for (auto &Char : In)
+	{
+		Out << std::string(1, Char) << "(" << (int)Char << ")";
+	}
+	Out << "]";
+	return Out;
+}
+
+//----------------------------------------------------------------------------------------------------------------
 // A more informative assert?
 inline void AssertStamp(char const *File, char const *Function, int Line)
         { std::cerr << File << "/" << Function << ":" << Line << " Assertion failed" << std::endl; }
+ 
+template <typename ArgT, typename std::enable_if<!std::is_enum<ArgT>::value>::type * = nullptr>
+	inline std::string AssertString(ArgT const &Arg)
+	{ return StringT() << Arg; }
+	
+template <typename ArgT, typename std::enable_if<std::is_enum<ArgT>::value>::type * = nullptr> 
+	inline std::string AssertString(ArgT const &Arg)
+	{ return StringT() << static_cast<typename std::underlying_type<ArgT>::type>(Arg); }
 
-template <typename Type> inline void AssertImplementation(char const *File, char const *Function, int Line, char const *ValueString, Type const &Value)
+template <typename Type> inline bool AssertImplementation(char const *File, char const *Function, int Line, char const *ValueString, Type const &Value)
 {
 #ifndef NDEBUG
 	if (!Value)
@@ -60,35 +82,38 @@ template <typename Type> inline void AssertImplementation(char const *File, char
 		throw false;
 	}
 #endif
+	return !!Value;
 }
 
-template <typename GotType, typename ExpectedType> inline void AssertImplementationE(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
+template <typename GotType, typename ExpectedType> inline bool AssertImplementationE(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
 {
 #ifndef NDEBUG
 	bool Result = Got == Expected;
 	if (!Result)
 	{
 		AssertStamp(File, Function, Line);
-		std::cerr << "Got (" << GotString << ") '" << Got << "' == expected (" << ExpectedString << ") '" << Expected << "'" << std::endl;
+		std::cerr << "Got (" << GotString << ") '" << Got << "' == expected (" << ExpectedString << ") '" << AssertString(Expected) << "'" << std::endl;
 		throw false;
 	}
 #endif
+	return Result;
 }
 
-template <typename GotType, typename ExpectedType> inline void AssertImplementationNE(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
+template <typename GotType, typename ExpectedType> inline bool AssertImplementationNE(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
 {
 #ifndef NDEBUG
 	bool Result = Got != Expected;
 	if (!Result)
 	{
 		AssertStamp(File, Function, Line);
-		std::cerr << "Got (" << GotString << ") '" << Got << "' != expected (" << ExpectedString << ") '" << Expected << "'" << std::endl;
+		std::cerr << "Got (" << GotString << ") '" << AssertString(Got) << "' != expected (" << ExpectedString << ") '" << AssertString(Expected) << "'" << std::endl;
 		throw false;
 	}
 #endif
+	return Result;
 }
 
-template <typename GotType, typename ExpectedType> inline void AssertImplementationLT(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
+template <typename GotType, typename ExpectedType> inline bool AssertImplementationLT(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
 {
 #ifndef NDEBUG
 	bool Result = Got < Expected;
@@ -99,9 +124,10 @@ template <typename GotType, typename ExpectedType> inline void AssertImplementat
 		throw false;
 	}
 #endif
+	return Result;
 }
 
-template <typename GotType, typename ExpectedType> inline void AssertImplementationLTE(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
+template <typename GotType, typename ExpectedType> inline bool AssertImplementationLTE(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
 {
 #ifndef NDEBUG
 	bool Result = Got <= Expected;
@@ -112,8 +138,9 @@ template <typename GotType, typename ExpectedType> inline void AssertImplementat
 		throw false;
 	}
 #endif
+	return Result;
 }
-template <typename GotType, typename ExpectedType> inline void AssertImplementationGT(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
+template <typename GotType, typename ExpectedType> inline bool AssertImplementationGT(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
 {
 #ifndef NDEBUG
 	bool Result = Got > Expected;
@@ -124,8 +151,9 @@ template <typename GotType, typename ExpectedType> inline void AssertImplementat
 		throw false;
 	}
 #endif
+	return Result;
 }
-template <typename GotType, typename ExpectedType> inline void AssertImplementationGTE(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
+template <typename GotType, typename ExpectedType> inline bool AssertImplementationGTE(char const *File, char const *Function, int Line, char const *GotString, GotType const &Got, char const *ExpectedString, ExpectedType const &Expected)
 {
 #ifndef NDEBUG
 	bool Result = Got >= Expected;
@@ -136,8 +164,9 @@ template <typename GotType, typename ExpectedType> inline void AssertImplementat
 		throw false;
 	}
 #endif
+	return Result;
 }
-template <typename Got1Type, typename Got2Type> inline void AssertImplementationOr(char const *File, char const *Function, int Line, char const *Got1String, Got1Type const &Got1, char const *Got2String, Got2Type const &Got2)
+template <typename Got1Type, typename Got2Type> inline bool AssertImplementationOr(char const *File, char const *Function, int Line, char const *Got1String, Got1Type const &Got1, char const *Got2String, Got2Type const &Got2)
 {
 #ifndef NDEBUG
 	bool Result = Got1 || Got2;
@@ -148,6 +177,7 @@ template <typename Got1Type, typename Got2Type> inline void AssertImplementation
 		throw false;
 	}
 #endif
+	return Result;
 }
 
 #define Assert(Arg1) AssertImplementation(__FILE__, __FUNCTION__, __LINE__, #Arg1, Arg1)

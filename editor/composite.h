@@ -20,9 +20,9 @@ struct CompositeT : NucleusT
 	bool EffectivelyVertical;
 
 	std::vector<AtomT> Parts;
-
+	
 	CompositeT(CoreT &Core, CompositeTypeT &TypeInfo);
-
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;
@@ -34,6 +34,8 @@ struct CompositeT : NucleusT
 	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
+	
+	bool FocusDefault(void);
 };
 
 struct CompositeTypePartT;
@@ -41,9 +43,10 @@ struct CompositeTypePartT;
 struct CompositeTypeT : AtomTypeT
 {
 	// Configurable
-	bool SpatiallyVertical = false;
 	OptionalT<std::string> DisplayPrefix, DisplayInfix, DisplaySuffix;
 
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object);
+	void Serialize(Serial::WriteObjectT &Object) const override;
 	NucleusT *Generate(CoreT &Core) override;
 
 	std::vector<std::unique_ptr<CompositeTypePartT>> Parts;
@@ -61,6 +64,9 @@ struct CompositeTypePartT : AtomTypeT
 	OptionalT<std::string> DisplayPrefix, DisplaySuffix;
 
 	CompositeTypePartT(CompositeTypeT &Parent);
+	virtual Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object);
+	virtual void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const = 0;
+	void Serialize(Serial::WriteObjectT &Object) const override;
 };
 
 struct AtomPartTypeT : CompositeTypePartT
@@ -68,6 +74,9 @@ struct AtomPartTypeT : CompositeTypePartT
 	bool StartEmpty = false;
 	
 	using CompositeTypePartT::CompositeTypePartT;
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
+	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
+	void Serialize(Serial::WriteObjectT &Object) const override;
 	NucleusT *Generate(CoreT &Core) override;
 };
 struct AtomPartT : NucleusT
@@ -75,10 +84,12 @@ struct AtomPartT : NucleusT
 	AtomPartTypeT &TypeInfo;
 	VisualT PrefixVisual, SuffixVisual;
 	
+	bool EffectivelyVertical;
+	
 	AtomT Data;
 
 	AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo);
-
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;
@@ -94,6 +105,8 @@ struct AtomPartT : NucleusT
 struct AtomListPartTypeT : CompositeTypePartT
 {
 	using CompositeTypePartT::CompositeTypePartT;
+	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
+	using CompositeTypePartT::Serialize; // Is this funny?
 	NucleusT *Generate(CoreT &Core) override;
 };
 struct AtomListPartT : NucleusT
@@ -101,6 +114,8 @@ struct AtomListPartT : NucleusT
 	AtomListPartTypeT &TypeInfo;
 
 	size_t FocusIndex;
+	
+	bool EffectivelyVertical;
 
 	struct ItemT
 	{
@@ -111,7 +126,7 @@ struct AtomListPartT : NucleusT
 	std::vector<std::unique_ptr<ItemT>> Data;
 
 	AtomListPartT(CoreT &Core, AtomListPartTypeT &TypeInfo);
-
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;
@@ -144,18 +159,25 @@ struct AtomListPartT : NucleusT
 struct StringPartTypeT : CompositeTypePartT
 {
 	using CompositeTypePartT::CompositeTypePartT;
+	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
+	using CompositeTypePartT::Serialize; // Is this funny?
 	NucleusT *Generate(CoreT &Core) override;
 };
 struct StringPartT : NucleusT
 {
 	StringPartTypeT &TypeInfo;
 	VisualT PrefixVisual, SuffixVisual;
-	bool Focused;
+	enum struct FocusedT
+	{
+		Off,
+		On,
+		Text
+	} Focused;
 	size_t Position;
 	std::string Data;
 
 	StringPartT(CoreT &Core, StringPartTypeT &TypeInfo);
-
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;
@@ -185,8 +207,12 @@ struct StringPartT : NucleusT
 struct EnumPartTypeT : CompositeTypePartT
 {
 	std::vector<std::string> Values;
+	std::map<std::string, size_t> ValueLookup;
 	
 	using CompositeTypePartT::CompositeTypePartT;
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
+	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
+	void Serialize(Serial::WriteObjectT &Object) const override;
 	NucleusT *Generate(CoreT &Core) override;
 };
 struct EnumPartT : NucleusT
@@ -197,7 +223,7 @@ struct EnumPartT : NucleusT
 	size_t Index;
 
 	EnumPartT(CoreT &Core, EnumPartTypeT &TypeInfo);
-	
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;

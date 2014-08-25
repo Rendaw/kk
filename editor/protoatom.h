@@ -15,6 +15,8 @@ struct ProtoatomTypeT : CompositeTypeT
 struct ProtoatomPartTypeT : CompositeTypePartT
 {
 	using CompositeTypePartT::CompositeTypePartT;
+	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
+	using CompositeTypePartT::Serialize; // Is this funny?
 	NucleusT *Generate(CoreT &Core) override;
 };
 struct ProtoatomPartT : NucleusT
@@ -23,13 +25,18 @@ struct ProtoatomPartT : NucleusT
 	
 	OptionalT<bool> IsIdentifier;
 	std::string Data;
-	bool Focused;
+	enum struct FocusedT
+	{
+		Off,
+		On,
+		Text
+	} Focused = FocusedT::Off;
 	size_t Position = 0;
 
 	std::vector<HoldT> FocusDependents;
 
 	ProtoatomPartT(CoreT &Core, ProtoatomPartTypeT &TypeInfo);
-	
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;

@@ -11,7 +11,7 @@ static char const BinaryPrefix[] = "alpha16:";
 static std::vector<char> ToString(std::string const &In)
 {
 	std::vector<char> Out;
-	Out.resize(5 + In.length());
+	Out.resize(sizeof(StringPrefix) - 1 + In.length());
 	memcpy(&Out[0], StringPrefix, sizeof(StringPrefix) - 1);
 	memcpy(&Out[sizeof(StringPrefix) - 1], In.c_str(), In.length());
 	return Out;
@@ -20,7 +20,7 @@ static std::vector<char> ToString(std::string const &In)
 static std::vector<char> ToBinary(uint8_t const *Bytes, size_t const Length)
 {
 	std::vector<char> Out;
-	Out.resize(5 + Length * 2);
+	Out.resize(sizeof(BinaryPrefix) - 1 + Length * 2);
 	memcpy(&Out[0], BinaryPrefix, sizeof(BinaryPrefix) - 1);
 	for (size_t Index = 0; Index < Length; ++Index)
 	{
@@ -53,138 +53,154 @@ namespace Serial
 //================================================================================================================
 // Writing
 
+WriteCoreT::WriteCoreT(yajl_gen Base) : Base(Base) {}
+
+WriteCoreT::~WriteCoreT(void) {}
+
 //----------------------------------------------------------------------------------------------------------------
 // Array writer
-WriteArrayT::WriteArrayT(WriteArrayT &&Other) : Base(Other.Base) { Other.Base = nullptr; }
+struct WriteArrayCoreT : WriteCoreT
+{
+	WriteArrayCoreT(yajl_gen Base) : WriteCoreT(Base) { Assert(Base); yajl_gen_array_open(Base); }
+	~WriteArrayCoreT(void) { yajl_gen_array_close(Base); }
+};
 
-WriteArrayT::~WriteArrayT(void) { if (Base) yajl_gen_array_close(Base); }
+WriteArrayT::WriteArrayT(WriteArrayT &&Other) : ParentCore(Other.ParentCore), Core(Other.Core)
+{ 
+	Other.Core = nullptr;
+	Other.ParentCore = nullptr;
+}
 
-void WriteArrayT::Bool(bool const &Value) { Assert(Base); if (Base) yajl_gen_bool(Base, Value); }
+void WriteArrayT::Bool(bool const &Value) { Assert(Core->Base); if (Core->Base) yajl_gen_bool(Core->Base, Value); }
 
-void WriteArrayT::Int(int64_t const &Value) { Assert(Base); if (Base) yajl_gen_integer(Base, Value); }
+void WriteArrayT::Int(int64_t const &Value) { Assert(Core->Base); if (Core->Base) yajl_gen_integer(Core->Base, Value); }
 
-void WriteArrayT::UInt(uint64_t const &Value) { Assert(Base); if (Base) yajl_gen_integer(Base, Value); }
+void WriteArrayT::UInt(uint64_t const &Value) { Assert(Core->Base); if (Core->Base) yajl_gen_integer(Core->Base, Value); }
 
-void WriteArrayT::Float(float const &Value) { Assert(Base); if (Base) yajl_gen_double(Base, Value); }
+void WriteArrayT::Float(float const &Value) { Assert(Core->Base); if (Core->Base) yajl_gen_double(Core->Base, Value); }
 
 void WriteArrayT::String(std::string const &Value) 
 {
-	Assert(Base); 
-	if (Base) 
+	Assert(Core->Base); 
+	if (Core->Base) 
 	{
 		auto Temp = ToString(Value);
-		yajl_gen_string(Base, reinterpret_cast<unsigned char *>(&Temp[0]), Temp.size()); 
+		yajl_gen_string(Core->Base, reinterpret_cast<unsigned char *>(&Temp[0]), Temp.size()); 
 	}
 }
 
 void WriteArrayT::Binary(uint8_t const *Bytes, size_t const Length) 
 {
-	Assert(Base); 
-	if (Base) 
+	Assert(Core->Base); 
+	if (Core->Base) 
 	{
 		auto Temp = ToBinary(Bytes, Length);
-		yajl_gen_string(Base, reinterpret_cast<unsigned char *>(&Temp[0]), Temp.size()); 
+		yajl_gen_string(Core->Base, reinterpret_cast<unsigned char *>(&Temp[0]), Temp.size()); 
 	}
 }
 
-WriteObjectT WriteArrayT::Object(void) { return WriteObjectT(Base); }
+WriteObjectT WriteArrayT::Object(void) { return WriteObjectT(Core); }
 
-WriteArrayT WriteArrayT::Array(void) { return WriteArrayT(Base); }
+WriteArrayT WriteArrayT::Array(void) { return WriteArrayT(Core); }
 		
-WritePrepolymorphT WriteArrayT::Polymorph(void) { return WritePrepolymorphT(Base); }
+WritePrepolymorphT WriteArrayT::Polymorph(void) { return WritePrepolymorphT(Core); }
 
-WriteArrayT::WriteArrayT(yajl_gen Base) : Base(Base) { Assert(Base); if (Base) yajl_gen_array_open(Base); }
+WriteArrayT::WriteArrayT(std::shared_ptr<WriteCoreT> ParentCore) : ParentCore(ParentCore), Core(std::make_shared<WriteArrayCoreT>(ParentCore->Base)) {}
 
 //----------------------------------------------------------------------------------------------------------------
 // Object writer
-WriteObjectT::WriteObjectT(WriteObjectT &&Other) : Base(Other.Base) { Other.Base = nullptr; }
+struct WriteObjectCoreT : WriteCoreT
+{
+	WriteObjectCoreT(yajl_gen Base) : WriteCoreT(Base) { yajl_gen_map_open(Base); }
+	~WriteObjectCoreT(void) { yajl_gen_map_close(Base); }
+};
 
-WriteObjectT::~WriteObjectT(void) { if (Base) yajl_gen_map_close(Base); }
+WriteObjectT::WriteObjectT(WriteObjectT &&Other) : ParentCore(Other.ParentCore), Core(Other.Core) { Other.ParentCore = nullptr; Other.Core = nullptr; }
 
 void WriteObjectT::Bool(std::string const &Key, bool const &Value) 
 { 
-	if (Base) 
+	if (Core->Base) 
 	{
-		yajl_gen_string(Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
-		yajl_gen_bool(Base, Value); 
+		yajl_gen_string(Core->Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
+		yajl_gen_bool(Core->Base, Value); 
 	} 
 	else Assert(false);
 }
 
 void WriteObjectT::Int(std::string const &Key, int64_t const &Value)
 { 
-	if (Base) 
+	if (Core->Base) 
 	{
-		yajl_gen_string(Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
-		yajl_gen_integer(Base, Value); 
+		yajl_gen_string(Core->Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
+		yajl_gen_integer(Core->Base, Value); 
 	} 
 	else Assert(false);
 }
 
 void WriteObjectT::UInt(std::string const &Key, uint64_t const &Value)
 { 
-	if (Base) 
+	if (Core->Base) 
 	{
-		yajl_gen_string(Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
-		yajl_gen_integer(Base, Value); 
+		yajl_gen_string(Core->Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
+		yajl_gen_integer(Core->Base, Value); 
 	} 
 	else Assert(false);
 }
 
 void WriteObjectT::Float(std::string const &Key, float const &Value)
 { 
-	if (Base) 
+	if (Core->Base) 
 	{
-		yajl_gen_string(Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
-		yajl_gen_double(Base, Value); 
+		yajl_gen_string(Core->Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
+		yajl_gen_double(Core->Base, Value); 
 	} 
 	else Assert(false);
 }
 
 void WriteObjectT::String(std::string const &Key, std::string const &Value) 
 { 
-	if (Base) 
+	if (Core->Base) 
 	{
-		yajl_gen_string(Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
+		yajl_gen_string(Core->Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
 		auto Temp = ToString(Value);
-		yajl_gen_string(Base, reinterpret_cast<unsigned char *>(&Temp[0]), Temp.size()); 
+		yajl_gen_string(Core->Base, reinterpret_cast<unsigned char *>(&Temp[0]), Temp.size()); 
 	} 
 	else Assert(false);
 }
 
 void WriteObjectT::Binary(std::string const &Key, uint8_t const *Bytes, size_t const Length) 
 { 
-	if (Base) 
+	if (Core->Base) 
 	{
-		yajl_gen_string(Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
+		yajl_gen_string(Core->Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
 		auto Temp = ToBinary(Bytes, Length);
-		yajl_gen_string(Base, reinterpret_cast<unsigned char *>(&Temp[0]), Temp.size()); 
+		yajl_gen_string(Core->Base, reinterpret_cast<unsigned char *>(&Temp[0]), Temp.size()); 
 	} 
 	else Assert(false);
 }
 
 WriteObjectT WriteObjectT::Object(std::string const &Key)
 { 
-	if (Base) yajl_gen_string(Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
+	if (Core->Base) yajl_gen_string(Core->Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
 	else Assert(false);
-	return WriteObjectT(Base);
+	return WriteObjectT(Core);
 }
 
 WriteArrayT WriteObjectT::Array(std::string const &Key)
 { 
-	if (Base) yajl_gen_string(Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
+	if (Core->Base) yajl_gen_string(Core->Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
 	else Assert(false);
-	return WriteArrayT(Base);
+	return WriteArrayT(Core);
 }
 
 WritePrepolymorphT WriteObjectT::Polymorph(std::string const &Key) 
 { 
-	if (Base) yajl_gen_string(Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
+	if (Core->Base) yajl_gen_string(Core->Base, reinterpret_cast<unsigned char const *>(Key.c_str()), Key.length());
 	else Assert(false);
-	return WritePrepolymorphT(Base); 
+	return WritePrepolymorphT(Core); 
 }
 
-WriteObjectT::WriteObjectT(yajl_gen Base) : Base(Base) { Assert(Base); if (Base) yajl_gen_map_open(Base); }
+WriteObjectT::WriteObjectT(std::shared_ptr<WriteCoreT> ParentCore) : ParentCore(ParentCore), Core(std::make_shared<WriteObjectCoreT>(ParentCore->Base)) {}
 	
 //----------------------------------------------------------------------------------------------------------------
 // Polymorph writer
@@ -208,40 +224,109 @@ WritePolymorphT::WritePolymorphT(WritePolymorphT &&Other) :
 
 //----------------------------------------------------------------------------------------------------------------
 // Writing start point
-WriteT::WriteT(void) : Base(yajl_gen_alloc(nullptr))
+struct TopWriteCoreT : WriteCoreT
 {
-	yajl_gen_config(Base, yajl_gen_beautify, 1);
-}
+	TopWriteCoreT(void) : WriteCoreT(yajl_gen_alloc(nullptr)) { }
+	~TopWriteCoreT(void) { yajl_gen_free(Base); }
+};
 
-WriteT::~WriteT(void)
+WriteT::WriteT(void) : Core(std::make_shared<TopWriteCoreT>())
 {
-	yajl_gen_free(Base);
-	Base = nullptr;
+	yajl_gen_config(Core->Base, yajl_gen_beautify, 1);
 }
 
 WriteObjectT WriteT::Object(void)
 {
-	return WriteObjectT(Base);
+	return WriteObjectT(Core);
 }
 
 std::string WriteT::Dump(void)
 {
+	Assert(Core);
+	if (!Core) return {};
 	unsigned char const *YAJLBuffer;
 	size_t YAJLBufferLength;
-	yajl_gen_get_buf(Base, &YAJLBuffer, &YAJLBufferLength);
+	yajl_gen_get_buf(Core->Base, &YAJLBuffer, &YAJLBufferLength);
 	std::string Out(reinterpret_cast<char const *>(YAJLBuffer), YAJLBufferLength);
-	yajl_gen_clear(Base);
+	yajl_gen_clear(Core->Base);
 	return Out;
 }
 
 //================================================================================================================
 // Reading
 
+static ReadErrorT ReadNumber(ReadCallbackVariantT &Callback, std::string const &Source, bool Strict = false)
+{
+	// TODO handle scientific/eX notation somehow?
+	if (Callback.Is<IntCallbackT>())
+	{
+		int64_t Value;
+		if (!(StringT(Source) >> Value)) 
+			return (StringT() << "Unable to convert to integer \'" << Source << "\'.").str();
+		return Callback.Get<IntCallbackT>()(Value);
+	}
+	else if (Callback.Is<UIntCallbackT>())
+	{
+		uint64_t Value;
+		if (!(StringT(Source) >> Value)) 
+			return (StringT() << "Unable to convert to unsigned integer \'" << Source << "\'.").str();
+		return Callback.Get<UIntCallbackT>()(Value);
+	}
+	else if (Callback.Is<FloatCallbackT>())
+	{
+		float Value;
+		if (!(StringT(Source) >> Value)) 
+			return (StringT() << "Unable to convert to float \'" << Source << "\'.").str();
+		return Callback.Get<FloatCallbackT>()(Value);
+	}
+	else if (Strict) return std::string("Found number in restricted context with no numeric callbacks.");
+	else return {};
+}
+
+ReadErrorT ReadString(ReadCallbackVariantT &Callback, std::string const &Source, bool Strict = false)
+{
+	if (Source.substr(0, sizeof(StringPrefix) - 1) == StringPrefix)
+	{
+		if (Callback.Is<StringCallbackT>()) 
+			return Callback.Get<StringCallbackT>()(Source.substr(sizeof(StringPrefix) - 1));
+		else if (Callback.Is<InternalPolymorphCallbackT>())
+			return Callback.Get<InternalPolymorphCallbackT>().StringCallback(Source.substr(sizeof(StringPrefix) - 1));
+		else if (Strict) return std::string("Found string element in a restricted context with no string handler.");
+		else return {};
+	}
+	else if (Source.substr(0, sizeof(BinaryPrefix) - 1) == BinaryPrefix)
+	{
+		if (Callback.Is<BinaryCallbackT>()) 
+			return Callback.Get<BinaryCallbackT>()(FromBinary(Source.substr(sizeof(BinaryPrefix) - 1)));
+		else if (Strict) return std::string("Found binary element in a restricted context with no binary handler.");
+		else return {};
+	}
+	else return (StringT() << "Strings must start with utf8: or binary:, unknown tagged string \'" << Source << "\'").str();
+}
+
+ReadErrorT ReadPolymorph(ReadCallbackVariantT &Callback, ReadArrayT &Array, bool Strict = false)
+{
+	auto Type = std::make_shared<std::string>();
+	Array.InternalPolymorph({
+		[Type](std::string &&String) -> ReadErrorT
+		{
+			if (!Type->empty()) return std::string("Multiple types specified for polymorph.");
+			*Type = std::move(String); 
+			return {};
+		},
+		[Type, &Callback](ReadObjectT &Object) -> ReadErrorT
+		{ 
+			if (Type->empty()) return std::string("No type specified for polymorph.");
+			return Callback.Get<PolymorphCallbackT>()(std::move(*Type), std::ref(Object));
+		}});
+	// TODO detect invalid empty with Destructor?
+	return {};
+}
+
 ReadNestableT::~ReadNestableT(void) {}
 
 //----------------------------------------------------------------------------------------------------------------
 // Nested array reader
-ReadArrayT::~ReadArrayT(void) { if (DestructorCallback) DestructorCallback(); }
 
 void ReadArrayT::Bool(LooseBoolCallbackT const &Callback) { Assert(!this->Callback); this->Callback.Set<BoolCallbackT>(Callback); }
 void ReadArrayT::Int(LooseIntCallbackT const &Callback) { Assert(!this->Callback); this->Callback.Set<IntCallbackT>(Callback); }
@@ -251,65 +336,54 @@ void ReadArrayT::String(LooseStringCallbackT const &Callback) { Assert(!this->Ca
 void ReadArrayT::Binary(LooseBinaryCallbackT const &Callback) { Assert(!this->Callback); this->Callback.Set<BinaryCallbackT>(Callback); }
 void ReadArrayT::Object(LooseObjectCallbackT const &Callback) { Assert(!this->Callback); this->Callback.Set<ObjectCallbackT>(Callback); }
 void ReadArrayT::Array(LooseArrayCallbackT const &Callback) { Assert(!this->Callback); this->Callback.Set<ArrayCallbackT>(Callback); }
+void ReadArrayT::Polymorph(LoosePolymorphCallbackT const &Callback) { Assert(!this->Callback); this->Callback.Set<PolymorphCallbackT>(Callback); }
 
-void ReadArrayT::Destructor(std::function<void(void)> const &Callback) { Assert(!DestructorCallback); DestructorCallback = Callback; }
+void ReadArrayT::Finally(std::function<ReadErrorT(void)> const &Callback) { Assert(!DestructorCallback); DestructorCallback = Callback; }
 
-bool ReadArrayT::Bool(bool Value) 
-	{ if (Callback.Is<BoolCallbackT>()) Callback.Get<BoolCallbackT>()(Value); return true; }
-	
-bool ReadArrayT::Number(std::string const &Source)
-{
-	// TODO handle scientific/eX notation somehow?
-	if (Callback.Is<IntCallbackT>())
-	{
-		int64_t Value;
-		if (!(StringT(Source) >> Value)) return false;
-		Callback.Get<IntCallbackT>()(Value);
-	}
-	else if (Callback.Is<UIntCallbackT>())
-	{
-		uint64_t Value;
-		if (!(StringT(Source) >> Value)) return false;
-		Callback.Get<UIntCallbackT>()(Value);
-	}
-	else if (Callback.Is<FloatCallbackT>())
-	{
-		float Value;
-		if (!(StringT(Source) >> Value)) return false;
-		Callback.Get<FloatCallbackT>()(Value);
-	}
-	return true;
+void ReadArrayT::InternalPolymorph(InternalPolymorphCallbackT const &Callback) { Assert(!this->Callback); this->Callback = Callback; }
+
+ReadErrorT ReadArrayT::Bool(bool Value) 
+{ 
+	if (Callback.Is<BoolCallbackT>()) return Callback.Get<BoolCallbackT>()(Value);
+	else return std::string("Bool element found in array that does not have a bool handler.");
 }
 
-bool ReadArrayT::StringOrBinary(std::string const &Source)
+ReadErrorT ReadArrayT::Number(std::string const &Source)
 {
-	if (Source.substr(0, sizeof(StringPrefix) - 1) == StringPrefix)
-	{
-		if (Callback.Is<StringCallbackT>()) 
-			Callback.Get<StringCallbackT>()(Source.substr(sizeof(StringPrefix) - 1));
-	}
-	else if (Source.substr(0, sizeof(BinaryPrefix) - 1) == BinaryPrefix)
-	{
-		if (Callback.Is<BinaryCallbackT>()) 
-			Callback.Get<BinaryCallbackT>()(FromBinary(Source.substr(sizeof(BinaryPrefix) - 1)));
-	}
-	else return false; // Invalid string notation
-	return true;
+	return ReadNumber(Callback, Source, true);
 }
 
-bool ReadArrayT::Object(ReadObjectT &Object)
-	{ if (Callback.Is<ObjectCallbackT>()) Callback.Get<ObjectCallbackT>()(std::ref(Object)); return true; }
+ReadErrorT ReadArrayT::StringOrBinary(std::string const &Source)
+{
+	return ReadString(Callback, Source, true);
+}
 
-bool ReadArrayT::Key(std::string const &Value)
-	{ return false; } // Keys shouldn't appear in arrays.  Hopefully yajl will catch this first.
+ReadErrorT ReadArrayT::Object(ReadObjectT &Object)
+{ 
+	if (Callback.Is<ObjectCallbackT>()) return Callback.Get<ObjectCallbackT>()(std::ref(Object)); 
+	else if (Callback.Is<InternalPolymorphCallbackT>())
+		return Callback.Get<InternalPolymorphCallbackT>().ObjectCallback(std::ref(Object));
+	else return std::string("Object element found in array that does not have an object handler.");
+}
+
+ReadErrorT ReadArrayT::Key(std::string const &Value)
+	{ return std::string("Keys may not appear in arrays."); } // Hopefully yajl will catch this first?
 	
-bool ReadArrayT::Array(ReadArrayT &Array)
-	{ if (Callback.Is<ArrayCallbackT>()) Callback.Get<ArrayCallbackT>()(std::ref(Array)); return true; }
+ReadErrorT ReadArrayT::Array(ReadArrayT &Array)
+{ 
+	if (Callback.Is<ArrayCallbackT>()) return Callback.Get<ArrayCallbackT>()(std::ref(Array));
+	else if (Callback.Is<PolymorphCallbackT>()) return ReadPolymorph(Callback, Array, true);
+	else return std::string("Array element found in array that does not have an array handler.");
+}
+
+ReadErrorT ReadArrayT::Final(void)
+{
+	if (DestructorCallback) return DestructorCallback();
+	return {};
+}
 
 //----------------------------------------------------------------------------------------------------------------
 // Nested object reader
-ReadObjectT::~ReadObjectT(void) { if (DestructorCallback) DestructorCallback(); }
-
 void ReadObjectT::Bool(std::string const &Key, LooseBoolCallbackT const &Callback) 
 	{ Assert(!Callbacks[Key]); Callbacks[Key].Set<BoolCallbackT>(Callback); }
 void ReadObjectT::Int(std::string const &Key, LooseIntCallbackT const &Callback) 
@@ -326,93 +400,86 @@ void ReadObjectT::Object(std::string const &Key, LooseObjectCallbackT const &Cal
 	{ Assert(!Callbacks[Key]); Callbacks[Key].Set<ObjectCallbackT>(Callback); }
 void ReadObjectT::Array(std::string const &Key, LooseArrayCallbackT const &Callback) 
 	{ Assert(!Callbacks[Key]); Callbacks[Key].Set<ArrayCallbackT>(Callback); }
+void ReadObjectT::Polymorph(std::string const &Key, LoosePolymorphCallbackT const &Callback) 
+	{ Assert(!Callbacks[Key]); Callbacks[Key].Set<PolymorphCallbackT>(Callback); }
 
-void ReadObjectT::Destructor(std::function<void(void)> const &Callback) { Assert(!DestructorCallback); DestructorCallback = Callback; }
+void ReadObjectT::Finally(std::function<ReadErrorT(void)> const &Callback) { Assert(!DestructorCallback); DestructorCallback = Callback; }
 
-bool ReadObjectT::Bool(bool Value) 
+ReadErrorT ReadObjectT::Bool(bool Value) 
 { 
-	if (LastKey.empty()) return false; 
+	if (LastKey.empty()) { return std::string("Value with no key in object."); }
 	auto Callback = Callbacks.find(LastKey);
 	if (Callback != Callbacks.end())
-		Callback->second.Get<BoolCallbackT>()(Value);
+		return Callback->second.Get<BoolCallbackT>()(Value);
 	LastKey.clear();
-	return true;
+	return {};
 }
 	
-bool ReadObjectT::Number(std::string const &Source)
+ReadErrorT ReadObjectT::Number(std::string const &Source)
 { 
-	if (LastKey.empty()) return false; 
+	if (LastKey.empty()) { return std::string("Value with no key in object."); }
 	auto Callback = Callbacks.find(LastKey);
 	LastKey.clear();
-	if (Callback != Callbacks.end())
-	{
-		if (Callback->second.Is<IntCallbackT>())
-		{
-			int64_t Value;
-			if (!(StringT(Source) >> Value)) return false;
-			Callback->second.Get<IntCallbackT>()(Value);
-		}
-		else if (Callback->second.Is<UIntCallbackT>())
-		{
-			uint64_t Value;
-			if (!(StringT(Source) >> Value)) return false;
-			Callback->second.Get<UIntCallbackT>()(Value);
-		}
-		else if (Callback->second.Is<FloatCallbackT>())
-		{
-			float Value;
-			if (!(StringT(Source) >> Value)) return false;
-			Callback->second.Get<FloatCallbackT>()(Value);
-		}
-	}
-	return true;
+	if (Callback == Callbacks.end()) return {};
+	return ReadNumber(Callback->second, Source);
 }
 
-bool ReadObjectT::StringOrBinary(std::string const &Source)
+ReadErrorT ReadObjectT::StringOrBinary(std::string const &Source)
 { 
-	if (LastKey.empty()) return false; 
+	if (LastKey.empty()) { return std::string("Value with no key in object."); }
 	auto Callback = Callbacks.find(LastKey);
 	LastKey.clear();
-	if (Source.substr(0, sizeof(StringPrefix) - 1) == StringPrefix)
-	{
-		if ((Callback != Callbacks.end()) && Callback->second.Is<StringCallbackT>()) 
-			Callback->second.Get<StringCallbackT>()(Source.substr(sizeof(StringPrefix) - 1));
-	}
-	else if (Source.substr(0, sizeof(BinaryPrefix) - 1) == BinaryPrefix)
-	{
-		if ((Callback != Callbacks.end()) && Callback->second.Is<BinaryCallbackT>()) 
-			Callback->second.Get<BinaryCallbackT>()(FromBinary(Source.substr(sizeof(BinaryPrefix) - 1)));
-	}
-	else return false; // Invalid string notation
-	return true;
+	if (Callback == Callbacks.end()) return {};
+	return ReadString(Callback->second, Source);
 }
 
-bool ReadObjectT::Object(ReadObjectT &Object)
+ReadErrorT ReadObjectT::Object(ReadObjectT &Object)
 { 
-	if (LastKey.empty()) return false; 
+	if (LastKey.empty()) { return std::string("Value with no key in object."); }
 	auto Callback = Callbacks.find(LastKey);
 	if ((Callback != Callbacks.end()) && Callback->second.Is<ObjectCallbackT>())
-		Callback->second.Get<ObjectCallbackT>()(std::ref(Object));
+		return Callback->second.Get<ObjectCallbackT>()(std::ref(Object));
 	LastKey.clear();
-	return true;
+	return {};
 }
 
-bool ReadObjectT::Key(std::string const &Value) { LastKey = Value; return true; }
-
-bool ReadObjectT::Array(ReadArrayT &Array)
+ReadErrorT ReadObjectT::Key(std::string const &Value) 
 { 
-	if (LastKey.empty()) return false; 
+	LastKey = Value; 
+	return {}; 
+}
+
+ReadErrorT ReadObjectT::Array(ReadArrayT &Array)
+{
+	if (LastKey.empty()) { return std::string("Value with no key in object."); }
 	auto Callback = Callbacks.find(LastKey);
-	if ((Callback != Callbacks.end()) && Callback->second.Is<ArrayCallbackT>())
-		Callback->second.Get<ArrayCallbackT>()(std::ref(Array));
+	if (Callback != Callbacks.end())
+	{
+		if (Callback->second.Is<ArrayCallbackT>())
+		{
+			return Callback->second.Get<ArrayCallbackT>()(std::ref(Array));
+		}
+		else if (Callback->second.Is<PolymorphCallbackT>())
+		{
+			return ReadPolymorph(Callback->second, Array);
+		}
+	}
 	LastKey.clear();
-	return true;
+	return {};
+}
+
+ReadErrorT ReadObjectT::Final(void)
+{
+	if (DestructorCallback) return DestructorCallback();
+	return {};
 }
 
 //----------------------------------------------------------------------------------------------------------------
 // Nested object reader
-ReadT::ReadT(ObjectCallbackT const &Setup)
+ReadT::ReadT(void)
 {
+	Stack.emplace(this, [](ReadNestableT *){});
+	
 	static auto PrepareUserData = [](void *UserData) -> OptionalT<ReadT *>
 	{
 		auto This = reinterpret_cast<ReadT *>(UserData);
@@ -428,8 +495,9 @@ ReadT::ReadT(ObjectCallbackT const &Setup)
 		[](void *UserData, int Value) -> int // Bool
 		{
 			auto This = PrepareUserData(UserData); 
-			if (!This) return false;
-			if (!This->Stack.top()->Bool(Value)) return false;
+			Assert(This);
+			auto Error = This->Stack.top()->Bool(Value);
+			if (Error) { This->Error = *Error; return false; }
 			return true;
 		},
 		nullptr,
@@ -437,15 +505,17 @@ ReadT::ReadT(ObjectCallbackT const &Setup)
 		[](void *UserData, char const *Value, size_t ValueLength) -> int // Number
 		{
 			auto This = PrepareUserData(UserData); 
-			if (!This) return false;
-			if (!This->Stack.top()->Number(std::string(Value, ValueLength))) return false;
+			Assert(This);
+			auto Error = This->Stack.top()->Number(std::string(Value, ValueLength));
+			if (Error) { This->Error = *Error; return false; }
 			return true;
 		},
 		[](void *UserData, unsigned char const *Value, size_t ValueLength) -> int // String/Binary
 		{
 			auto This = PrepareUserData(UserData); 
-			if (!This) return false;
-			if (!This->Stack.top()->StringOrBinary(std::string(reinterpret_cast<char const *>(Value), ValueLength))) return false;
+			Assert(This);
+			auto Error = This->Stack.top()->StringOrBinary(std::string(reinterpret_cast<char const *>(Value), ValueLength));
+			if (Error) { This->Error = *Error; return false; }
 			return true;
 		},
 		
@@ -453,24 +523,27 @@ ReadT::ReadT(ObjectCallbackT const &Setup)
 		[](void *UserData) -> int // Open
 		{
 			auto This = PrepareUserData(UserData); 
-			if (!This) return false;
+			Assert(This);
 			auto NewTop = new ReadObjectT;
-			if (!This->Object(*NewTop)) return false;
-			This->Stack.push(std::unique_ptr<ReadNestableT>(NewTop));
+			//if (!This->Object(*NewTop)) return false;
+			auto Error = This->Stack.top()->Object(*NewTop);
+			if (Error) { This->Error = *Error; return false; }
+			This->Stack.emplace(NewTop, [](ReadNestableT *Target) { delete Target; });
 			return true;
 		},
 		[](void *UserData, unsigned char const *Key, size_t KeyLength) -> int // Key
 		{
 			auto This = PrepareUserData(UserData); 
-			if (!This) return false;
-			if (!This->Stack.top()->Key(std::string(reinterpret_cast<char const *>(Key), KeyLength))) return false;
+			Assert(This);
+			auto Error = This->Stack.top()->Key(std::string(reinterpret_cast<char const *>(Key), KeyLength));
+			if (Error) { This->Error = *Error; return false; }
 			return true;
 		},
 		[](void *UserData) -> int // Close
 		{
 			auto This = PrepareUserData(UserData); 
-			if (!This) return false;
-			This->Stack.pop();
+			Assert(This);
+			This->Stack.top()->Final(); This->Stack.pop();
 			return true;
 		},
 		
@@ -478,30 +551,65 @@ ReadT::ReadT(ObjectCallbackT const &Setup)
 		[](void *UserData) -> int // Open
 		{
 			auto This = PrepareUserData(UserData); 
-			if (!This) return false;
+			Assert(This);
 			auto NewTop = new ReadArrayT;
-			if (!This->Array(*NewTop)) return false;
-			This->Stack.push(std::unique_ptr<ReadNestableT>(NewTop));
+			//if (!This->Array(*NewTop)) return false;
+			auto Error = This->Stack.top()->Array(*NewTop);
+			if (Error) { This->Error = *Error; return false; }
+			This->Stack.emplace(NewTop, [](ReadNestableT *Target) { delete Target; });
 			return true;
 		},
 		[](void *UserData) -> int // Close
 		{
 			auto This = PrepareUserData(UserData); 
-			if (!This) return false;
-			This->Stack.pop();
+			Assert(This);
+			This->Stack.top()->Final(); This->Stack.pop();
 			return true;
 		}
 	};
 	Base = yajl_alloc(&Callbacks, NULL, this);  
-	
-	auto NewTop = new ReadObjectT;
-	Setup(std::ref(*NewTop));
-	Stack.push(std::unique_ptr<ReadNestableT>(NewTop));
 }
 
 ReadT::~ReadT(void)
 {
 	yajl_free(Base);
 }
+
+ReadErrorT ReadT::Parse(std::istream &Stream)
+{
+	Error.Unset();
+	while (true)
+	{
+		uint8_t ReadBuffer[65536];
+		Stream.read(reinterpret_cast<char *>(ReadBuffer), sizeof(ReadBuffer) - 1);
+		auto ReadSize = Stream.gcount();
+		if (ReadSize == 0)
+		{
+			auto Result = yajl_complete_parse(Base);
+			if (Result != yajl_status_ok) goto ReadError;
+			break;
+		}
+		ReadBuffer[ReadSize] = '\0';
+		{
+			auto Result = yajl_parse(Base, ReadBuffer, ReadSize);
+			if (Result != yajl_status_ok) goto ReadError;
+		}
+		
+		continue;
+		ReadError:
+		{
+			auto ErrorMessage = yajl_get_error(Base, 1, ReadBuffer, ReadSize);
+			::StringT Error;
+			Error << "Error during JSON deserialization: ";
+			if (this->Error) Error << *this->Error << "\n";
+			Error << ErrorMessage;
+			yajl_free_error(Base, ErrorMessage);
+			return Error.str();
+		}
+	}
+	return {};
+}
+
+ReadErrorT ReadT::Parse(std::istream &&Stream) { return Parse(Stream); }
 
 }

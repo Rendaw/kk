@@ -1,4 +1,9 @@
 // TODO
+// Vertically oriented on group atomlist, not group
+// XML
+// Load atoms from file, put in map
+// Replace parent, insert, insert line before, insert line after
+// Cut, copy, paste
 // Backspace deletes parent if empty
 
 #include <QApplication>
@@ -10,6 +15,7 @@
 #include <QWebElement>
 
 #include "core.h"
+#include "../shared/type.h"
 #include "../shared/extrastandard.h"
 
 #include <fstream>
@@ -25,6 +31,7 @@ struct WebViewT : QWebView
 		OptionalT<std::string> Text;
 		std::string RawText = std::string(Event->text().toUtf8().data());
 		if (!RawText.empty() && (RawText.size() == 1) && (RawText[0] >= 33) && (RawText[0] <= 126)) Text = RawText;
+		if (RawText == " ") Text = RawText;
 		switch (Event->key())
 		{
 			case Qt::Key_Left: Main = InputT::MainT::Left; break;
@@ -40,6 +47,10 @@ struct WebViewT : QWebView
 		if (Text)
 		{
 			if (*Text == "x") Main = InputT::MainT::Delete;
+			else if (*Text == "o") Main = InputT::MainT::NewStatement;
+			else if (*Text == "O") Main = InputT::MainT::NewStatementBefore;
+			else if (*Text == "r") Main = InputT::MainT::ReplaceParent;
+			else if (*Text == "w") Main = InputT::MainT::Wedge;
 			else if (*Text == "h") Main = InputT::MainT::Left;
 			else if (*Text == "j") Main = InputT::MainT::Down;
 			else if (*Text == "k") Main = InputT::MainT::Up;
@@ -64,6 +75,7 @@ int main(int argc, char **argv)
 	auto Window = new QWidget();
 	Window->setWindowTitle("KK Editor QT");
 	auto WindowLayout = new QBoxLayout(QBoxLayout::TopToBottom);
+	WindowLayout->setMargin(0);
 	auto WebView = new WebViewT();
 	auto WebPage = new WebPageT();
 	WebView->setPage(WebPage);
@@ -79,11 +91,20 @@ int main(int argc, char **argv)
 			"</style>").str().c_str());
 	VisualT BodyVisual(HTMLRoot, HTMLRoot.findFirst("body"));
 
-	CoreT Core(BodyVisual);
-	WebView->Core = &Core;
+	try 
+	{ 
+		CoreT Core(BodyVisual);
+		WebView->Core = &Core;
 
-	Window->show();
-	return QTContext.exec();
+		Window->show();
+		auto Result = QTContext.exec();
+		std::ofstream("dump.html") << HTMLRoot.toInnerXml().toUtf8().data();
+		return Result;
+	}
+	catch (ConstructionErrorT &Error)
+	{
+		std::cerr << "ERROR: " << Error << std::endl;
+	}
 }
 
 

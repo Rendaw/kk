@@ -1,9 +1,10 @@
 #include "core.h"
-#include "atoms.h"
 #include "protoatom.h"
+#include "logging.h"
 #include "../shared/extrastandard.h"
 
 #include <regex>
+#include <fstream>
 
 namespace Core
 {
@@ -84,9 +85,10 @@ void EvaluateJS(QWebElement Root, std::string const &Text)
 }
 
 std::regex JSSlashRegex("\\\\|'");
+std::regex JSSlashRegex2("\n");
 std::string JSSlash(std::string const &Text)
 {
-	return std::regex_replace(Text, JSSlashRegex, "\\$0");
+	return std::regex_replace(std::regex_replace(Text, JSSlashRegex, "\\$0"), JSSlashRegex2, "\\n");
 }
 
 VisualT::VisualT(QWebElement const &Root) : Root(Root), ID(::StringT() << "e" << VisualIDCounter++) 
@@ -173,6 +175,11 @@ void ActionGroupT::AddReverse(std::unique_ptr<ActionT> Action)
 {
 	Actions.push_front(std::move(Action));
 }
+	
+struct NOPT : ActionT
+{
+	std::unique_ptr<ActionT> Apply(void) { return std::unique_ptr<ActionT>(new NOPT); }
+};
 
 std::unique_ptr<ActionT> ActionGroupT::Apply(void)
 {
@@ -228,6 +235,7 @@ std::unique_ptr<ActionT> AtomT::SetT::Apply(void)
 
 void AtomT::Set(NucleusT *Nucleus)
 {
+	TRACE;
 	if (Callback) Callback(Nucleus);
 	Clear();
 	if (!Nucleus) return;
@@ -235,13 +243,13 @@ void AtomT::Set(NucleusT *Nucleus)
 	Nucleus->Count += 1;
 	if (Nucleus->Atom)
 	{
-		std::cout << "Relocating atom " << Nucleus << std::endl;
+		//std::cout << "Relocating atom " << Nucleus << std::endl;
 		Nucleus->Atom->Set(nullptr);
 	}
 	Assert(!Nucleus->Atom);
 	Nucleus->Atom = this;
 	Nucleus->Parent = Parent;
-	std::cout << "Set result: " << Core.Dump() << std::endl;
+	//std::cout << "Set result: " << Core.Dump() << std::endl;
 	Core.AssumeFocus();
 }
 
@@ -340,9 +348,9 @@ void NucleusT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
 {
 	//Serialize(Serial::WritePolymorphT(GetTypeInfo().Tag, std::move(Prepolymorph)));
 	auto Polymorph = Serial::WritePolymorphT(GetTypeInfo().Tag, std::move(Prepolymorph));
-	Polymorph.String("this", ::StringT() << this);
+	/*Polymorph.String("this", ::StringT() << this);
 	Polymorph.String("parent", ::StringT() << Parent.Nucleus);
-	Polymorph.String("atom", ::StringT() << Atom);
+	Polymorph.String("atom", ::StringT() << Atom);*/
 	Serialize(Polymorph);
 }
 		
@@ -389,25 +397,158 @@ void NucleusT::FlagRefresh(void)
 {
 	Core.NeedRefresh.insert(this);
 }
-
+	
 AtomTypeT::~AtomTypeT(void) {}
 
-NucleusT *AtomTypeT::Generate(CoreT &Core) { Assert(false); return nullptr; }
+std::map<ArityT, std::string> ReverseArityLookup = 
+{
+	{Nullary, "Nullary"},
+	{Unary, "Unary"},
+	{Binary, "Binary"}
+};
+std::map<std::string, ArityT> ArityLookup = 
+{
+	{"Nullary", Nullary},
+	{"Unary", Unary},
+	{"Binary", Binary}
+};
 
-CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused(*this), CursorVisual(RootVisual.Root)
+Serial::ReadErrorT AtomTypeT::Deserialize(Serial::ReadObjectT &Object)
+{
+	Object.String("Tag", [this](std::string &&Value) -> Serial::ReadErrorT { Tag = std::move(Value); return {}; });
+	Object.String("LookupSequence", [this](std::string &&Value) -> Serial::ReadErrorT { LookupSequence = std::move(Value); return {}; });
+	Object.Bool("ReplaceImmediately", [this](bool Value) -> Serial::ReadErrorT { ReplaceImmediately = Value; return {}; });
+	Object.String("Arity", [this](std::string &&Value) -> Serial::ReadErrorT
+	{
+		auto Found = ArityLookup.find(Value);
+		if (Found == ArityLookup.end()) return (::StringT() << "Unknown arity " << Value).str();
+		Arity = Found->second;
+		return {};
+	});
+	Object.Bool("Prefix", [this](bool Value) -> Serial::ReadErrorT { Prefix = Value; return {}; });
+	Object.Bool("LeftAssociative", [this](bool Value) -> Serial::ReadErrorT { LeftAssociative = Value; return {}; });
+	Object.Int("Precedence", [this](int64_t Value) -> Serial::ReadErrorT { Precedence = Value; return {}; });
+	Object.Bool("SpatiallyVertical", [this](bool Value) -> Serial::ReadErrorT { SpatiallyVertical = Value; return {}; });
+	return {};
+}
+
+void AtomTypeT::Serialize(Serial::WriteObjectT &Object) const
+{
+	Object.String("Tag", Tag);
+	if (LookupSequence) Object.String("LookupSequence", *LookupSequence);
+	Object.Bool("ReplaceImmediately", ReplaceImmediately);
+	{
+		auto Found = ReverseArityLookup.find(Arity);
+		Assert(Found != ReverseArityLookup.end());
+		if (Found != ReverseArityLookup.end()) 
+			Object.String("Arity", Found->second);
+	}
+	Object.Bool("Prefix", Prefix);
+	Object.Bool("LeftAssociative", LeftAssociative);
+	Object.Int("Precedence", Precedence);
+	Object.Bool("SpatiallyVertical", SpatiallyVertical);
+}
+
+NucleusT *AtomTypeT::Generate(CoreT &Core) { Assert(false); return nullptr; }
+	
+FocusT::FocusT(CoreT &Core, NucleusT *Nucleus, bool DoNothing) : Core(Core), Target(Core, Nucleus), DoNothing(DoNothing)
+{
+}
+
+std::unique_ptr<ActionT> FocusT::Apply(void)
+{
+	auto Out = new FocusT(Core, Target.Nucleus, !DoNothing);
+	Target->Focus(FocusDirectionT::Direct);
+	return std::unique_ptr<ActionT>(Out);
+}
+
+CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused(*this), TextMode(true), ProtoatomType(nullptr), ElementType(nullptr), StringType(nullptr), CursorVisual(RootVisual.Root)
 {
 	CursorVisual.SetClass("type-cursor");
 	CursorVisual.Add("|");
-	ProtoatomType.reset(new ProtoatomTypeT());
-	ModuleType.reset(new ModuleTypeT());
-	GroupType.reset(new GroupTypeT());
-	AssignmentType.reset(new AssignmentTypeT());
-	ElementType.reset(new ElementTypeT());
-	StringType.reset(new StringTypeT());
-	Types["."] = ElementType.get();
-	Types["'"] = StringType.get();
-	Types["="] = AssignmentType.get();
-	Types["{"] = GroupType.get();
+	
+	{
+		Serial::ReadT Read;
+		Read.Object([this](Serial::ReadObjectT &Object) -> Serial::ReadErrorT
+		{
+			Object.Array("Types", [this](Serial::ReadArrayT &Array) -> Serial::ReadErrorT
+			{
+				Array.Object([this](Serial::ReadObjectT &Object) -> Serial::ReadErrorT
+				{
+					auto Type = new CompositeTypeT;
+					auto Error = Type->Deserialize(Object);
+					if (Error) return Error;
+					Object.Finally([this, Type](void) -> Serial::ReadErrorT
+					{
+						if (Types.find(Type->Tag) != Types.end()) 
+							return (::StringT() << "Type " << Type->Tag << " defined twice.").str();
+						Types.emplace(Type->Tag, std::unique_ptr<AtomTypeT>(Type));
+						return {};
+					});
+					return {};
+				});
+				return {};
+			});
+			return {};
+		});
+		auto Error = Read.Parse(std::ifstream("config.json"));
+		if (Error) throw ConstructionErrorT() << *Error;
+	}
+
+	{
+		Serial::WriteT Writer;
+		{
+			auto WriteRoot = Writer.Object();
+			auto Array = WriteRoot.Array("Types");
+			for (auto &Type : Types) 
+			{
+				auto Object = Array.Object();
+				Type.second->Serialize(Object);
+			}
+		}
+		std::cout << "config.json:\n" << Writer.Dump() << std::endl;
+	}
+
+	{
+		auto Found = Types.find("Protoatom");
+		if (Found == Types.end()) throw ConstructionErrorT() << "Missing Protoatom type definition.";
+		ProtoatomType = Found->second.get();
+		auto ProtoatomType = Found->second.get();
+		auto Composite = dynamic_cast<CompositeTypeT *>(ProtoatomType);
+		Assert(Composite);
+		if (!AssertE(Composite->Parts.size(), 2)) throw ConstructionErrorT() << "Protoatom must have 2 parts.";
+		if (!Assert(dynamic_cast<AtomPartTypeT *>(Composite->Parts[0].get()))) throw ConstructionErrorT() << "Protoatom part 1 must be an atom.";
+		if (!Assert(dynamic_cast<AtomPartTypeT *>(Composite->Parts[0].get())->StartEmpty)) throw ConstructionErrorT() << "The Protoatom atom part must be StartEmpty.";
+		if (!(dynamic_cast<ProtoatomPartTypeT *>(Composite->Parts[1].get()))) throw ConstructionErrorT() << "Protoatom part 2 must be a \"protoatom\" part.";
+	}
+	{
+		auto Found = Types.find("Element");
+		if (Found == Types.end()) throw ConstructionErrorT() << "Missing Element type definition.";
+		ElementType = Found->second.get();
+		auto ElementType = Found->second.get();
+		auto Composite = dynamic_cast<CompositeTypeT *>(ElementType);
+		Assert(Composite);
+		if (!(
+			(Composite->Parts.size() == 2) &&
+			(dynamic_cast<AtomPartTypeT *>(Composite->Parts[0].get())) &&
+			(dynamic_cast<AtomPartTypeT *>(Composite->Parts[1].get()))
+		)) throw ConstructionErrorT() << "Element has unusable definition.";
+	}
+	{
+		auto Found = Types.find("String");
+		if (Found == Types.end()) throw ConstructionErrorT() << "Missing String type definition.";
+		StringType = Found->second.get();
+		auto StringType = Found->second.get();
+		auto Composite = dynamic_cast<CompositeTypeT *>(StringType);
+		Assert(Composite);
+		if (!(
+			(Composite->Parts.size() == 1) &&
+			(dynamic_cast<StringPartTypeT *>(Composite->Parts[0].get()))
+		)) throw ConstructionErrorT() << "String has unusable definition.";
+	}
+
+	for (auto &Type : Types)
+		if (Type.second->LookupSequence) TypeLookup[*Type.second->LookupSequence] = Type.second.get();
 	
 	Root.Callback = [this](NucleusT *Nucleus)
 	{
@@ -416,9 +557,43 @@ CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused
 		this->RootVisual.Add(Nucleus->Visual);
 	};
 	
-	Root.Set(ModuleType->Generate(*this));
-	Root->As<CompositeT>()->Parts[1]->As<AtomPartT>()->Data.Set(GroupType->Generate(*this));
+	AtomT NewRoot(*this);
+	{
+		Serial::ReadT Read;
+		Read.Object([this, &NewRoot](Serial::ReadObjectT &Object) -> Serial::ReadErrorT
+		{
+			//return Deserialize(NewRoot, "Module", Object);
+			Object.Polymorph("Root", [this, &NewRoot](std::string &&Key, Serial::ReadObjectT &Object)
+			{
+				return Deserialize(NewRoot, std::move(Key), Object);
+			});
+			return {};
+		});
+		Serial::ReadErrorT ParseError;
+		/*std::ifstream Stream("dump.kk");
+		if (!Stream) Stream.open("default.kk");*/
+		std::ifstream Stream("default.kk");
+		ParseError = Read.Parse(std::move(Stream));
+		if (ParseError) throw ConstructionErrorT() << *ParseError;
+	}
+	Root.Set(NewRoot.Nucleus);
+	/*Root.Set(ModuleType->Generate(*this));
+	Root->As<CompositeT>()->Parts[1]->As<AtomPartT>()->Data.Set(GroupType->Generate(*this));*/
 	Refresh();
+}
+
+CoreT::~CoreT(void)
+{
+	std::ofstream("dump.kk") << Dump();
+}
+
+Serial::ReadErrorT CoreT::Deserialize(AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object)
+{
+	std::unique_ptr<NucleusT> Nucleus;
+	auto Type = Types.find(TypeName);
+	if (Type == Types.end()) return (StringT() << "Unknown type \'" << TypeName << "\'").str();
+	Out.Set(Type->second->Generate(*this));
+	return Out->Deserialize(Object);
 }
 
 void CoreT::HandleInput(InputT const &Input)
@@ -436,8 +611,8 @@ void CoreT::HandleInput(InputT const &Input)
 
 OptionalT<AtomTypeT *> CoreT::LookUpAtom(std::string const &Text)
 {
-	auto Type = Types.find(Text);
-	if (Type == Types.end()) return {};
+	auto Type = TypeLookup.find(Text);
+	if (Type == TypeLookup.end()) return {};
 	return &*Type->second;
 }
 
@@ -494,10 +669,6 @@ void CoreT::AssumeFocus(void)
 
 std::unique_ptr<ActionT> CoreT::ActionHandleInput(InputT const &Input)
 {
-	struct NOPT : ActionT
-	{
-		std::unique_ptr<ActionT> Apply(void) { return std::unique_ptr<ActionT>(new NOPT); }
-	};
 	struct HandleInputT : ActionT
 	{
 		CoreT &Core;

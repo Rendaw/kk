@@ -1,0 +1,107 @@
+{
+	"Types": [
+		{
+			"Tag": "utf8:Protoatom",
+			"Parts": [
+				["utf8:Atom", {
+					"Tag": "utf8:Lifted",
+					"StartEmpty": true
+				}],
+				["utf8:Protoatom", {
+					"Tag": "utf8:Data",
+					"FocusDefault": true
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:Module",
+			"LookupSequence": "utf8:module",
+			"SpatiallyVertical": true,
+			"Parts": [
+				["utf8:Enum", {
+					"Tag": "utf8:Entry",
+					"Values": [
+						"utf8:Start Here: Yes",
+						"utf8:Start Here: No"
+					]
+				}],
+				["utf8:Atom", {
+					"Tag": "utf8:Top",
+					"SetDefault": true,
+					"FocusDefault": true
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:Group",
+			"LookupSequence": "utf8:{",
+			"ReplaceImmediately": true,
+			"DisplayPrefix": "utf8:{",
+			"DisplaySuffix": "utf8:}",
+			"SpatiallyVertical": true,
+			"Precedence": 0,
+			"Parts": [
+				["utf8:AtomList", {
+					"Tag": "utf8:Statements",
+					"DisplaySuffix": "utf8:;",
+					"FocusDefault": true,
+					"SpatiallyVertical": true
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:Element",
+			"LookupSequence": "utf8:.",
+			"ReplaceImmediately": true,
+			"Arity": "utf8:Binary",
+			"Prefix": false,
+			"Precedence": 900,
+			"Parts": [
+				["utf8:Atom", {
+					"Tag": "utf8:Base",
+					"DisplaySuffix": "utf8:.",
+					"SetDefault": true
+				}],
+				["utf8:Atom", {
+					"Tag": "utf8:Key",
+					"FocusDefault": true
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:String",
+			"LookupSequence": "utf8:'",
+			"ReplaceImmediately": true,
+			"Arity": "utf8:Nullary",
+			"Prefix": true,
+			"Parts": [
+				["utf8:String", {
+					"Tag": "utf8:Data",
+					"DisplayPrefix": "utf8:'",
+					"DisplaySuffix": "utf8:'",
+					"SetDefault": true,
+					"FocusDefault": true
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:Assignment",
+			"LookupSequence": "utf8:=",
+			"ReplaceImmediately": true,
+			"DisplayInfix": "utf8:=",
+			"Arity": "utf8:Binary",
+			"Prefix": false,
+			"Precedence": 800,
+			"Parts": [
+				["utf8:Atom", {
+					"Tag": "utf8:Left",
+					"SetDefault": true
+				}],
+				["utf8:Atom", {
+					"Tag": "utf8:Right",
+					"FocusDefault": true
+				}]
+			]
+		}
+	]
+}

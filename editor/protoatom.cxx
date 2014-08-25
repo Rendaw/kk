@@ -2,6 +2,7 @@
 
 #include "../shared/regex.h"
 
+#include "logging.h"
 #include "composite.h"
 
 namespace Core
@@ -9,6 +10,7 @@ namespace Core
 
 ProtoatomTypeT::ProtoatomTypeT(void)
 {
+	TRACE;
 	Tag = "Protoatom";
 	{
 		auto Part = new AtomPartTypeT(*this);
@@ -24,23 +26,42 @@ ProtoatomTypeT::ProtoatomTypeT(void)
 		Parts.emplace_back(Part);
 	}
 }
+	
+void ProtoatomPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
+{
+	TRACE;
+	Serial::WritePolymorphT Polymorph("ProtoatomPart", std::move(Prepolymorph));
+	Serialize(Polymorph);
+}
 
 NucleusT *ProtoatomPartTypeT::Generate(CoreT &Core)
 {
+	TRACE;
 	return new ProtoatomPartT(Core, *this);
 }
 
 ProtoatomPartT::ProtoatomPartT(CoreT &Core, ProtoatomPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo)
 {
+	TRACE;
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
 }
 
+Serial::ReadErrorT ProtoatomPartT::Deserialize(Serial::ReadObjectT &Object)
+{
+	TRACE;
+	Object.Bool("IsIdentifier", [this](bool Value) -> Serial::ReadErrorT { IsIdentifier = Value; return {}; });
+	Object.String("Data", [this](std::string &&Value) -> Serial::ReadErrorT { Data = std::move(Value); return {}; });
+	Object.UInt("Position", [this](uint64_t Value) -> Serial::ReadErrorT { Position = Value; return {}; }); // Apparently you can assign a uint64_t to a string, with no errors or warnings
+	return {};
+}
+
 void ProtoatomPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 {
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
+	TRACE;
+	/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
 	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
 	if (IsIdentifier) Polymorph.Bool("IsIdentifier", *IsIdentifier);
 	Polymorph.String("Data", Data);
 	Polymorph.UInt("Position", Position);
@@ -50,17 +71,25 @@ AtomTypeT const &ProtoatomPartT::GetTypeInfo(void) const { return TypeInfo; }
 	
 void ProtoatomPartT::Focus(FocusDirectionT Direction)
 {
-	if ((Direction == FocusDirectionT::FromBehind) ||
-		(Direction == FocusDirectionT::Direct))
+	TRACE;
+	if (Core.TextMode)
 	{
-		Position = 0;
+		if ((Direction == FocusDirectionT::FromBehind) ||
+			(Direction == FocusDirectionT::Direct))
+		{
+			Position = 0;
+		}
+		else if (Direction == FocusDirectionT::FromAhead)
+		{
+			Position = Data.size();
+		}
+		Focused = FocusedT::Text;
 	}
-	else if (Direction == FocusDirectionT::FromAhead)
+	else
 	{
-		Position = Data.size();
+		Visual.SetClass("flag-focused");
+		Focused = FocusedT::On;
 	}
-	Focused = true;
-	Visual.SetClass("flag-focused");
 	FlagRefresh();
 	NucleusT::Focus(Direction);
 	for (auto &Atom : FocusDependents) Atom->FlagRefresh();
@@ -68,7 +97,8 @@ void ProtoatomPartT::Focus(FocusDirectionT Direction)
 
 void ProtoatomPartT::Defocus(void) 
 {
-	Focused = false;
+	TRACE;
+	Focused = FocusedT::Off;
 	Visual.UnsetClass("flag-focused");
 	FlagRefresh();
 	for (auto &Atom : FocusDependents) Atom->FlagRefresh();
@@ -76,13 +106,15 @@ void ProtoatomPartT::Defocus(void)
 
 void ProtoatomPartT::AssumeFocus(void)
 {
+	TRACE;
 	Focus(FocusDirectionT::Direct);
 }
 
 void ProtoatomPartT::Refresh(void)
 {
+	TRACE;
 	Visual.Start();
-	if (Focused)
+	if (Focused == FocusedT::Text)
 	{
 		Visual.Add(Data.substr(0, Position));
 		Visual.Add(Core.CursorVisual);
@@ -93,6 +125,9 @@ void ProtoatomPartT::Refresh(void)
 
 OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::HandleInput(InputT const &Input)
 {
+	TRACE;
+	AssertNE(Focused, FocusedT::Off);
+	
 	struct SetT : ActionT
 	{
 		ProtoatomPartT &Base;
@@ -121,115 +156,144 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::HandleInput(InputT const &In
 			return true;
 		}
 	};
-	
-	if (Input.Text)
-	{
-		auto Text = *Input.Text;
-
-		static auto IdentifierClass = Regex::ParserT<>("[a-zA-Z0-9_]");
-		auto NewIsIdentifier = IdentifierClass(Text);
 		
-		if (Text == " ") return Finish({}, Data);
-		else if ((Text == "\n") || (Text == ";")) 
-		{
-			auto Actions = new ActionGroupT;
-			auto Finished = Finish({}, Data);
-			if (Finished) Actions->Add(std::move(*Finished));
-			auto InputResult = Parent->HandleInput(InputT{InputT::MainT::NewStatement, {}});
-			if (InputResult) Actions->Add(std::move(*InputResult));
-			return std::unique_ptr<ActionT>(Actions);
-		}
-		else if (!IsIdentifier || (*IsIdentifier == NewIsIdentifier))
-		{
-			if (!IsIdentifier) IsIdentifier = NewIsIdentifier;
-			auto NewData = Data;
-			NewData.insert(Position, Text);
-			auto NewPosition = Position + 1;
-			if (NewPosition == NewData.size()) // Only do auto conversion if appending text
-			{
-				auto Found = Core.LookUpAtom(NewData);
-				if (Found && Found->ReplaceImmediately) 
-					return Finish(Found, NewData);
-			}
-			return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, NewData));
-		}
-		else if (IsIdentifier && (*IsIdentifier != NewIsIdentifier))
-		{
-			Assert(!Data.empty());
-			auto Finished = Finish({}, Data);
-			Assert(Finished);
-			auto ActionGroup = new ActionGroupT();
-			ActionGroup->Add(std::move(*Finished));
-			ActionGroup->Add(Core.ActionHandleInput(Input));
-			return std::unique_ptr<ActionT>(ActionGroup);
-		}
-	}
-	else if (Input.Main)
+	if (Focused == FocusedT::Text)
 	{
-		switch (*Input.Main)
+		if (Input.Text)
 		{
-			case InputT::MainT::Left: 
-			{
-				if (Position == 0) 
-				{
-					Parent->FocusPrevious();
-				}
-				else
-				{
-					Position -= 1;
-					FlagRefresh();
-				}
-			} return {};
-			case InputT::MainT::Right:
-			{
-				if (Position == Data.size()) 
-				{
-					Parent->FocusNext();
-				}
-				else
-				{
-					Position += 1;
-					FlagRefresh();
-				}
-			} return {};
-			case InputT::MainT::TextBackspace:
-			{
-				if (Position == 0) return {};
-				auto NewData = Data;
-				NewData.erase(Position - 1, 1);
-				auto NewPosition = Position - 1;
-				return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, NewData));
-			} return {};
-			case InputT::MainT::Delete:
-			{
-				if (Position == Data.size()) return {};
-				auto NewData = Data;
-				NewData.erase(Position, 1);
-				return std::unique_ptr<ActionT>(new SetT(*this, Position, NewData));
-			} return {};
-			default: break;
-		}
-	}
-	
-	auto Result = Parent->HandleInput(Input);
-	if (Result)
-	{
-		auto FinishResult = Finish({}, Data);
-		if (FinishResult) 
-		{
-			auto ActionGroup = new ActionGroupT;
-			ActionGroup->Add(std::move(*FinishResult));
-			ActionGroup->Add(std::move(*Result));
-			return std::unique_ptr<ActionT>(ActionGroup);
-		}
-		else return std::move(Result);
-	}
+			auto Text = *Input.Text;
 
-	return {};
+			static auto IdentifierClass = Regex::ParserT<>("[a-zA-Z0-9_]");
+			auto NewIsIdentifier = IdentifierClass(Text);
+			
+			if (Text == " ") return Finish({}, Data); 
+			else if ((Text == "\n") || (Text == ";")) 
+			{
+				auto Actions = new ActionGroupT;
+				auto Finished = Finish({}, Data);
+				if (Finished) Actions->Add(std::move(*Finished));
+				auto InputResult = Parent->HandleInput(InputT{InputT::MainT::NewStatement, {}});
+				if (InputResult) Actions->Add(std::move(*InputResult));
+				return std::unique_ptr<ActionT>(Actions);
+			}
+			else if (!IsIdentifier || (*IsIdentifier == NewIsIdentifier))
+			{
+				if (!IsIdentifier) IsIdentifier = NewIsIdentifier;
+				auto NewData = Data;
+				NewData.insert(Position, Text);
+				auto NewPosition = Position + 1;
+				if (NewPosition == NewData.size()) // Only do auto conversion if appending text
+				{
+					auto Found = Core.LookUpAtom(NewData);
+					if (Found && Found->ReplaceImmediately) 
+						return Finish(Found, NewData);
+				}
+				return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, NewData));
+			}
+			else if (IsIdentifier && (*IsIdentifier != NewIsIdentifier))
+			{
+				Assert(!Data.empty());
+				auto Finished = Finish({}, Data);
+				Assert(Finished);
+				auto ActionGroup = new ActionGroupT();
+				ActionGroup->Add(std::move(*Finished));
+				ActionGroup->Add(Core.ActionHandleInput(Input));
+				return std::unique_ptr<ActionT>(ActionGroup);
+			}
+		}
+		else if (Input.Main)
+		{
+			switch (*Input.Main)
+			{
+				case InputT::MainT::Left: 
+				{
+					if (Position == 0) 
+					{
+						Parent->FocusPrevious();
+					}
+					else
+					{
+						Position -= 1;
+						FlagRefresh();
+					}
+					return {};
+				}
+				case InputT::MainT::Right:
+				{
+					if (Position == Data.size()) 
+					{
+						Parent->FocusNext();
+					}
+					else
+					{
+						Position += 1;
+						FlagRefresh();
+					}
+					return {};
+				}
+				case InputT::MainT::TextBackspace:
+				{
+					if (Position == 0) return {};
+					auto NewData = Data;
+					NewData.erase(Position - 1, 1);
+					auto NewPosition = Position - 1;
+					return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, NewData));
+				}
+				case InputT::MainT::Delete:
+				{
+					if (Position == Data.size()) return {};
+					auto NewData = Data;
+					NewData.erase(Position, 1);
+					return std::unique_ptr<ActionT>(new SetT(*this, Position, NewData));
+				}
+				case InputT::MainT::Exit:
+				{
+					Core.TextMode = false;
+					Focus(FocusDirectionT::Direct);
+					return {};
+				}
+				default: break;
+			}
+		}
+		
+		auto Result = Parent->HandleInput(Input);
+		if (Result)
+		{
+			auto FinishResult = Finish({}, Data);
+			if (FinishResult) 
+			{
+				auto ActionGroup = new ActionGroupT;
+				ActionGroup->Add(std::move(*FinishResult));
+				ActionGroup->Add(std::move(*Result));
+				return std::unique_ptr<ActionT>(ActionGroup);
+			}
+			else return std::move(Result);
+		}
+
+		return {};
+	}
+	else
+	{
+		if (Input.Main)
+		{
+			switch (*Input.Main)
+			{
+				case InputT::MainT::Enter:
+					Core.TextMode = true;
+					Focus(FocusDirectionT::Direct);
+					return {};
+				case InputT::MainT::Delete:
+					return std::unique_ptr<ActionT>(new SetT(*this, 0, ""));
+				default: break;
+			}
+		}
+		return Parent->HandleInput(Input);
+	}
 }
 
 OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT *> Type, std::string Text)
 {
+	TRACE;
 	Assert(Parent->Atom);
 	auto &Lifted = Parent->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Data;
 	Type = Type ? Type : Core.LookUpAtom(Data);
@@ -243,10 +307,8 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT *
 				std::cout << "NOTE: Can't finish to nullary or prefixed op if protoatom has lifed." << std::endl; 
 				return {}; 
 			}
-			auto Replacement = Core.ProtoatomType->Generate(Core);
 			auto Finished = Type->Generate(Core);
-			Actions->Add(Replacement->Set(Finished));
-			Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*PartParent()->Atom, Replacement)));
+			Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*PartParent()->Atom, Finished)));
 		}
 		else
 		{
@@ -262,6 +324,7 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT *
 					)
 				))
 			{
+				std::cout << "Parent precedence " << (*WedgeAtom)->PartParent()->GetTypeInfo().Precedence << std::endl;
 				WedgeAtom = (*WedgeAtom)->PartParent()->Atom;
 				Child = WedgeAtom->Nucleus;
 			}
@@ -273,6 +336,12 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT *
 	}
 	else
 	{
+		if (Data.empty())
+		{
+			std::cout << "NOTE: Can't finish as new element if empty." << std::endl; 
+			return {};
+		}
+
 		if (Lifted) 
 		{
 			if (Data.empty())
@@ -292,7 +361,7 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT *
 		auto Protoatom = Core.ProtoatomType->Generate(Core);
 
 		auto ParentAsComposite = PartParent()->As<CompositeT>();
-		if (ParentAsComposite && (&ParentAsComposite->TypeInfo == Core.ElementType.get()))
+		if (ParentAsComposite && (&ParentAsComposite->TypeInfo == Core.ElementType))
 		{
 			Actions->Add(Protoatom->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Set(String));
 		}
@@ -314,6 +383,7 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT *
 
 bool ProtoatomPartT::IsEmpty(void) const
 {
+	TRACE;
 	auto &Lifted = Parent->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Data;
 	return Data.empty() && !Lifted && !Focused;
 }

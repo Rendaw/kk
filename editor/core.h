@@ -194,7 +194,10 @@ struct InputT
 		Delete,
 		Enter,
 		Exit,
-		NewStatement
+		NewStatementBefore,
+		NewStatement,
+		ReplaceParent,
+		Wedge
 	};
 	OptionalT<MainT> Main;
 	OptionalT<std::string> Text;
@@ -236,9 +239,9 @@ struct NucleusT
 		return {}; 
 	}
 	
+	virtual Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) = 0;
 	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const;
 	virtual void Serialize(Serial::WritePolymorphT &Polymorph) const;
-
 	virtual AtomTypeT const &GetTypeInfo(void) const;
 	virtual void Focus(FocusDirectionT Direction);
 	virtual void Defocus(void);
@@ -259,15 +262,29 @@ struct AtomTypeT
 	AtomTypeT(void) = default;
 	AtomTypeT(AtomTypeT const &) = delete;
 	virtual ~AtomTypeT(void);
+	virtual Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object);
+	virtual void Serialize(Serial::WriteObjectT &Object) const;
 	virtual NucleusT *Generate(CoreT &Core);
 
 	std::string Tag = "EditorUnimplemented";
+	OptionalT<std::string> LookupSequence;
 
 	bool ReplaceImmediately = false;
 	ArityT Arity = ArityT::Nullary;
 	bool Prefix = true;
 	int Precedence = 1000;
 	bool LeftAssociative = true;
+	
+	bool SpatiallyVertical = false;
+};
+
+struct FocusT : ActionT
+{
+	CoreT &Core;
+	HoldT Target;
+	bool DoNothing;
+	FocusT(CoreT &Core, NucleusT *Nucleus, bool DoNothing = false);
+	std::unique_ptr<ActionT> Apply(void);
 };
 
 struct CoreT
@@ -276,14 +293,11 @@ struct CoreT
 	AtomT Root;
 	HoldT Focused;
 	
-	std::unique_ptr<AtomTypeT> 
-		ProtoatomType,
-		ModuleType, 
-		GroupType, 
-		ElementType, 
-		AssignmentType, 
-		StringType;
-	std::map<std::string, AtomTypeT *> Types;
+	bool TextMode;
+	
+	std::map<std::string, std::unique_ptr<AtomTypeT>> Types;
+	AtomTypeT *ProtoatomType, *ElementType, *StringType;
+	std::map<std::string, AtomTypeT *> TypeLookup;
 
 	std::set<NucleusT *> DeletionCandidates;
 	std::set<NucleusT *> NeedRefresh;
@@ -291,8 +305,11 @@ struct CoreT
 	VisualT CursorVisual;
 
 	CoreT(VisualT &RootVisual);
+	~CoreT(void);
+	Serial::ReadErrorT Deserialize(AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
 	void HandleInput(InputT const &Input);
 	OptionalT<AtomTypeT *> LookUpAtom(std::string const &Text);
+	
 	void Apply(OptionalT<std::unique_ptr<ActionT>> Action);
 	std::list<std::unique_ptr<ActionT>> UndoQueue, RedoQueue;
 	void Undo(void);

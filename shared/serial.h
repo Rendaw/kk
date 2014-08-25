@@ -15,11 +15,17 @@ namespace Serial
 struct WriteObjectT;
 struct WritePrepolymorphT;
 
+struct WriteCoreT
+{
+	WriteCoreT(yajl_gen Base);
+	virtual ~WriteCoreT(void);
+	yajl_gen Base;
+};
+
 struct WriteArrayT
 {
 	public:
 		WriteArrayT(WriteArrayT &&Other);
-		~WriteArrayT(void);
 		
 		void Bool(bool const &Value);
 		void Int(int64_t const &Value);
@@ -36,16 +42,14 @@ struct WriteArrayT
 		
 	friend struct WriteObjectT;
 	protected:
-		WriteArrayT(yajl_gen Base);
-		
-		yajl_gen Base;
+		WriteArrayT(std::shared_ptr<WriteCoreT> ParentCore);
+		std::shared_ptr<WriteCoreT> ParentCore, Core;
 };
 
 struct WriteObjectT
 {
 	public:
 		WriteObjectT(WriteObjectT &&Other);
-		~WriteObjectT(void);
 		
 		void Bool(std::string const &Key, bool const &Value);
 		void Int(std::string const &Key, int64_t const &Value);
@@ -63,9 +67,8 @@ struct WriteObjectT
 	friend struct WriteArrayT;
 	friend struct WriteT;
 	protected:
-		WriteObjectT(yajl_gen Base);
-		
-		yajl_gen Base;
+		WriteObjectT(std::shared_ptr<WriteCoreT> ParentCore);
+		std::shared_ptr<WriteCoreT> ParentCore, Core;
 };
 
 struct WritePrepolymorphT : private WriteArrayT
@@ -105,26 +108,28 @@ struct WriteT
 {
 	//WriteT(std::string const &Filename);
 	WriteT(void);
-	~WriteT(void);
 
 	WriteObjectT Object(void);
 	std::string Dump(void);
 
 	private:
-		yajl_gen Base;
+		std::shared_ptr<WriteCoreT> Core;
 };
 
+typedef OptionalT<std::string> ReadErrorT;
 struct ReadArrayT;
 struct ReadObjectT;
 
-typedef std::function<void(bool Value)> LooseBoolCallbackT;
-typedef std::function<void(int64_t Value)> LooseIntCallbackT;
-typedef std::function<void(uint64_t Value)> LooseUIntCallbackT;
-typedef std::function<void(float Value)> LooseFloatCallbackT;
-typedef std::function<void(std::string &&Value)> LooseStringCallbackT;
-typedef std::function<void(std::vector<uint8_t> &&Value)> LooseBinaryCallbackT;
-typedef std::function<void(ReadObjectT &Value)> LooseObjectCallbackT;
-typedef std::function<void(ReadArrayT &Value)> LooseArrayCallbackT;
+// TODO Return ReadErrorT from all callbacks, propagate and halt parsing
+typedef std::function<ReadErrorT(bool Value)> LooseBoolCallbackT;
+typedef std::function<ReadErrorT(int64_t Value)> LooseIntCallbackT;
+typedef std::function<ReadErrorT(uint64_t Value)> LooseUIntCallbackT;
+typedef std::function<ReadErrorT(float Value)> LooseFloatCallbackT;
+typedef std::function<ReadErrorT(std::string &&Value)> LooseStringCallbackT;
+typedef std::function<ReadErrorT(std::vector<uint8_t> &&Value)> LooseBinaryCallbackT;
+typedef std::function<ReadErrorT(ReadObjectT &Value)> LooseObjectCallbackT;
+typedef std::function<ReadErrorT(ReadArrayT &Value)> LooseArrayCallbackT;
+typedef std::function<ReadErrorT(std::string &&Type, ReadObjectT &Value)> LoosePolymorphCallbackT;
 
 typedef StrictType(LooseBoolCallbackT) BoolCallbackT;
 typedef StrictType(LooseIntCallbackT) IntCallbackT;
@@ -134,6 +139,27 @@ typedef StrictType(LooseStringCallbackT) StringCallbackT;
 typedef StrictType(LooseBinaryCallbackT) BinaryCallbackT;
 typedef StrictType(LooseObjectCallbackT) ObjectCallbackT;
 typedef StrictType(LooseArrayCallbackT) ArrayCallbackT;
+typedef StrictType(LoosePolymorphCallbackT) PolymorphCallbackT;
+struct InternalPolymorphCallbackT
+{
+	LooseStringCallbackT StringCallback;
+	LooseObjectCallbackT ObjectCallback;
+};
+			
+typedef VariantT
+	<
+		BoolCallbackT, 
+		IntCallbackT, 
+		UIntCallbackT, 
+		FloatCallbackT, 
+		StringCallbackT,
+		BinaryCallbackT,
+		ObjectCallbackT,
+		ArrayCallbackT,
+		PolymorphCallbackT,
+		InternalPolymorphCallbackT
+	>
+	ReadCallbackVariantT;
 
 struct ReadNestableT
 {
@@ -143,19 +169,18 @@ struct ReadNestableT
 	friend struct ReadT;
 	protected:
 		// Stack context sensitive callbacks
-		virtual bool Bool(bool Value) = 0;
-		virtual bool Number(std::string const &Source) = 0;
-		virtual bool StringOrBinary(std::string const &Source) = 0;
-		virtual bool Object(ReadObjectT &Object) = 0;
-		virtual bool Key(std::string const &Value) = 0;
-		virtual bool Array(ReadArrayT &Array) = 0;
+		virtual ReadErrorT Bool(bool Value) = 0;
+		virtual ReadErrorT Number(std::string const &Source) = 0;
+		virtual ReadErrorT StringOrBinary(std::string const &Source) = 0;
+		virtual ReadErrorT Object(ReadObjectT &Object) = 0;
+		virtual ReadErrorT Key(std::string const &Value) = 0;
+		virtual ReadErrorT Array(ReadArrayT &Array) = 0;
+		virtual ReadErrorT Final(void) = 0;
 };
 
 struct ReadArrayT : ReadNestableT
 {
 	public:
-		~ReadArrayT(void);
-		
 		void Bool(LooseBoolCallbackT const &Callback);
 		void Int(LooseIntCallbackT const &Callback);
 		void UInt(LooseUIntCallbackT const &Callback);
@@ -164,37 +189,29 @@ struct ReadArrayT : ReadNestableT
 		void Binary(LooseBinaryCallbackT const &Callback);
 		void Object(LooseObjectCallbackT const &Callback);
 		void Array(LooseArrayCallbackT const &Callback);
+		void Polymorph(LoosePolymorphCallbackT const &Callback);
 	
-		void Destructor(std::function<void(void)> const &Callback);
+		void Finally(std::function<ReadErrorT(void)> const &Callback);
 	
 	protected:
-		bool Bool(bool Value) override;
-		bool Number(std::string const &Source) override;
-		bool StringOrBinary(std::string const &Source) override;
-		bool Object(ReadObjectT &Object) override;
-		bool Key(std::string const &Value) override;
-		bool Array(ReadArrayT &Array) override;
+		friend ReadErrorT ReadPolymorph(ReadCallbackVariantT &, ReadArrayT &, bool);
+		void InternalPolymorph(InternalPolymorphCallbackT const &Callback);
+		ReadErrorT Bool(bool Value) override;
+		ReadErrorT Number(std::string const &Source) override;
+		ReadErrorT StringOrBinary(std::string const &Source) override;
+		ReadErrorT Object(ReadObjectT &Object) override;
+		ReadErrorT Key(std::string const &Value) override;
+		ReadErrorT Array(ReadArrayT &Array) override;
+		ReadErrorT Final(void) override;
 	
 	private:
-		VariantT
-		<
-			BoolCallbackT, 
-			IntCallbackT, 
-			UIntCallbackT, 
-			FloatCallbackT, 
-			StringCallbackT,
-			BinaryCallbackT,
-			ObjectCallbackT,
-			ArrayCallbackT
-		> Callback;
-		std::function<void(void)> DestructorCallback;
+		ReadCallbackVariantT Callback;
+		std::function<ReadErrorT(void)> DestructorCallback;
 };
 
 struct ReadObjectT : ReadNestableT
 {
 	public:
-		~ReadObjectT(void);
-		
 		void Bool(std::string const &Key, LooseBoolCallbackT const &Callback);
 		void Int(std::string const &Key, LooseIntCallbackT const &Callback);
 		void UInt(std::string const &Key, LooseUIntCallbackT const &Callback);
@@ -203,45 +220,36 @@ struct ReadObjectT : ReadNestableT
 		void Binary(std::string const &Key, LooseBinaryCallbackT const &Callback);
 		void Object(std::string const &Key, LooseObjectCallbackT const &Callback);
 		void Array(std::string const &Key, LooseArrayCallbackT const &Callback);
+		void Polymorph(std::string const &Key, LoosePolymorphCallbackT const &Callback);
 		
-		void Destructor(std::function<void(void)> const &Callback);
+		void Finally(std::function<ReadErrorT(void)> const &Callback);
 		
 	protected:
-		bool Bool(bool Value) override;
-		bool Number(std::string const &Source) override;
-		bool StringOrBinary(std::string const &Source) override;
-		bool Object(ReadObjectT &Object) override;
-		bool Key(std::string const &Value) override;
-		bool Array(ReadArrayT &Array) override;
+		ReadErrorT Bool(bool Value) override;
+		ReadErrorT Number(std::string const &Source) override;
+		ReadErrorT StringOrBinary(std::string const &Source) override;
+		ReadErrorT Object(ReadObjectT &Object) override;
+		ReadErrorT Key(std::string const &Value) override;
+		ReadErrorT Array(ReadArrayT &Array) override;
+		ReadErrorT Final(void) override;
 		
 	private:
 		std::string LastKey;
-		std::map
-		<
-			std::string, 
-			VariantT
-			<
-				BoolCallbackT, 
-				IntCallbackT, 
-				UIntCallbackT, 
-				FloatCallbackT, 
-				StringCallbackT,
-				BinaryCallbackT,
-				ObjectCallbackT,
-				ArrayCallbackT
-			>
-		> Callbacks;
-		std::function<void(void)> DestructorCallback;
+		std::map<std::string, ReadCallbackVariantT> Callbacks;
+		std::function<ReadErrorT(void)> DestructorCallback;
 };
 
-struct ReadT : ReadObjectT
+struct ReadT : ReadArrayT
 {
 	public:
-		ReadT(ObjectCallbackT const &Setup);
+		ReadT(void);
 		~ReadT(void);
+		ReadErrorT Parse(std::istream &Stream);
+		ReadErrorT Parse(std::istream &&Stream); // C++ IS SO AWESOME
 	private:
 		yajl_handle Base;
-		std::stack<std::unique_ptr<ReadNestableT>> Stack;
+		std::stack<std::unique_ptr<ReadNestableT, void(*)(ReadNestableT *)>> Stack;
+		ReadErrorT Error;
 };
 
 }

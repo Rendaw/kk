@@ -1,5 +1,6 @@
 #include "composite.h"
 
+#include "logging.h"
 #include "protoatom.h"
 
 namespace Core
@@ -7,6 +8,7 @@ namespace Core
 
 CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), InfixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), EffectivelyVertical(TypeInfo.SpatiallyVertical)
 {
+	TRACE;
 	Visual.Tag().Add(TypeInfo.Tag);
 	Visual.SetClass("type");
 	Visual.SetClass(StringT() << "type-" << TypeInfo.Tag);
@@ -15,68 +17,72 @@ CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : NucleusT(Core), 
 	SuffixVisual.SetClass("affix-outer");
 }
 
+Serial::ReadErrorT CompositeT::Deserialize(Serial::ReadObjectT &Object)
+{
+	TRACE;
+	for (auto &Part : Parts) 
+	{
+		auto Error = Part->Deserialize(Object);
+		if (Error) return Error;
+	}
+	return {};
+}
+
 void CompositeT::Serialize(Serial::WritePolymorphT &Polymorph) const
 {
+	TRACE;
 	for (auto &Part : Parts)
 		Part->Serialize(Polymorph);
 }
 
 AtomTypeT const &CompositeT::GetTypeInfo(void) const
 {
+	TRACE;
 	return TypeInfo;
 }
 
 void CompositeT::Focus(FocusDirectionT Direction)
 {
-	switch (Direction)
+	TRACE;
+	/*switch (Direction)
 	{
 		case FocusDirectionT::FromAhead:
 			Focused = PartFocusedT{Parts.size() - 1};
 			Parts.back()->Focus(Direction);
-			return;
+			break;
 		case FocusDirectionT::FromBehind:
 			Focused = PartFocusedT{0};
 			Parts.front()->Focus(Direction);
-			return;
+			break;
 		case FocusDirectionT::Direct:
+			if (Core.TextMode && FocusDefault()) break;
 			Focused = SelfFocusedT{};
 			NucleusT::Focus(Direction);
 			Visual.SetClass("flag-focused");
-			return;
-	}
+			break;
+	}*/
+	if (Core.TextMode && FocusDefault()) return;
+	Focused = SelfFocusedT{};
+	NucleusT::Focus(Direction);
+	Visual.SetClass("flag-focused");
 }
 
 void CompositeT::Defocus(void)
 {
+	TRACE;
 	Visual.UnsetClass("flag-focused");
 }
 
 void CompositeT::AssumeFocus(void)
 {
-	if (Focused)
-	{
-		// If self focused, do nothing
-		if (Focused.Is<PartFocusedT>()) Parts[Focused.Get<PartFocusedT>()]->AssumeFocus();
-	}
-	else
-	{
-		size_t Index = 0;
-		for (auto &PartInfo : TypeInfo.Parts)
-		{
-			if (PartInfo->FocusDefault) 
-			{
-				Focused = PartFocusedT{Index};
-				Parts[Index]->AssumeFocus();
-				return;
-			}
-			++Index;
-		}
-		Focus(FocusDirectionT::Direct);
-	}
+	TRACE;
+	if (Focused && Focused.Is<PartFocusedT>()) Parts[Focused.Get<PartFocusedT>()]->AssumeFocus();
+	else Focus(FocusDirectionT::Direct);
 }
 
 void CompositeT::Refresh(void)
 {
+	TRACE;
 	if (TypeInfo.DisplayPrefix) 
 	{
 		PrefixVisual.Start();
@@ -112,6 +118,7 @@ void CompositeT::Refresh(void)
 
 std::unique_ptr<ActionT> CompositeT::Set(NucleusT *Nucleus)
 {
+	TRACE;
 	size_t Index = 0;
 	for (auto &PartInfo : TypeInfo.Parts)
 	{
@@ -125,6 +132,7 @@ std::unique_ptr<ActionT> CompositeT::Set(NucleusT *Nucleus)
 
 std::unique_ptr<ActionT> CompositeT::Set(std::string const &Text)	
 {
+	TRACE;
 	size_t Index = 0;
 	for (auto &PartInfo : TypeInfo.Parts)
 	{
@@ -138,11 +146,12 @@ std::unique_ptr<ActionT> CompositeT::Set(std::string const &Text)
 
 OptionalT<std::unique_ptr<ActionT>> CompositeT::HandleInput(InputT const &Input)
 {
+	TRACE;
 	if (Input.Main)
 	{
 		if (Focused.Is<PartFocusedT>())
 		{
-			if (TypeInfo.SpatiallyVertical)
+			if (EffectivelyVertical)
 			{
 				switch (*Input.Main)
 				{
@@ -160,13 +169,28 @@ OptionalT<std::unique_ptr<ActionT>> CompositeT::HandleInput(InputT const &Input)
 					default: break;
 				}
 			}
+			switch (*Input.Main)
+			{
+				case InputT::MainT::Exit: Focus(FocusDirectionT::Direct); return {};
+				default: break;
+			}
 		}
 		if (Focused.Is<SelfFocusedT>())
 		{
 			switch (*Input.Main)
 			{
 				case InputT::MainT::Delete:
-					if (Atom) return std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Core.ProtoatomType->Generate(Core)));
+				{
+					auto RValueThis = this;
+					if (!AsProtoatom(RValueThis))
+					{
+						if (Atom) return std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Core.ProtoatomType->Generate(Core)));
+						return {};
+					}
+					else break;
+				}
+				case InputT::MainT::Enter:
+					FocusDefault();
 					return {};
 				default: break;
 			}
@@ -178,6 +202,7 @@ OptionalT<std::unique_ptr<ActionT>> CompositeT::HandleInput(InputT const &Input)
 
 void CompositeT::FocusPrevious(void)
 {
+	TRACE;
 	Assert(Focused.Is<PartFocusedT>());
 	auto &Index = Focused.Get<PartFocusedT>();
 	if (Index == 0) { if (Parent) Parent->FocusPrevious(); }
@@ -190,24 +215,83 @@ void CompositeT::FocusPrevious(void)
 
 void CompositeT::FocusNext(void)
 {
-	std::cout << "Fra " << this << std::endl;
+	TRACE;
 	Assert(Focused.Is<PartFocusedT>());
 	auto &Index = Focused.Get<PartFocusedT>();
 	if (Index + 1 == Parts.size()) 
 	{ 
-		std::cout << "Parent of " << this << " is " << Parent.Nucleus << std::endl;
 		if (Parent) Parent->FocusNext(); 
 	}
 	else 
 	{
 		Index += 1;
-		std::cout << "Inc " << this << " now at " << Index << std::endl;
 		Parts[Index]->Focus(FocusDirectionT::FromBehind);
 	}
 }
 
+bool CompositeT::FocusDefault(void)
+{
+	TRACE;
+	size_t Index = 0;
+	for (auto &PartInfo : TypeInfo.Parts)
+	{
+		if (PartInfo->FocusDefault) 
+		{
+			Focused = PartFocusedT{Index};
+			Parts[Index]->AssumeFocus();
+			return true;
+		}
+		++Index;
+	}
+	return false;
+}
+
+Serial::ReadErrorT CompositeTypeT::Deserialize(Serial::ReadObjectT &Object)
+{
+	TRACE;
+	{
+		auto Error = AtomTypeT::Deserialize(Object);
+		if (Error) return Error;
+	}
+	Object.String("DisplayPrefix", [this](std::string &&Value) -> Serial::ReadErrorT 
+		{ DisplayPrefix = std::move(Value); return {}; });
+	Object.String("DisplayInfix", [this](std::string &&Value) -> Serial::ReadErrorT 
+		{ DisplayInfix = std::move(Value); return {}; });
+	Object.String("DisplaySuffix", [this](std::string &&Value) -> Serial::ReadErrorT 
+		{ DisplaySuffix = std::move(Value); return {}; });
+	Object.Array("Parts", [this](Serial::ReadArrayT &Array) -> Serial::ReadErrorT
+	{
+		Array.Polymorph([this](std::string &&Type, Serial::ReadObjectT &Object) -> Serial::ReadErrorT 
+		{
+			CompositeTypePartT *Out = nullptr;
+			if (Type == "Atom") Out = new AtomPartTypeT(*this);
+			else if (Type == "AtomList") Out = new AtomListPartTypeT(*this);
+			else if (Type == "String") Out = new StringPartTypeT(*this);
+			else if (Type == "Enum") Out = new EnumPartTypeT(*this);
+			else if (Type == "Protoatom") Out = new ProtoatomPartTypeT(*this);
+			else return (::StringT() << "Unknown part type \"" << Type << "\"").str();
+			Parts.push_back(std::unique_ptr<CompositeTypePartT>(Out));
+			return Out->Deserialize(Object);
+		});
+		return {};
+	});
+	return {};
+}
+	
+void CompositeTypeT::Serialize(Serial::WriteObjectT &Object) const
+{
+	TRACE;
+	AtomTypeT::Serialize(Object);
+	if (DisplayPrefix) Object.String("DisplayPrefix", *DisplayPrefix);
+	if (DisplayInfix) Object.String("DisplayInfix", *DisplayInfix);
+	if (DisplaySuffix) Object.String("DisplaySuffix", *DisplaySuffix);
+	auto Array = Object.Array("Parts");
+	for (auto &Part : Parts) Part->Serialize(Array.Polymorph());
+}
+
 NucleusT *CompositeTypeT::Generate(CoreT &Core)
 {
+	TRACE;
 	auto Out = new CompositeT(Core, *this);
 	for (auto &Part : Parts) 
 	{
@@ -218,15 +302,69 @@ NucleusT *CompositeTypeT::Generate(CoreT &Core)
 	return Out;
 }
 
-CompositeTypePartT::CompositeTypePartT(CompositeTypeT &Parent) : Parent(Parent) {}
+CompositeTypePartT::CompositeTypePartT(CompositeTypeT &Parent) : Parent(Parent) { TRACE; }
+
+Serial::ReadErrorT CompositeTypePartT::Deserialize(Serial::ReadObjectT &Object)
+{
+	TRACE;
+	Object.String("Tag", [this](std::string &&Value) -> Serial::ReadErrorT 
+		{ Tag = std::move(Value); return {}; });
+	Object.Bool("SpatiallyVertical", [this](bool Value) -> Serial::ReadErrorT 
+		{ SpatiallyVertical = Value; return {}; });
+	Object.Bool("FocusDefault", [this](bool Value) -> Serial::ReadErrorT 
+		{ FocusDefault = Value; return {}; });
+	Object.Bool("SetDefault", [this](bool Value) -> Serial::ReadErrorT 
+		{ SetDefault = Value; return {}; });
+	Object.String("DisplayPrefix", [this](std::string &&Value) -> Serial::ReadErrorT 
+		{ DisplayPrefix = std::move(Value); return {}; });
+	Object.String("DisplaySuffix", [this](std::string &&Value) -> Serial::ReadErrorT 
+		{ DisplaySuffix = std::move(Value); return {}; });
+	return {};
+}
+
+void CompositeTypePartT::Serialize(Serial::WriteObjectT &Object) const
+{
+	TRACE;
+	Object.String("Tag", Tag);
+	Object.Bool("SpatiallyVertical", SpatiallyVertical);
+	Object.Bool("FocusDefault", FocusDefault);
+	Object.Bool("SetDefault", SetDefault);
+	if (DisplayPrefix) Object.String("DisplayPrefix", *DisplayPrefix);
+	if (DisplaySuffix) Object.String("DisplaySuffix", *DisplaySuffix);
+}
+
+Serial::ReadErrorT AtomPartTypeT::Deserialize(Serial::ReadObjectT &Object) 
+{
+	TRACE;
+	auto Error = CompositeTypePartT::Deserialize(Object);
+	if (Error) return Error;
+	Object.Bool("StartEmpty", [this](bool Value) -> Serial::ReadErrorT { StartEmpty = true; return {}; });
+	return {};
+}
+
+void AtomPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
+{
+	TRACE;
+	Serial::WritePolymorphT Polymorph("Atom", std::move(Prepolymorph));
+	Serialize(Polymorph);
+}
+
+void AtomPartTypeT::Serialize(Serial::WriteObjectT &Object) const
+{
+	TRACE;
+	AtomTypeT::Serialize(Object);
+	Object.Bool("StartEmpty", StartEmpty);
+}
 
 NucleusT *AtomPartTypeT::Generate(CoreT &Core)
 {
+	TRACE;
 	return new AtomPartT(Core, *this);
 }
 
 AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Data(Core)
 {
+	TRACE;
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
 	PrefixVisual.SetClass("affix-inner");
@@ -252,11 +390,22 @@ AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), Typ
 		Data.Set(Core.ProtoatomType->Generate(Core));
 }
 
+Serial::ReadErrorT AtomPartT::Deserialize(Serial::ReadObjectT &Object)
+{
+	TRACE;
+	Object.Polymorph(TypeInfo.Tag, [this](std::string &&Type, Serial::ReadObjectT &Object) -> Serial::ReadErrorT
+	{
+		return Core.Deserialize(Data, Type, Object);
+	});
+	return {};
+}
+
 void AtomPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
-{ 
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
+{
+	TRACE; 
+	/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
 	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
 	if (Data) Data->Serialize(Polymorph.Polymorph(TypeInfo.Tag)); 
 }
 
@@ -264,6 +413,7 @@ AtomTypeT const &AtomPartT::GetTypeInfo(void) const { return TypeInfo; }
 
 void AtomPartT::Focus(FocusDirectionT Direction) 
 {
+	TRACE;
 	if (Data) Data->Focus(Direction); 
 	else
 	{
@@ -280,16 +430,18 @@ void AtomPartT::Focus(FocusDirectionT Direction)
 	}
 }
 
-void AtomPartT::Defocus(void) {}
+void AtomPartT::Defocus(void) { TRACE; }
 
 void AtomPartT::AssumeFocus(void) 
-{ 
+{
+	TRACE; 
 	if (Data) Data->AssumeFocus(); 
 	else Parent->FocusNext(); 
 }
 
 void AtomPartT::Refresh(void) 
 {
+	TRACE;
 	Visual.Start();
 	
 	if (!Data) return;
@@ -312,31 +464,58 @@ void AtomPartT::Refresh(void)
 	Visual.Add(SuffixVisual);
 }
 
-std::unique_ptr<ActionT> AtomPartT::Set(NucleusT *Nucleus) { return std::unique_ptr<ActionT>(new AtomT::SetT(Data, Nucleus)); }
+std::unique_ptr<ActionT> AtomPartT::Set(NucleusT *Nucleus) { TRACE; return std::unique_ptr<ActionT>(new AtomT::SetT(Data, Nucleus)); }
 
-OptionalT<std::unique_ptr<ActionT>> AtomPartT::HandleInput(InputT const &Input) { return Parent->HandleInput(Input); }
+OptionalT<std::unique_ptr<ActionT>> AtomPartT::HandleInput(InputT const &Input) { TRACE; return Parent->HandleInput(Input); }
 
-void AtomPartT::FocusPrevious(void) { Parent->FocusPrevious(); }
+void AtomPartT::FocusPrevious(void) { TRACE; Parent->FocusPrevious(); }
 
-void AtomPartT::FocusNext(void) { Parent->FocusNext(); }
+void AtomPartT::FocusNext(void) { TRACE; Parent->FocusNext(); }
+
+void AtomListPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
+{
+	TRACE;
+	Serial::WritePolymorphT Polymorph("AtomList", std::move(Prepolymorph));
+	Serialize(Polymorph);
+}
 
 NucleusT *AtomListPartTypeT::Generate(CoreT &Core)
 {
+	TRACE;
 	return new AtomListPartT(Core, *this);
 }
 
-AtomListPartT::AtomListPartT(CoreT &Core, AtomListPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), FocusIndex(0)
+AtomListPartT::AtomListPartT(CoreT &Core, AtomListPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), FocusIndex(0), EffectivelyVertical(TypeInfo.SpatiallyVertical)
 {
+	TRACE;
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
 	Add(0, Core.ProtoatomType->Generate(Core));
 }
 
+Serial::ReadErrorT AtomListPartT::Deserialize(Serial::ReadObjectT &Object)
+{
+	TRACE;
+	Object.Array(TypeInfo.Tag, [this](Serial::ReadArrayT &Array) -> Serial::ReadErrorT
+	{
+		FocusIndex = 0;
+		Data.clear();
+		Array.Polymorph([this](std::string &&Type, Serial::ReadObjectT &Object) -> Serial::ReadErrorT
+		{
+			Add(Data.size(), nullptr, false);
+			return Core.Deserialize(Data.back()->Atom, Type, Object);
+		});
+		return {};
+	});
+	return {};
+}
+
 void AtomListPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 {
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
+	TRACE;
+	/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
 	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
 	auto Array = Polymorph.Array(TypeInfo.Tag);
 	for (auto &Atom : Data)
 		{ Atom->Atom->Serialize(Array.Polymorph()); }
@@ -345,7 +524,8 @@ void AtomListPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 AtomTypeT const &AtomListPartT::GetTypeInfo(void) const { return TypeInfo; }
 
 void AtomListPartT::Focus(FocusDirectionT Direction) 
-{ 
+{
+	TRACE; 
 	switch (Direction)
 	{
 		case FocusDirectionT::FromAhead: FocusIndex = Data.size() - 1; break;
@@ -357,16 +537,19 @@ void AtomListPartT::Focus(FocusDirectionT Direction)
 	Data[FocusIndex]->Atom->Focus(Direction);
 }
 
-void AtomListPartT::Defocus(void) { Assert(false); }
+void AtomListPartT::Defocus(void) { TRACE; Assert(false); }
 
 void AtomListPartT::AssumeFocus(void) 
 {
-	if (FocusIndex + 1 >= Data.size()) FocusIndex = Data.size() - 1;
+	TRACE;
+	Assert(!Data.empty());
+	FocusIndex = std::min(FocusIndex, Data.size() - 1);
 	Data[FocusIndex]->Atom->AssumeFocus();
 }
 
 void AtomListPartT::Refresh(void) 
 {
+	TRACE;
 	Visual.Start();
 	for (auto &Atom : Data)
 	{
@@ -386,10 +569,14 @@ void AtomListPartT::Refresh(void)
 		Atom->Visual.Add(Atom->SuffixVisual);
 		Visual.Add(Atom->Visual);
 	}
+	if (EffectivelyVertical)
+ 		Visual.SetClass("flag-vertical");
+	else Visual.UnsetClass("flag-vertical");
 }
 
 void AtomListPartT::Add(size_t Position, NucleusT *Nucleus, bool ShouldFocus)
 {
+	TRACE;
 	Data.emplace(Data.begin() + Position, new ItemT{{Core.RootVisual.Root}, {Core.RootVisual.Root}, {Core.RootVisual.Root}, {Core}});
 	Data[Position]->PrefixVisual.SetClass("affix-inner");
 	Data[Position]->SuffixVisual.SetClass("affix-inner");
@@ -403,20 +590,26 @@ void AtomListPartT::Add(size_t Position, NucleusT *Nucleus, bool ShouldFocus)
 	if (ShouldFocus)
 	{
 		FocusIndex = Position;
-		Data[Position]->Atom->Focus(FocusDirectionT::FromBehind);
+		if (Data[Position]->Atom)
+			Data[Position]->Atom->Focus(FocusDirectionT::FromBehind);
 	}
+	FlagRefresh();
 }
 
 void AtomListPartT::Remove(size_t Position)
 {
+	TRACE;
 	Assert(Position < Data.size());
 	Data.erase(Data.begin() + Position);
+	Core.AssumeFocus();
+	FlagRefresh();
 }
 
-AtomListPartT::AddRemoveT::AddRemoveT(AtomListPartT &Base, bool Add, size_t Position, NucleusT *Nucleus) : Base(Base), Add(Add), Position(Position), Nucleus(Base.Core, Nucleus) { }
+AtomListPartT::AddRemoveT::AddRemoveT(AtomListPartT &Base, bool Add, size_t Position, NucleusT *Nucleus) : Base(Base), Add(Add), Position(Position), Nucleus(Base.Core, Nucleus) { TRACE; }
 
 std::unique_ptr<ActionT> AtomListPartT::AddRemoveT::Apply(void)
 {
+	TRACE;
 	std::unique_ptr<ActionT> Out;
 	if (Add) 
 	{
@@ -433,16 +626,18 @@ std::unique_ptr<ActionT> AtomListPartT::AddRemoveT::Apply(void)
 
 std::unique_ptr<ActionT> AtomListPartT::Set(NucleusT *Nucleus) 
 {
+	TRACE;
 	return std::unique_ptr<ActionT>(new AddRemoveT(*this, true, Data.size(), Nucleus));
 }
 
-std::unique_ptr<ActionT> AtomListPartT::Set(std::string const &Text) { Assert(false); return {}; }
+std::unique_ptr<ActionT> AtomListPartT::Set(std::string const &Text) { TRACE; Assert(false); return {}; }
 
 OptionalT<std::unique_ptr<ActionT>> AtomListPartT::HandleInput(InputT const &Input) 
-{ 
+{
+	TRACE; 
 	if (Input.Main)
 	{
-		if (TypeInfo.Parent.SpatiallyVertical)
+		if (EffectivelyVertical)
 		{
 			switch (*Input.Main)
 			{
@@ -463,10 +658,16 @@ OptionalT<std::unique_ptr<ActionT>> AtomListPartT::HandleInput(InputT const &Inp
 
 		switch (*Input.Main)
 		{
+			case InputT::MainT::NewStatementBefore:
+				Core.TextMode = true;
+				return std::unique_ptr<ActionT>(new AddRemoveT(*this, true, FocusIndex, Core.ProtoatomType->Generate(Core)));
 			case InputT::MainT::NewStatement:
+				Core.TextMode = true;
 				return std::unique_ptr<ActionT>(new AddRemoveT(*this, true, FocusIndex + 1, Core.ProtoatomType->Generate(Core)));
 			case InputT::MainT::Delete:
-				return std::unique_ptr<ActionT>(new AddRemoveT(*this, false, FocusIndex, {}));
+				if (Data.size() > 1)
+					return std::unique_ptr<ActionT>(new AddRemoveT(*this, false, FocusIndex, {}));
+				break;
 			default: break;
 		}
 	}
@@ -474,76 +675,107 @@ OptionalT<std::unique_ptr<ActionT>> AtomListPartT::HandleInput(InputT const &Inp
 }
 
 void AtomListPartT::FocusPrevious(void) 
-{ 
+{
+	TRACE; 
 	if (FocusIndex == 0) Parent->FocusPrevious();
 	else 
 	{
 		FocusIndex -= 1;
-		Data[FocusIndex]->Atom->Focus(FocusDirectionT::FromAhead);
+		Data[FocusIndex]->Atom->Focus(Core.TextMode ? FocusDirectionT::FromAhead : FocusDirectionT::Direct);
 	}
 }
 
 void AtomListPartT::FocusNext(void) 
-{ 
+{
+	TRACE; 
 	if (FocusIndex + 1 == Data.size()) Parent->FocusNext();
 	else 
 	{
 		FocusIndex += 1;
-		Data[FocusIndex]->Atom->Focus(FocusDirectionT::FromBehind);
+		Data[FocusIndex]->Atom->Focus(Core.TextMode ? FocusDirectionT::FromBehind : FocusDirectionT::Direct);
 	}
+}
+
+void StringPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
+{
+	TRACE;
+	Serial::WritePolymorphT Polymorph("String", std::move(Prepolymorph));
+	Serialize(Polymorph);
 }
 
 NucleusT *StringPartTypeT::Generate(CoreT &Core)
 {
+	TRACE;
 	return new StringPartT(Core, *this);
 }
 
-StringPartT::StringPartT(CoreT &Core, StringPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Focused(false), Position(0)
+StringPartT::StringPartT(CoreT &Core, StringPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Focused(FocusedT::Off), Position(0)
 {
+	TRACE;
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
 	PrefixVisual.SetClass("affix-inner");
 	SuffixVisual.SetClass("affix-inner");
 }
 
+Serial::ReadErrorT StringPartT::Deserialize(Serial::ReadObjectT &Object)
+{
+	TRACE;
+	Object.String(TypeInfo.Tag, [this](std::string &&Value) -> Serial::ReadErrorT 
+		{ Data = std::move(Value); return {}; });
+	return {};
+}
+
 void StringPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
-{ 
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
+{
+	TRACE; 
+	/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
 	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
 	Polymorph.String(TypeInfo.Tag, Data); 
 }
 
 AtomTypeT const &StringPartT::GetTypeInfo(void) const { return TypeInfo; }
 
 void StringPartT::Focus(FocusDirectionT Direction) 
-{ 
-	NucleusT::Focus(Direction);
-	Focused = true;
-	switch (Direction)
+{
+	TRACE; 
+	if (Core.TextMode)
 	{
-		case FocusDirectionT::FromAhead: Position = Data.size(); break;
-		case FocusDirectionT::FromBehind: Position = 0; break;
-		case FocusDirectionT::Direct: Position = 0; break;
+		switch (Direction)
+		{
+			case FocusDirectionT::FromAhead: Position = Data.size(); break;
+			case FocusDirectionT::FromBehind: Position = 0; break;
+			case FocusDirectionT::Direct: Position = 0; break;
+		}
+		Focused = FocusedT::Text;
 	}
-	Visual.SetClass("flag-focused");
+	else
+	{
+		Visual.SetClass("flag-focused");
+		Focused = FocusedT::On;
+	}
+	NucleusT::Focus(Direction);
 	FlagRefresh();
 }
 
 void StringPartT::Defocus(void) 
 {
-	Focused = false;
+	TRACE;
+	Focused = FocusedT::Off;
 	Visual.UnsetClass("flag-focused");
 	FlagRefresh();
 }
 
 void StringPartT::AssumeFocus(void) 
-{ 
+{
+	TRACE; 
 	Focus(FocusDirectionT::Direct);
 }
 
 void StringPartT::Refresh(void) 
 {
+	TRACE;
 	if (TypeInfo.DisplayPrefix) 
 	{
 		PrefixVisual.Start();
@@ -557,7 +789,7 @@ void StringPartT::Refresh(void)
 	
 	Visual.Start();
 	Visual.Add(PrefixVisual);
-	if (Focused)
+	if (Focused == FocusedT::Text)
 	{
 		Visual.Add(Data.substr(0, Position));
 		Visual.Add(Core.CursorVisual);
@@ -567,12 +799,13 @@ void StringPartT::Refresh(void)
 	Visual.Add(SuffixVisual);
 }
 
-std::unique_ptr<ActionT> StringPartT::Set(NucleusT *Nucleus) { Assert(false); return {}; }
+std::unique_ptr<ActionT> StringPartT::Set(NucleusT *Nucleus) { TRACE; Assert(false); return {}; }
 
-StringPartT::SetT::SetT(StringPartT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) {}
+StringPartT::SetT::SetT(StringPartT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) { TRACE; }
 
 std::unique_ptr<ActionT> StringPartT::SetT::Apply(void)
 {
+	TRACE;
 	auto Out = new SetT(Base, Base.Position, Base.Data);
 	Base.Data = Data;
 	Base.Position = Position;
@@ -582,6 +815,7 @@ std::unique_ptr<ActionT> StringPartT::SetT::Apply(void)
 
 bool StringPartT::SetT::Combine(std::unique_ptr<ActionT> &Other)
 {
+	TRACE;
 	auto Set = dynamic_cast<SetT *>(Other.get());
 	if (!Set) return false;
 	if (&Set->Base != &Base) return false;
@@ -591,88 +825,165 @@ bool StringPartT::SetT::Combine(std::unique_ptr<ActionT> &Other)
 }
 
 std::unique_ptr<ActionT> StringPartT::Set(std::string const &Text) 
-{ 
+{
+	TRACE; 
 	return std::unique_ptr<ActionT>(new SetT(*this, Position, Text));
 }
 
 OptionalT<std::unique_ptr<ActionT>> StringPartT::HandleInput(InputT const &Input) 
-{ 
-	if (Input.Text)
+{
+	TRACE; 
+	AssertNE(Focused, FocusedT::Off);
+	if (Focused == FocusedT::Text)
 	{
-		return std::unique_ptr<ActionT>(new SetT(
-			*this, 
-			Position + 1, 
-			Data.substr(0, Position) + *Input.Text + Data.substr(Position)));
-	}
-	else if (Input.Main)
-	{
-		switch (*Input.Main)
+		if (Input.Text)
 		{
-			case InputT::MainT::Left:
+			return std::unique_ptr<ActionT>(new SetT(
+				*this, 
+				Position + 1, 
+				Data.substr(0, Position) + *Input.Text + Data.substr(Position)));
+		}
+		else if (Input.Main)
+		{
+			switch (*Input.Main)
 			{
-				if (Position == 0) 
+				case InputT::MainT::Left:
 				{
-					Parent->FocusPrevious();
+					if (Position == 0) 
+					{
+						Parent->FocusPrevious();
+					}
+					else
+					{
+						Position -= 1;
+						FlagRefresh();
+					}
+					return {};
 				}
-				else
+				case InputT::MainT::Right:
 				{
-					Position -= 1;
-					FlagRefresh();
+					if (Position == Data.size()) 
+					{
+						Parent->FocusNext();
+					}
+					else
+					{
+						Position += 1;
+						FlagRefresh();
+					}
+					return {};
 				}
-				return {};
+				case InputT::MainT::TextBackspace:
+				{
+					if (Position == 0) return {};
+					auto NewData = Data;
+					NewData.erase(Position - 1, 1);
+					auto NewPosition = Position - 1;
+					return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, NewData));
+				}
+				case InputT::MainT::Delete:
+				{
+					if (Position == Data.size()) return {};
+					auto NewData = Data;
+					NewData.erase(Position, 1);
+					return std::unique_ptr<ActionT>(new SetT(*this, Position, NewData));
+				}
+				case InputT::MainT::Exit:
+				{
+					Core.TextMode = false;
+					Focus(FocusDirectionT::Direct);
+					return {};
+				}
+				default: break;
 			}
-			case InputT::MainT::Right:
+		}
+	}
+	else
+	{
+		if (Input.Main)
+		{
+			switch (*Input.Main)
 			{
-				if (Position == Data.size()) 
-				{
-					Parent->FocusNext();
-				}
-				else
-				{
-					Position += 1;
-					FlagRefresh();
-				}
-				return {};
+				case InputT::MainT::Enter:
+					Core.TextMode = true;
+					Focus(FocusDirectionT::Direct);
+					return {};
+				case InputT::MainT::Delete:
+					return std::unique_ptr<ActionT>(new SetT(*this, 0, ""));
+				default: break;
 			}
-			case InputT::MainT::TextBackspace:
-			{
-				if (Position == 0) return {};
-				auto NewData = Data;
-				NewData.erase(Position - 1, 1);
-				auto NewPosition = Position - 1;
-				return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, NewData));
-			}
-			case InputT::MainT::Delete:
-			{
-				if (Position == Data.size()) return {};
-				auto NewData = Data;
-				NewData.erase(Position, 1);
-				return std::unique_ptr<ActionT>(new SetT(*this, Position, NewData));
-			}
-			default: break;
 		}
 	}
 	return Parent->HandleInput(Input);
 }
 
+Serial::ReadErrorT EnumPartTypeT::Deserialize(Serial::ReadObjectT &Object) 
+{
+	TRACE;
+	CompositeTypePartT::Deserialize(Object);
+	Object.Array("Values", [this](Serial::ReadArrayT &Array) -> Serial::ReadErrorT
+	{
+		Array.String([this](std::string &&Value) -> Serial::ReadErrorT 
+		{ 
+			ValueLookup[Value] = Values.size();
+			Values.emplace_back(std::move(Value)); 
+			return {};
+		});
+		return {};
+	});
+	return {};
+}
+
+void EnumPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
+{
+	TRACE;
+	Serial::WritePolymorphT Polymorph("Enum", std::move(Prepolymorph));
+	Serialize(Polymorph);
+}
+
+void EnumPartTypeT::Serialize(Serial::WriteObjectT &Object) const
+{
+	TRACE;
+	AtomTypeT::Serialize(Object);
+	auto Array = Object.Array("Values");
+	for (auto &Value : Values) Array.String(Value);
+}
+
 NucleusT *EnumPartTypeT::Generate(CoreT &Core)
 {
+	TRACE;
 	return new EnumPartT(Core, *this);
 }
 
 EnumPartT::EnumPartT(CoreT &Core, EnumPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Index(0) 
 {
+	TRACE;
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
 	PrefixVisual.SetClass("affix-inner");
 	SuffixVisual.SetClass("affix-inner");
 }
 
+Serial::ReadErrorT EnumPartT::Deserialize(Serial::ReadObjectT &Object)
+{
+	TRACE;
+	Object.String(TypeInfo.Tag, [this](std::string &&Value) -> Serial::ReadErrorT 
+	{
+		auto Found = TypeInfo.ValueLookup.find(Value);
+		if (Found == TypeInfo.ValueLookup.end())
+			Index = std::numeric_limits<decltype(Index)>::max();
+		else Index = Found->second;
+		return {};
+	});
+	return {};
+}
+
 void EnumPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
-{ 
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
+{
+	TRACE; 
+	/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
 	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
 	if (Index >= TypeInfo.Values.size())
 	{
 		Assert(false);
@@ -687,23 +998,27 @@ void EnumPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 AtomTypeT const &EnumPartT::GetTypeInfo(void) const { return TypeInfo; }
 
 void EnumPartT::Focus(FocusDirectionT Direction)
-{ 
+{
+	TRACE; 
 	NucleusT::Focus(Direction);
 	Visual.SetClass("flag-focused");
 }
 
 void EnumPartT::Defocus(void)
 {
+	TRACE;
 	Visual.UnsetClass("flag-focused");
 }
 
 void EnumPartT::AssumeFocus(void)
-{ 
+{
+	TRACE; 
 	Focus(FocusDirectionT::Direct);
 }
 
 void EnumPartT::Refresh(void)
-{ 
+{
+	TRACE; 
 	if (TypeInfo.DisplayPrefix) 
 	{
 		PrefixVisual.Start();
@@ -731,22 +1046,25 @@ void EnumPartT::Refresh(void)
 	
 EnumPartT::SetT::SetT(EnumPartT &Base, size_t Index) : Base(Base), Index(Index)
 {
+	TRACE;
 }
 
 std::unique_ptr<ActionT> EnumPartT::SetT::Apply(void)
 {
+	TRACE;
 	auto Out = new SetT(Base, Index);
 	Base.Index = Index;
 	Base.FlagRefresh();
 	return std::unique_ptr<ActionT>(Out);
 }
 	
-std::unique_ptr<ActionT> EnumPartT::Set(NucleusT *Nucleus) { Assert(false); return {}; }
+std::unique_ptr<ActionT> EnumPartT::Set(NucleusT *Nucleus) { TRACE; Assert(false); return {}; }
 
-std::unique_ptr<ActionT> EnumPartT::Set(std::string const &Text) { Assert(false); return {}; }
+std::unique_ptr<ActionT> EnumPartT::Set(std::string const &Text) { TRACE; Assert(false); return {}; }
 
 OptionalT<std::unique_ptr<ActionT>> EnumPartT::HandleInput(InputT const &Input)
-{ 
+{
+	TRACE; 
 	if (Input.Main)
 	{
 		switch (*Input.Main)
