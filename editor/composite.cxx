@@ -189,6 +189,26 @@ OptionalT<std::unique_ptr<ActionT>> CompositeT::HandleInput(InputT const &Input)
 					}
 					else break;
 				}
+				case InputT::MainT::Wedge:
+				{
+					if (Atom)
+					{
+						Core.TextMode = true;
+						auto Actions = new ActionGroupT;
+						auto Replacement = Core.ProtoatomType->Generate(Core);
+						Actions->Add(Replacement->Set(this));
+						Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Replacement)));
+						return std::unique_ptr<ActionT>(Actions);
+					}
+					else break;
+				}
+				case InputT::MainT::ReplaceParent:
+				{
+					auto Replacee = PartParent();
+					if (Replacee && Replacee->Atom)
+						return std::unique_ptr<ActionT>(new AtomT::SetT(*Replacee->Atom, this));
+					else break;
+				}
 				case InputT::MainT::Enter:
 					FocusDefault();
 					return {};
@@ -298,6 +318,7 @@ NucleusT *CompositeTypeT::Generate(CoreT &Core)
 		Out->Parts.emplace_back(Core);
 		Out->Parts.back().Parent = Out;
 		Out->Parts.back().Set(Part->Generate(Core));
+		Out->Parts.back().Callback = [](NucleusT *) { Assert(false); }; // Parts can't be replaced
 	}
 	return Out;
 }
@@ -544,7 +565,8 @@ void AtomListPartT::AssumeFocus(void)
 	TRACE;
 	Assert(!Data.empty());
 	FocusIndex = std::min(FocusIndex, Data.size() - 1);
-	Data[FocusIndex]->Atom->AssumeFocus();
+	if (Data[FocusIndex]->Atom)
+		Data[FocusIndex]->Atom->AssumeFocus();
 }
 
 void AtomListPartT::Refresh(void) 
@@ -585,7 +607,8 @@ void AtomListPartT::Add(size_t Position, NucleusT *Nucleus, bool ShouldFocus)
 	{
 		FlagRefresh();
 	};
-	Data[Position]->Atom.Set(Nucleus);
+	if (Nucleus)
+		Data[Position]->Atom.Set(Nucleus);
 	
 	if (ShouldFocus)
 	{

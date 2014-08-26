@@ -5,7 +5,8 @@
 			"Parts": [
 				["utf8:Atom", {
 					"Tag": "utf8:Lifted",
-					"StartEmpty": true
+					"StartEmpty": true,
+					"SetDefault": true
 				}],
 				["utf8:Protoatom", {
 					"Tag": "utf8:Data",
