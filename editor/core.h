@@ -221,6 +221,8 @@ struct NucleusT
 
 	size_t Count = 0;
 	AtomT *Atom;
+
+	std::map<uintptr_t, std::function<void(NucleusT *Changed)>> StatusWatchers;
 	
 	NucleusT(CoreT &Core);
 	virtual ~NucleusT(void);
@@ -253,8 +255,15 @@ struct NucleusT
 
 	virtual void FocusPrevious(void);
 	virtual void FocusNext(void);
+	
+	virtual bool IsEmpty(void) const;
+	virtual bool IsFocused(void) const;
 		
 	void FlagRefresh(void);
+
+	void FlagStatusChange(void);
+	void WatchStatus(uintptr_t ID, std::function<void(NucleusT *Changed)> Callback);
+	void IgnoreStatus(uintptr_t ID);
 };
 
 struct AtomTypeT

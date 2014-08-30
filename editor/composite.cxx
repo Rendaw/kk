@@ -64,6 +64,7 @@ void CompositeT::Focus(FocusDirectionT Direction)
 	if (Core.TextMode && FocusDefault()) return;
 	Focused = SelfFocusedT{};
 	NucleusT::Focus(Direction);
+	FlagStatusChange();
 	Visual.SetClass("flag-focused");
 }
 
@@ -71,6 +72,7 @@ void CompositeT::Defocus(void)
 {
 	TRACE;
 	Visual.UnsetClass("flag-focused");
+	FlagStatusChange();
 }
 
 void CompositeT::AssumeFocus(void)
@@ -182,7 +184,7 @@ OptionalT<std::unique_ptr<ActionT>> CompositeT::HandleInput(InputT const &Input)
 				case InputT::MainT::Delete:
 				{
 					auto RValueThis = this;
-					if (!AsProtoatom(RValueThis))
+					if (!AsProtoatom(RValueThis) || !IsEmpty())
 					{
 						if (Atom) return std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Core.ProtoatomType->Generate(Core)));
 						return {};
@@ -248,6 +250,23 @@ void CompositeT::FocusNext(void)
 		Parts[Index]->Focus(FocusDirectionT::FromBehind);
 	}
 }
+	
+bool CompositeT::IsEmpty(void) const
+{
+	TRACE;
+	for (auto &Part : Parts)
+		if (!Part->IsEmpty()) return false;
+	return true;
+}
+
+bool CompositeT::IsFocused(void) const
+{
+	TRACE;
+	if (NucleusT::IsFocused()) return true;
+	for (auto &Part : Parts)
+		if (Part->IsFocused()) return true;
+	return false;
+}
 
 bool CompositeT::FocusDefault(void)
 {
@@ -264,6 +283,20 @@ bool CompositeT::FocusDefault(void)
 		++Index;
 	}
 	return false;
+}
+	
+bool CompositeT::HasOnePart(void)
+{
+	TRACE;
+	size_t Count = 0;
+	for (auto &Part : Parts)
+	{
+		// These conditions are kind of a hack, designed to make strings (1 part) and protoatoms (1 potentially empty atom part, 1 potentially empty text part) autoselect the text part when that's the obvious choice
+		if (!Part->IsEmpty() || 
+			dynamic_cast<CompositeTypePartT const *>(&Part->GetTypeInfo())->FocusDefault) 
+			++Count;
+	}
+	return Count == 1;
 }
 
 Serial::ReadErrorT CompositeTypeT::Deserialize(Serial::ReadObjectT &Object)
@@ -319,6 +352,7 @@ NucleusT *CompositeTypeT::Generate(CoreT &Core)
 		Out->Parts.back().Parent = Out;
 		Out->Parts.back().Set(Part->Generate(Core));
 		Out->Parts.back().Callback = [](NucleusT *) { Assert(false); }; // Parts can't be replaced
+		Out->Parts.back()->WatchStatus((uintptr_t)Out, [](NucleusT *Nucleus) { Nucleus->Parent->FlagStatusChange(); });
 	}
 	return Out;
 }
@@ -393,18 +427,8 @@ AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), Typ
 	Data.Parent = this;
 	Data.Callback = [this, &Core](NucleusT *Nucleus) 
 	{ 
-		if (Data)
-		{
-			auto Protoatom = AsProtoatom(Data);
-			if (Protoatom) VectorRemove(
-				Protoatom->FocusDependents, 
-				[this](HoldT &Hold) { return Hold.Nucleus == this; });
-		}
-		if (Nucleus) 
-		{
-			auto Protoatom = AsProtoatom(Nucleus);
-			if (Protoatom) Protoatom->FocusDependents.emplace_back(Core, this);
-		}
+		if (Data) Data->IgnoreStatus((uintptr_t)this);
+		if (Nucleus) Nucleus->WatchStatus((uintptr_t)this, [](NucleusT *Changed) { Changed->Parent->FlagRefresh(); });
 		FlagRefresh(); 
 	};
 	if (!TypeInfo.StartEmpty)
@@ -478,8 +502,9 @@ void AtomPartT::Refresh(void)
 		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
 	}
 	
-	auto Protoatom = AsProtoatom(Data);
-	if (Protoatom && Protoatom->IsEmpty()) return;
+	std::cout << "data is empty " << Data->IsEmpty() << std::endl;
+	std::cout << "data is focuesd " << Data->IsFocused() << std::endl;
+	if (Data->IsEmpty() && !Data->IsFocused()) return;
 	Visual.Add(PrefixVisual);
 	Visual.Add(Data->Visual);
 	Visual.Add(SuffixVisual);
@@ -492,6 +517,8 @@ OptionalT<std::unique_ptr<ActionT>> AtomPartT::HandleInput(InputT const &Input) 
 void AtomPartT::FocusPrevious(void) { TRACE; Parent->FocusPrevious(); }
 
 void AtomPartT::FocusNext(void) { TRACE; Parent->FocusNext(); }
+	
+bool AtomPartT::IsEmpty(void) const { TRACE; return !Data; }
 
 void AtomListPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
 {
@@ -763,6 +790,7 @@ AtomTypeT const &StringPartT::GetTypeInfo(void) const { return TypeInfo; }
 void StringPartT::Focus(FocusDirectionT Direction) 
 {
 	TRACE; 
+	if (Parent->As<CompositeT>()->HasOnePart()) Core.TextMode = true;
 	if (Core.TextMode)
 	{
 		switch (Direction)
@@ -914,8 +942,12 @@ OptionalT<std::unique_ptr<ActionT>> StringPartT::HandleInput(InputT const &Input
 				case InputT::MainT::Exit:
 				{
 					Core.TextMode = false;
-					Focus(FocusDirectionT::Direct);
-					return {};
+					if (!Parent->As<CompositeT>()->HasOnePart())
+					{
+						Focus(FocusDirectionT::Direct);
+						return {};
+					}
+					break;
 				}
 				default: break;
 			}

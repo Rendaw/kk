@@ -389,13 +389,36 @@ OptionalT<std::unique_ptr<ActionT>> NucleusT::HandleInput(InputT const &Input)
 	else return {}; 
 }
 	
-void NucleusT::FocusPrevious(void) {}
+void NucleusT::FocusPrevious(void) { TRACE; }
 
-void NucleusT::FocusNext(void) {}
+void NucleusT::FocusNext(void) { TRACE; }
+	
+bool NucleusT::IsEmpty(void) const { TRACE; return false; }
+	
+bool NucleusT::IsFocused(void) const { return Core.Focused.Nucleus == this; }
 
 void NucleusT::FlagRefresh(void) 
 {
 	Core.NeedRefresh.insert(this);
+}
+	
+void NucleusT::FlagStatusChange(void)
+{
+	for (auto &Watcher : StatusWatchers)
+		Watcher.second(this);
+}
+
+void NucleusT::WatchStatus(uintptr_t ID, std::function<void(NucleusT *Changed)> Callback)
+{
+	if (!Assert(StatusWatchers.find(ID) == StatusWatchers.end())) return;
+	StatusWatchers[ID] = Callback;
+}
+
+void NucleusT::IgnoreStatus(uintptr_t ID)
+{
+	auto Found = StatusWatchers.find(ID);
+	if (Assert(Found != StatusWatchers.end()))
+		StatusWatchers.erase(Found);
 }
 	
 AtomTypeT::~AtomTypeT(void) {}

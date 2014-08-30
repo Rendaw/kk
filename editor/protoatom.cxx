@@ -72,6 +72,7 @@ AtomTypeT const &ProtoatomPartT::GetTypeInfo(void) const { return TypeInfo; }
 void ProtoatomPartT::Focus(FocusDirectionT Direction)
 {
 	TRACE;
+	if (Parent->As<CompositeT>()->HasOnePart()) Core.TextMode = true;
 	if (Core.TextMode)
 	{
 		if ((Direction == FocusDirectionT::FromBehind) ||
@@ -91,8 +92,10 @@ void ProtoatomPartT::Focus(FocusDirectionT Direction)
 		Focused = FocusedT::On;
 	}
 	FlagRefresh();
+	FlagStatusChange();
 	NucleusT::Focus(Direction);
-	for (auto &Atom : FocusDependents) Atom->FlagRefresh();
+	if (Parent->Parent && Parent->Parent->As<AtomPartT>())
+		Parent->Parent->FlagRefresh(); // Hack for hiding empty protoatoms
 }
 
 void ProtoatomPartT::Defocus(void) 
@@ -101,7 +104,7 @@ void ProtoatomPartT::Defocus(void)
 	Focused = FocusedT::Off;
 	Visual.UnsetClass("flag-focused");
 	FlagRefresh();
-	for (auto &Atom : FocusDependents) Atom->FlagRefresh();
+	FlagStatusChange();
 }
 
 void ProtoatomPartT::AssumeFocus(void)
@@ -179,6 +182,7 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::HandleInput(InputT const &In
 			else if (!IsIdentifier || (*IsIdentifier == NewIsIdentifier))
 			{
 				if (!IsIdentifier) IsIdentifier = NewIsIdentifier;
+				Assert(Text.length() == 1);
 				auto NewData = Data;
 				NewData.insert(Position, Text);
 				auto NewPosition = Position + 1;
@@ -249,8 +253,12 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::HandleInput(InputT const &In
 				case InputT::MainT::Exit:
 				{
 					Core.TextMode = false;
-					Focus(FocusDirectionT::Direct);
-					return {};
+					if (!Parent->As<CompositeT>()->HasOnePart())
+					{
+						Focus(FocusDirectionT::Direct);
+						return {};
+					}
+					break;
 				}
 				default: break;
 			}
@@ -290,6 +298,8 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::HandleInput(InputT const &In
 		return Parent->HandleInput(Input);
 	}
 }
+	
+bool ProtoatomPartT::IsEmpty(void) const { TRACE; return Data.empty(); }
 
 OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT *> Type, std::string Text)
 {
@@ -379,13 +389,6 @@ OptionalT<std::unique_ptr<ActionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT *
 	}
 
 	return std::unique_ptr<ActionT>(Actions);
-}
-
-bool ProtoatomPartT::IsEmpty(void) const
-{
-	TRACE;
-	auto &Lifted = Parent->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Data;
-	return Data.empty() && !Lifted && !Focused;
 }
 
 }

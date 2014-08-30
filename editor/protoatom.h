@@ -33,8 +33,6 @@ struct ProtoatomPartT : NucleusT
 	} Focused = FocusedT::Off;
 	size_t Position = 0;
 
-	std::vector<HoldT> FocusDependents;
-
 	ProtoatomPartT(CoreT &Core, ProtoatomPartTypeT &TypeInfo);
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
@@ -47,7 +45,7 @@ struct ProtoatomPartT : NucleusT
 	
 	OptionalT<std::unique_ptr<ActionT>> Finish(OptionalT<AtomTypeT *> Type, std::string Text);
 	
-	bool IsEmpty(void) const;
+	bool IsEmpty(void) const override;
 };
 
 template <typename RefT> static OptionalT<ProtoatomPartT *> AsProtoatom(RefT &Test)

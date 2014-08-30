@@ -34,8 +34,12 @@ struct CompositeT : NucleusT
 	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
+	bool IsEmpty(void) const override;
+	bool IsFocused(void) const override;
 	
 	bool FocusDefault(void);
+
+	bool HasOnePart(void); // Only one part exists or is non-empty
 };
 
 struct CompositeTypePartT;
@@ -100,6 +104,7 @@ struct AtomPartT : NucleusT
 	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
+	bool IsEmpty(void) const override;
 };
 
 struct AtomListPartTypeT : CompositeTypePartT
