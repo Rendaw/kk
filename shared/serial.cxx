@@ -252,6 +252,15 @@ std::string WriteT::Dump(void)
 	return Out;
 }
 
+void WriteT::Dump(Filesystem::PathT const &Path)
+{
+	auto String = Dump();
+	auto File = fopen(Path->Render().c_str(), "w");
+	if (!Assert(File)) return; // TODO Error?
+	fwrite(String.c_str(), String.size(), 1, File);
+	fclose(File);
+}
+
 //================================================================================================================
 // Reading
 
@@ -573,6 +582,42 @@ ReadT::ReadT(void)
 ReadT::~ReadT(void)
 {
 	yajl_free(Base);
+}
+		
+ReadErrorT ReadT::Parse(Filesystem::PathT const &Path)
+{
+	auto File = fopen(Path->Render().c_str(), "r");
+	if (!File || ferror(File)) return (::StringT() << "Unable to open file " << Path->Render() << " to parse.").str();
+	while (true)
+	{
+		uint8_t ReadBuffer[65536];
+		auto ReadSize = fread(reinterpret_cast<char *>(ReadBuffer), 1, sizeof(ReadBuffer) - 1, File);
+		std::cout << "read [" << std::string((char const *)ReadBuffer, ReadSize) << "] " << ReadSize << std::endl;
+		if (ReadSize == 0)
+		{
+			auto Result = yajl_complete_parse(Base);
+			if (Result != yajl_status_ok) goto ReadError;
+			break;
+		}
+		ReadBuffer[ReadSize] = '\0';
+		{
+			auto Result = yajl_parse(Base, ReadBuffer, ReadSize);
+			if (Result != yajl_status_ok) goto ReadError;
+		}
+		
+		continue;
+		ReadError:
+		{
+			auto ErrorMessage = yajl_get_error(Base, 1, ReadBuffer, ReadSize);
+			::StringT Error;
+			Error << "Error during JSON deserialization of " << Path->Render() << ": ";
+			if (this->Error) Error << *this->Error << "\n";
+			Error << ErrorMessage;
+			yajl_free_error(Base, ErrorMessage);
+			return Error.str();
+		}
+	}
+	return {};
 }
 
 ReadErrorT ReadT::Parse(std::istream &Stream)

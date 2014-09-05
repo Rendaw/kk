@@ -8,6 +8,7 @@
 #include <stack>
 
 #include "type.h"
+#include "filesystem.h"
 
 namespace Serial
 {
@@ -111,6 +112,7 @@ struct WriteT
 
 	WriteObjectT Object(void);
 	std::string Dump(void);
+	void Dump(Filesystem::PathT const &Path);
 
 	private:
 		std::shared_ptr<WriteCoreT> Core;
@@ -244,6 +246,7 @@ struct ReadT : ReadArrayT
 	public:
 		ReadT(void);
 		~ReadT(void);
+		ReadErrorT Parse(Filesystem::PathT const &Path);
 		ReadErrorT Parse(std::istream &Stream);
 		ReadErrorT Parse(std::istream &&Stream); // C++ IS SO AWESOME
 	private:

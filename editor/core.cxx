@@ -514,7 +514,7 @@ CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused
 			});
 			return {};
 		});
-		auto Error = Read.Parse(std::ifstream("config.json"));
+		auto Error = Read.Parse(Filesystem::PathT::Here()->Enter("config.json"));
 		if (Error) throw ConstructionErrorT() << *Error;
 	}
 
@@ -579,7 +579,29 @@ CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused
 		Assert(Nucleus);
 		this->RootVisual.Add(Nucleus->Visual);
 	};
+	Refresh();
+}
+
+CoreT::~CoreT(void)
+{
+	std::ofstream("dump.kk") << Dump();
+}
 	
+void CoreT::Serialize(Filesystem::PathT const &Path)
+{
+	if (!Assert(Root)) return; // TODO Error?
+	Serial::WriteT Writer;
+	{
+		auto WriteRoot = Writer.Object();
+		Root->Serialize(WriteRoot.Polymorph("Root"));
+	}
+	return Writer.Dump(Path);
+}
+
+void CoreT::Deserialize(Filesystem::PathT const &Path)
+{
+	UndoQueue.clear();
+	RedoQueue.clear();
 	AtomT NewRoot(*this);
 	{
 		Serial::ReadT Read;
@@ -593,21 +615,11 @@ CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused
 			return {};
 		});
 		Serial::ReadErrorT ParseError;
-		/*std::ifstream Stream("dump.kk");
-		if (!Stream) Stream.open("default.kk");*/
-		std::ifstream Stream("default.kk");
-		ParseError = Read.Parse(std::move(Stream));
+		ParseError = Read.Parse(Path);
 		if (ParseError) throw ConstructionErrorT() << *ParseError;
 	}
 	Root.Set(NewRoot.Nucleus);
-	/*Root.Set(ModuleType->Generate(*this));
-	Root->As<CompositeT>()->Parts[1]->As<AtomPartT>()->Data.Set(GroupType->Generate(*this));*/
 	Refresh();
-}
-
-CoreT::~CoreT(void)
-{
-	std::ofstream("dump.kk") << Dump();
 }
 
 Serial::ReadErrorT CoreT::Deserialize(AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object)
@@ -664,6 +676,11 @@ void CoreT::Apply(OptionalT<std::unique_ptr<ActionT>> Action)
 	
 	//std::cout << RootVisual.Dump() << std::endl;
 	//std::cout << Dump() << std::endl;
+}
+	
+bool CoreT::HasChanges(void)
+{
+	return !UndoQueue.empty() || !RedoQueue.empty();
 }
 
 void CoreT::Undo(void)

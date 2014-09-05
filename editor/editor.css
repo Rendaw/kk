@@ -1,6 +1,6 @@
 * { margin: 0; padding: 0; visibility: visible; }
 
-body { font-size: 16px; font-family: monospace !important; white-space: pre !important; }
+body { font-size: 16px; font-family: monospace !important; white-space: pre !important; padding: 6px 4px; }
 
 div
 {
@@ -11,23 +11,21 @@ div
 
 div.type
 {
-	border: 1px solid LightSteelBlue;
-	margin: 2px;
-	padding: 2px;
 	display: inline;
 }
 
 div.part
 {
-	border: 1px solid Lavender;
-	margin: 2px;
-	padding: 2px;
 	display: inline;
 }
 
 div.flag-focused
 {
-	border-color: black;
+	border: 1px solid black;
+	margin: 2px;
+	padding: 2px;
+	margin-top: -4px;
+	margin-bottom: -4px;
 }
 
 .tag
@@ -85,5 +83,30 @@ div.type-Group > div.part-Statements.flag-vertical > div
 	margin-left: 64px;
 	padding-left: 64px;
 	text-indent: -64px;
+}
+
+/* Assignment */
+div.type-Assignment > div.affix-outer:not(:empty)
+{
+	padding: 0px 12px;
+}
+
+/* Visualize structure mode */
+body:not(.flag-visualizestructure) div.tag { display: none !important; }
+
+.flag-visualizestructure div.tag { display: visible; }
+
+.flag-visualizestructure div.type
+{
+	border: 1px solid LightSteelBlue;
+	margin: 2px;
+	padding: 2px;
+}
+
+.flag-visualizestructure div.part
+{
+	border: 1px solid Lavender;
+	margin: 2px;
+	padding: 2px;
 }
 

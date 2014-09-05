@@ -315,12 +315,15 @@ struct CoreT
 
 	CoreT(VisualT &RootVisual);
 	~CoreT(void);
+	void Serialize(Filesystem::PathT const &Path);
+	void Deserialize(Filesystem::PathT const &Path);
 	Serial::ReadErrorT Deserialize(AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
 	void HandleInput(InputT const &Input);
 	OptionalT<AtomTypeT *> LookUpAtom(std::string const &Text);
 	
 	void Apply(OptionalT<std::unique_ptr<ActionT>> Action);
 	std::list<std::unique_ptr<ActionT>> UndoQueue, RedoQueue;
+	bool HasChanges(void);
 	void Undo(void);
 	void Redo(void);
 
