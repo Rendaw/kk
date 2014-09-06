@@ -245,6 +245,7 @@ void AtomT::Set(NucleusT *Nucleus)
 	if (Nucleus->Atom)
 	{
 		//std::cout << "Relocating atom " << Nucleus << std::endl;
+		if (Nucleus->Atom->Callback) Nucleus->Atom->Callback(nullptr);
 		Nucleus->Atom->Clear();
 	}
 	Assert(!Nucleus->Atom);

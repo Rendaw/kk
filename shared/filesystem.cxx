@@ -95,7 +95,6 @@ bool PathElementT::Contains(PathElementT const *Other) const
 
 PathT PathElementT::Enter(std::string const &Value) const
 {
-	std::cout << "Entering " << Value << std::endl;
 	for (size_t pos = 0; pos < Value.size(); pos++) AssertNE(Value[pos], 0);
 	return PathT(new PathElementT(this, Value));
 }
@@ -103,7 +102,6 @@ PathT PathElementT::Enter(std::string const &Value) const
 std::regex ElementRegex("[/\\\\]+([^/\\\\]+)");
 PathT PathElementT::EnterRaw(std::string const &Raw) const
 {
-	std::cout << "raw entering " << Raw << std::endl;
 	std::string Text = Raw;
 	PathT Out(this);
 	std::smatch Matches;

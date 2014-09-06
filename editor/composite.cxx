@@ -153,12 +153,29 @@ OptionalT<std::unique_ptr<ActionT>> CompositeT::HandleInput(InputT const &Input)
 	{
 		if (Focused.Is<PartFocusedT>())
 		{
+			auto &Index = Focused.Get<PartFocusedT>();
 			if (EffectivelyVertical)
 			{
 				switch (*Input.Main)
 				{
-					case InputT::MainT::Up: FocusPrevious(); return {};
-					case InputT::MainT::Down: FocusNext(); return {};
+					case InputT::MainT::Up: 
+					{
+						if (Index > 0)
+						{
+							Index -= 1;
+							Parts[Index]->Focus(FocusDirectionT::FromAhead);
+						}
+						return {};
+					}
+					case InputT::MainT::Down: 
+					{
+						if (Index + 1 < Parts.size()) 
+						{
+							Index += 1;
+							Parts[Index]->Focus(FocusDirectionT::FromBehind);
+						}
+						return {};
+					}
 					default: break;
 				}
 			}
@@ -166,8 +183,24 @@ OptionalT<std::unique_ptr<ActionT>> CompositeT::HandleInput(InputT const &Input)
 			{
 				switch (*Input.Main)
 				{
-					case InputT::MainT::Left: FocusPrevious(); return {};
-					case InputT::MainT::Right: FocusNext(); return {};
+					case InputT::MainT::Left: 
+					{
+						if (Index > 0)
+						{
+							Index -= 1;
+							Parts[Index]->Focus(FocusDirectionT::FromAhead);
+						}
+						return {};
+					}
+					case InputT::MainT::Right: 
+					{
+						if (Index + 1 < Parts.size()) 
+						{
+							Index += 1;
+							Parts[Index]->Focus(FocusDirectionT::FromBehind);
+						}
+						return {};
+					}
 					default: break;
 				}
 			}
@@ -502,8 +535,6 @@ void AtomPartT::Refresh(void)
 		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
 	}
 	
-	std::cout << "data is empty " << Data->IsEmpty() << std::endl;
-	std::cout << "data is focuesd " << Data->IsFocused() << std::endl;
 	if (Data->IsEmpty() && !Data->IsFocused()) return;
 	Visual.Add(PrefixVisual);
 	Visual.Add(Data->Visual);
@@ -691,8 +722,24 @@ OptionalT<std::unique_ptr<ActionT>> AtomListPartT::HandleInput(InputT const &Inp
 		{
 			switch (*Input.Main)
 			{
-				case InputT::MainT::Up: FocusPrevious(); return {};
-				case InputT::MainT::Down: FocusNext(); return {};
+				case InputT::MainT::Up: 
+				{
+					if (FocusIndex > 0)
+					{
+						FocusIndex -= 1;
+						Data[FocusIndex]->Atom->Focus(FocusDirectionT::FromAhead);
+					}
+					return {};
+				}
+				case InputT::MainT::Down: 
+				{
+					if (FocusIndex + 1 < Data.size()) 
+					{
+						FocusIndex += 1;
+						Data[FocusIndex]->Atom->Focus(FocusDirectionT::FromBehind);
+					}
+					return {};
+				}
 				default: break;
 			}
 		}
@@ -700,8 +747,24 @@ OptionalT<std::unique_ptr<ActionT>> AtomListPartT::HandleInput(InputT const &Inp
 		{
 			switch (*Input.Main)
 			{
-				case InputT::MainT::Left: FocusPrevious(); return {};
-				case InputT::MainT::Right: FocusNext(); return {};
+				case InputT::MainT::Left: 
+				{
+					if (FocusIndex > 0)
+					{
+						FocusIndex -= 1;
+						Data[FocusIndex]->Atom->Focus(FocusDirectionT::FromAhead);
+					}
+					return {};
+				}
+				case InputT::MainT::Right: 
+				{
+					if (FocusIndex + 1 < Data.size()) 
+					{
+						FocusIndex += 1;
+						Data[FocusIndex]->Atom->Focus(FocusDirectionT::FromBehind);
+					}
+					return {};
+				}
 				default: break;
 			}
 		}

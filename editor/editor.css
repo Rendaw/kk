@@ -80,9 +80,14 @@ div.type-Module > div.part-Top > div.type-Group > div.part > div
 /* Group */
 div.type-Group > div.part-Statements.flag-vertical > div
 { 
-	margin-left: 64px;
+	/*margin-left: 64px;*/
 	padding-left: 64px;
 	text-indent: -64px;
+}
+
+div.type-Group > div.affix-outer:nth-child(4)
+{
+	margin-left: -64px;
 }
 
 /* Assignment */
@@ -93,6 +98,12 @@ div.type-Assignment > div.affix-outer:not(:empty)
 
 /* Visualize structure mode */
 body:not(.flag-visualizestructure) div.tag { display: none !important; }
+
+.flag-visualizestructure div.part.flag-focused,
+.flag-visualizestructure div.type.flag-focused
+{
+	border: 1px solid black;
+}
 
 .flag-visualizestructure div.tag { display: visible; }
 
