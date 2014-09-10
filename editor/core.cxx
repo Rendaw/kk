@@ -162,31 +162,37 @@ std::string VisualT::Dump(void)
 	return Root.toOuterXml().toUtf8().data();
 }
 
+ReactionT::~ReactionT(void) {}
+	
+bool ReactionT::Combine(std::unique_ptr<ReactionT> &Other) { return false; }
+
+ActionT::ActionT(std::string const &Name) : Name(Name) {}
+
+ActionT::ArgumentT::~ArgumentT(void) {}
+
 ActionT::~ActionT(void) {}
-	
-bool ActionT::Combine(std::unique_ptr<ActionT> &Other) { return false; }
 
-void ActionGroupT::Add(std::unique_ptr<ActionT> Action)
+void ReactionGroupT::Add(std::unique_ptr<ReactionT> Reaction)
 {
-	Actions.push_back(std::move(Action));
+	Reactions.push_back(std::move(Reaction));
 }
 
-void ActionGroupT::AddReverse(std::unique_ptr<ActionT> Action)
+void ReactionGroupT::AddReverse(std::unique_ptr<ReactionT> Reaction)
 {
-	Actions.push_front(std::move(Action));
+	Reactions.push_front(std::move(Reaction));
 }
 	
-struct NOPT : ActionT
+struct NOPT : ReactionT
 {
-	std::unique_ptr<ActionT> Apply(void) { return std::unique_ptr<ActionT>(new NOPT); }
+	std::unique_ptr<ReactionT> Apply(void) { return std::unique_ptr<ReactionT>(new NOPT); }
 };
 
-std::unique_ptr<ActionT> ActionGroupT::Apply(void)
+std::unique_ptr<ReactionT> ReactionGroupT::Apply(void)
 {
-	auto Out = new ActionGroupT;
-	for (auto &Action : Actions)
-		Out->AddReverse(Action->Apply());
-	return std::unique_ptr<ActionT>(std::move(Out));
+	auto Out = new ReactionGroupT;
+	for (auto &Reaction : Reactions)
+		Out->AddReverse(Reaction->Apply());
+	return std::unique_ptr<ReactionT>(std::move(Out));
 }
 
 AtomT::AtomT(AtomT &&Other) : Core(Other.Core), Callback(Other.Callback), Parent(Other.Parent), Nucleus(Other.Nucleus)
@@ -226,11 +232,11 @@ AtomT::operator bool(void) const { return Nucleus; }
 
 AtomT::SetT::SetT(AtomT &Atom, NucleusT *Replacement) : Atom(Atom), Replacement(Atom.Core, Replacement) { }
 		
-std::unique_ptr<ActionT> AtomT::SetT::Apply(void)
+std::unique_ptr<ReactionT> AtomT::SetT::Apply(void)
 {
 	auto Out = new SetT(Atom, Atom.Nucleus);
 	Atom.Set(Replacement.Nucleus);
-	return std::unique_ptr<ActionT>(std::move(Out));
+	return std::unique_ptr<ReactionT>(std::move(Out));
 }
 
 void AtomT::Set(NucleusT *Nucleus)
@@ -371,6 +377,8 @@ void NucleusT::Focus(FocusDirectionT Direction)
 		Core.Focused->Defocus();
 	}
 	Core.Focused = this;
+	Core.ResetActions();
+	RegisterActions();
 	std::cout << "FOCUSED " << this << std::endl;
 }
 
@@ -380,16 +388,10 @@ void NucleusT::AssumeFocus(void) { }
 
 void NucleusT::Refresh(void) { Assert(false); }
 
-std::unique_ptr<ActionT> NucleusT::Set(NucleusT *Nucleus) { Assert(false); return {}; }
+std::unique_ptr<ReactionT> NucleusT::Set(NucleusT *Nucleus) { Assert(false); return {}; }
 	
-std::unique_ptr<ActionT> NucleusT::Set(std::string const &Text) { Assert(false); return {}; }
+std::unique_ptr<ReactionT> NucleusT::Set(std::string const &Text) { Assert(false); return {}; }
 		
-OptionalT<std::unique_ptr<ActionT>> NucleusT::HandleInput(InputT const &Input) 
-{ 
-	if (Parent) return Parent->HandleInput(Input); 
-	else return {}; 
-}
-	
 void NucleusT::FocusPrevious(void) { TRACE; }
 
 void NucleusT::FocusNext(void) { TRACE; }
@@ -479,11 +481,11 @@ FocusT::FocusT(CoreT &Core, NucleusT *Nucleus, bool DoNothing) : Core(Core), Tar
 {
 }
 
-std::unique_ptr<ActionT> FocusT::Apply(void)
+std::unique_ptr<ReactionT> FocusT::Apply(void)
 {
 	auto Out = new FocusT(Core, Target.Nucleus, !DoNothing);
 	Target->Focus(FocusDirectionT::Direct);
-	return std::unique_ptr<ActionT>(Out);
+	return std::unique_ptr<ReactionT>(Out);
 }
 
 CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused(*this), TextMode(true), ProtoatomType(nullptr), ElementType(nullptr), StringType(nullptr), CursorVisual(RootVisual.Root)
@@ -632,16 +634,13 @@ Serial::ReadErrorT CoreT::Deserialize(AtomT &Out, std::string const &TypeName, S
 	return Out->Deserialize(Object);
 }
 
-void CoreT::HandleInput(InputT const &Input)
+void CoreT::HandleInput(ActionT *Action)
 {
-	Assert(Focused);
-	std::cout << "Core handle key:\n";
-	if (Input.Text)
-		std::cout << "\t[" << *Input.Text << "]\n";
-	if (Input.Main)
-		std::cout << "\tmain [" << (int)*Input.Main << "]\n";
-	std::cout << std::flush;
-	Apply(Focused->HandleInput(Input));
+	TRACE;
+	std::cout << "Action " << Action->Name << std::endl;
+	auto Reaction = Action->Apply();
+	if (Reaction)
+		Apply(std::move(*Reaction));
 	Refresh();
 }
 
@@ -652,16 +651,16 @@ OptionalT<AtomTypeT *> CoreT::LookUpAtom(std::string const &Text)
 	return &*Type->second;
 }
 
-void CoreT::Apply(OptionalT<std::unique_ptr<ActionT>> Action)
+void CoreT::Apply(OptionalT<std::unique_ptr<ReactionT>> Reaction)
 {
-	if (!Action) return;
+	if (!Reaction) return;
 
-	auto Reaction = (*Action)->Apply();
+	auto Rereaction = (*Reaction)->Apply();
 
 	if (!UndoQueue.empty())
 	{
-		if (!UndoQueue.front()->Combine(Reaction))
-			UndoQueue.push_front(std::move(Reaction));
+		if (!UndoQueue.front()->Combine(Rereaction))
+			UndoQueue.push_front(std::move(Rereaction));
 	}
 	RedoQueue.clear();
 
@@ -707,25 +706,50 @@ void CoreT::AssumeFocus(void)
 		std::cout << "Assuming focus... DONE" << std::endl;
 	}
 }
-
-std::unique_ptr<ActionT> CoreT::ActionHandleInput(InputT const &Input)
+	
+void CoreT::ResetActions(void)
 {
-	struct HandleInputT : ActionT
+	if (ResetActionsCallback) ResetActionsCallback();
+	Actions.clear();
+}
+
+void CoreT::RegisterAction(std::unique_ptr<ActionT> &&Action)
+{
+	Actions.push_back(std::move(Action));
+	if (RegisterActionCallback) RegisterActionCallback(Actions.back().get());
+}
+
+std::unique_ptr<ReactionT> CoreT::ReactionHandleInput(std::string const &ActionName, OptionalT<std::string> Text)
+{
+	struct HandleInputT : ReactionT
 	{
 		CoreT &Core;
-		InputT const Input;
+		std::string const ActionName;
+		OptionalT<std::string> Text;
 
-		HandleInputT(CoreT &Core, InputT const &Input) : Core(Core), Input(Input) {}
+		HandleInputT(CoreT &Core, std::string const &ActionName, OptionalT<std::string> Text) : Core(Core), ActionName(ActionName), Text(Text) {}
 
-		std::unique_ptr<ActionT> Apply(void)
+		std::unique_ptr<ReactionT> Apply(void)
 		{
 			Assert(Core.Focused);
-			auto Result = Core.Focused->HandleInput(Input);
-			if (Result) return (*Result)->Apply();
-			return std::unique_ptr<ActionT>(new NOPT);
+			for (auto &Action : Core.Actions)
+			{
+				if (Action->Name == ActionName) 
+				{ 
+					if (Text && AssertE(Action->Arguments.size(), 1))
+					{
+						auto TextArgument = dynamic_cast<ActionT::TextArgumentT *>(Action->Arguments[0]);
+						if (Assert(TextArgument)) TextArgument->Data = *Text;
+
+					}
+					auto Result = Action->Apply();
+					if (Result) return (*Result)->Apply();
+				}
+			}
+			return std::unique_ptr<ReactionT>(new NOPT);
 		};
 	};
-	return std::unique_ptr<ActionT>(new HandleInputT(*this, Input));
+	return std::unique_ptr<ReactionT>(new HandleInputT(*this, ActionName, Text));
 }
 	
 std::string CoreT::Dump(void) const

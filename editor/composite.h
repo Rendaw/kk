@@ -26,12 +26,12 @@ struct CompositeT : NucleusT
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;
+	void RegisterActions(void) override;
 	void Defocus(void) override;
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
-	std::unique_ptr<ActionT> Set(NucleusT *Nucleus) override;
-	std::unique_ptr<ActionT> Set(std::string const &Text) override;
-	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
+	std::unique_ptr<ReactionT> Set(NucleusT *Nucleus) override;
+	std::unique_ptr<ReactionT> Set(std::string const &Text) override;
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
 	bool IsEmpty(void) const override;
@@ -97,11 +97,11 @@ struct AtomPartT : NucleusT
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;
+	void RegisterActions(void) override;
 	void Defocus(void) override;
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
-	std::unique_ptr<ActionT> Set(NucleusT *Nucleus) override;
-	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
+	std::unique_ptr<ReactionT> Set(NucleusT *Nucleus) override;
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
 	bool IsEmpty(void) const override;
@@ -135,13 +135,14 @@ struct AtomListPartT : NucleusT
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;
+	void RegisterActions(void) override;
 	void Defocus(void) override;
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
 	void Add(size_t Position, NucleusT *Nucleus, bool ShouldFocus = false);
 	void Remove(size_t Position);
 	
-	struct AddRemoveT : ActionT
+	struct AddRemoveT : ReactionT
 	{
 		AtomListPartT &Base;
 		bool Add;
@@ -150,13 +151,12 @@ struct AtomListPartT : NucleusT
 
 		AddRemoveT(AtomListPartT &Base, bool Add, size_t Position, NucleusT *Nucleus);
 
-		std::unique_ptr<ActionT> Apply(void);
+		std::unique_ptr<ReactionT> Apply(void);
 	};
 
-	std::unique_ptr<ActionT> Set(NucleusT *Nucleus) override;
-	std::unique_ptr<ActionT> Set(std::string const &Text) override;
+	std::unique_ptr<ReactionT> Set(NucleusT *Nucleus) override;
+	std::unique_ptr<ReactionT> Set(std::string const &Text) override;
 	
-	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
 };
@@ -186,13 +186,14 @@ struct StringPartT : NucleusT
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;
+	void RegisterActions(void) override;
 	void Defocus(void) override;
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
 	
-	std::unique_ptr<ActionT> Set(NucleusT *Nucleus) override;
+	std::unique_ptr<ReactionT> Set(NucleusT *Nucleus) override;
 	
-	struct SetT : ActionT
+	struct SetT : ReactionT
 	{
 		StringPartT &Base;
 		unsigned int Position;
@@ -200,13 +201,11 @@ struct StringPartT : NucleusT
 		
 		SetT(StringPartT &Base, unsigned int Position, std::string const &Data);
 		
-		std::unique_ptr<ActionT> Apply(void);
-		bool Combine(std::unique_ptr<ActionT> &Other) override;
+		std::unique_ptr<ReactionT> Apply(void);
+		bool Combine(std::unique_ptr<ReactionT> &Other) override;
 	};
 
-	std::unique_ptr<ActionT> Set(std::string const &Text) override;
-
-	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
+	std::unique_ptr<ReactionT> Set(std::string const &Text) override;
 };
 
 struct EnumPartTypeT : CompositeTypePartT
@@ -232,23 +231,22 @@ struct EnumPartT : NucleusT
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;
+	void RegisterActions(void) override;
 	void Defocus(void) override;
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
 
-	struct SetT : ActionT
+	struct SetT : ReactionT
 	{
 		EnumPartT &Base;
 		size_t Index;
 
 		SetT(EnumPartT &Base, size_t Index);
-		std::unique_ptr<ActionT> Apply(void);
+		std::unique_ptr<ReactionT> Apply(void);
 	};
 	
-	std::unique_ptr<ActionT> Set(NucleusT *Nucleus) override;
-	std::unique_ptr<ActionT> Set(std::string const &Text) override;
-
-	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
+	std::unique_ptr<ReactionT> Set(NucleusT *Nucleus) override;
+	std::unique_ptr<ReactionT> Set(std::string const &Text) override;
 };
 
 }

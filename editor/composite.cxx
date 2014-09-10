@@ -67,6 +67,143 @@ void CompositeT::Focus(FocusDirectionT Direction)
 	FlagStatusChange();
 	Visual.SetClass("flag-focused");
 }
+	
+void CompositeT::RegisterActions(void)
+{
+	TRACE;
+
+	if (Focused.Is<PartFocusedT>())
+	{
+		struct FocusPreviousT : ActionT
+		{
+			CompositeT &Base;
+			FocusPreviousT(std::string const &Name, CompositeT &Base) : ActionT(Name), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				auto &Index = Base.Focused.Get<PartFocusedT>();
+				if (Index > 0)
+				{
+					Index -= 1;
+					Base.Parts[Index]->Focus(FocusDirectionT::FromAhead);
+				}
+				return {};
+			}
+		};
+
+		struct FocusNextT : ActionT
+		{
+			CompositeT &Base;
+			FocusNextT(std::string const &Name, CompositeT &Base) : ActionT(Name), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				auto &Index = Base.Focused.Get<PartFocusedT>();
+				if (Index + 1 < Base.Parts.size()) 
+				{
+					Index += 1;
+					Base.Parts[Index]->Focus(FocusDirectionT::FromBehind);
+				}
+				return {};
+			}
+		};
+		if (EffectivelyVertical)
+		{
+			Core.RegisterAction(make_unique<FocusPreviousT>("Up", *this));
+			Core.RegisterAction(make_unique<FocusNextT>("Down", *this));
+		}
+		else
+		{
+			Core.RegisterAction(make_unique<FocusPreviousT>("Left", *this));
+			Core.RegisterAction(make_unique<FocusNextT>("Right", *this));
+		}
+
+		struct ExitT : ActionT
+		{
+			CompositeT &Base;
+			ExitT(CompositeT &Base) : ActionT("Exit"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				Base.Core.TextMode = false;
+				Base.Focus(FocusDirectionT::Direct);
+				return {};
+			}
+		};
+		Core.RegisterAction(make_unique<ExitT>(*this));
+	}
+	else if (Focused.Is<SelfFocusedT>())
+	{
+		struct DeleteT : ActionT
+		{
+			CompositeT &Base;
+			DeleteT(CompositeT &Base) : ActionT("Delete"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				auto ThisRef = &Base;
+				if (!AsProtoatom(ThisRef) || !Base.IsEmpty())
+				{
+					if (Base.Atom) return std::unique_ptr<ReactionT>(new AtomT::SetT(*Base.Atom, Base.Core.ProtoatomType->Generate(Base.Core)));
+				}
+				return {};
+			}
+		};
+		Core.RegisterAction(make_unique<DeleteT>(*this));
+
+		struct WedgeT : ActionT
+		{
+			CompositeT &Base;
+			WedgeT(CompositeT &Base) : ActionT("Wedge"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				if (Base.Atom)
+				{
+					Base.Core.TextMode = true;
+					auto Reactions = new ReactionGroupT;
+					auto Replacement = Base.Core.ProtoatomType->Generate(Base.Core);
+					Reactions->Add(Replacement->Set(&Base));
+					Reactions->Add(std::unique_ptr<ReactionT>(new AtomT::SetT(*Base.Atom, Replacement)));
+					return std::unique_ptr<ReactionT>(Reactions);
+				}
+				return {};
+			}
+		};
+		Core.RegisterAction(make_unique<WedgeT>(*this));
+
+		struct ReplaceParentT : ActionT
+		{
+			CompositeT &Base;
+			ReplaceParentT(CompositeT &Base) : ActionT("Replace parent"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				auto Replacee = Base.PartParent();
+				if (Replacee && Replacee->Atom)
+					return std::unique_ptr<ReactionT>(new AtomT::SetT(*Replacee->Atom, &Base));
+				return {};
+			}
+		};
+		Core.RegisterAction(make_unique<ReplaceParentT>(*this));
+
+		struct EnterT : ActionT
+		{
+			CompositeT &Base;
+			EnterT(CompositeT &Base) : ActionT("Enter"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				Base.FocusDefault();
+				return {};
+			}
+		};
+		Core.RegisterAction(make_unique<EnterT>(*this));
+	}
+	else Assert(false);
+
+	if (Parent) Parent->RegisterActions();
+}
 
 void CompositeT::Defocus(void)
 {
@@ -118,7 +255,7 @@ void CompositeT::Refresh(void)
 	Visual.Add(SuffixVisual);
 }
 
-std::unique_ptr<ActionT> CompositeT::Set(NucleusT *Nucleus)
+std::unique_ptr<ReactionT> CompositeT::Set(NucleusT *Nucleus)
 {
 	TRACE;
 	size_t Index = 0;
@@ -132,7 +269,7 @@ std::unique_ptr<ActionT> CompositeT::Set(NucleusT *Nucleus)
 	return {};
 }
 
-std::unique_ptr<ActionT> CompositeT::Set(std::string const &Text)	
+std::unique_ptr<ReactionT> CompositeT::Set(std::string const &Text)	
 {
 	TRACE;
 	size_t Index = 0;
@@ -143,115 +280,6 @@ std::unique_ptr<ActionT> CompositeT::Set(std::string const &Text)
 		Index += 1;
 	}
 	Assert(false);
-	return {};
-}
-
-OptionalT<std::unique_ptr<ActionT>> CompositeT::HandleInput(InputT const &Input)
-{
-	TRACE;
-	if (Input.Main)
-	{
-		if (Focused.Is<PartFocusedT>())
-		{
-			auto &Index = Focused.Get<PartFocusedT>();
-			if (EffectivelyVertical)
-			{
-				switch (*Input.Main)
-				{
-					case InputT::MainT::Up: 
-					{
-						if (Index > 0)
-						{
-							Index -= 1;
-							Parts[Index]->Focus(FocusDirectionT::FromAhead);
-						}
-						return {};
-					}
-					case InputT::MainT::Down: 
-					{
-						if (Index + 1 < Parts.size()) 
-						{
-							Index += 1;
-							Parts[Index]->Focus(FocusDirectionT::FromBehind);
-						}
-						return {};
-					}
-					default: break;
-				}
-			}
-			else
-			{
-				switch (*Input.Main)
-				{
-					case InputT::MainT::Left: 
-					{
-						if (Index > 0)
-						{
-							Index -= 1;
-							Parts[Index]->Focus(FocusDirectionT::FromAhead);
-						}
-						return {};
-					}
-					case InputT::MainT::Right: 
-					{
-						if (Index + 1 < Parts.size()) 
-						{
-							Index += 1;
-							Parts[Index]->Focus(FocusDirectionT::FromBehind);
-						}
-						return {};
-					}
-					default: break;
-				}
-			}
-			switch (*Input.Main)
-			{
-				case InputT::MainT::Exit: Focus(FocusDirectionT::Direct); return {};
-				default: break;
-			}
-		}
-		if (Focused.Is<SelfFocusedT>())
-		{
-			switch (*Input.Main)
-			{
-				case InputT::MainT::Delete:
-				{
-					auto RValueThis = this;
-					if (!AsProtoatom(RValueThis) || !IsEmpty())
-					{
-						if (Atom) return std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Core.ProtoatomType->Generate(Core)));
-						return {};
-					}
-					else break;
-				}
-				case InputT::MainT::Wedge:
-				{
-					if (Atom)
-					{
-						Core.TextMode = true;
-						auto Actions = new ActionGroupT;
-						auto Replacement = Core.ProtoatomType->Generate(Core);
-						Actions->Add(Replacement->Set(this));
-						Actions->Add(std::unique_ptr<ActionT>(new AtomT::SetT(*Atom, Replacement)));
-						return std::unique_ptr<ActionT>(Actions);
-					}
-					else break;
-				}
-				case InputT::MainT::ReplaceParent:
-				{
-					auto Replacee = PartParent();
-					if (Replacee && Replacee->Atom)
-						return std::unique_ptr<ActionT>(new AtomT::SetT(*Replacee->Atom, this));
-					else break;
-				}
-				case InputT::MainT::Enter:
-					FocusDefault();
-					return {};
-				default: break;
-			}
-		}
-	}
-	if (Parent) return Parent->HandleInput(Input);
 	return {};
 }
 
@@ -507,6 +535,12 @@ void AtomPartT::Focus(FocusDirectionT Direction)
 		}
 	}
 }
+	
+void AtomPartT::RegisterActions(void)
+{
+	TRACE;
+	Parent->RegisterActions();
+}
 
 void AtomPartT::Defocus(void) { TRACE; }
 
@@ -541,9 +575,7 @@ void AtomPartT::Refresh(void)
 	Visual.Add(SuffixVisual);
 }
 
-std::unique_ptr<ActionT> AtomPartT::Set(NucleusT *Nucleus) { TRACE; return std::unique_ptr<ActionT>(new AtomT::SetT(Data, Nucleus)); }
-
-OptionalT<std::unique_ptr<ActionT>> AtomPartT::HandleInput(InputT const &Input) { TRACE; return Parent->HandleInput(Input); }
+std::unique_ptr<ReactionT> AtomPartT::Set(NucleusT *Nucleus) { TRACE; return std::unique_ptr<ReactionT>(new AtomT::SetT(Data, Nucleus)); }
 
 void AtomPartT::FocusPrevious(void) { TRACE; Parent->FocusPrevious(); }
 
@@ -614,6 +646,98 @@ void AtomListPartT::Focus(FocusDirectionT Direction)
 			break;
 	}
 	Data[FocusIndex]->Atom->Focus(Direction);
+}
+	
+void AtomListPartT::RegisterActions(void)
+{
+	TRACE;
+
+	struct FocusPreviousT : ActionT
+	{
+		AtomListPartT &Base;
+		FocusPreviousT(std::string const &Name, AtomListPartT &Base) : ActionT(Name), Base(Base) {}
+		OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+		{
+			TRACE;
+			if (Base.FocusIndex > 0)
+			{
+				Base.FocusIndex -= 1;
+				Base.Data[Base.FocusIndex]->Atom->Focus(FocusDirectionT::FromAhead);
+			}
+			return {};
+		}
+	};
+
+	struct FocusNextT : ActionT
+	{
+		AtomListPartT &Base;
+		FocusNextT(std::string const &Name, AtomListPartT &Base) : ActionT(Name), Base(Base) {}
+		OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+		{
+			TRACE;
+			if (Base.FocusIndex + 1 < Base.Data.size()) 
+			{
+				Base.FocusIndex += 1;
+				Base.Data[Base.FocusIndex]->Atom->Focus(FocusDirectionT::FromBehind);
+			}
+			return {};
+		}
+	};
+	if (EffectivelyVertical)
+	{
+		Core.RegisterAction(make_unique<FocusPreviousT>("Up", *this));
+		Core.RegisterAction(make_unique<FocusNextT>("Down", *this));
+	}
+	else
+	{
+		Core.RegisterAction(make_unique<FocusPreviousT>("Left", *this));
+		Core.RegisterAction(make_unique<FocusNextT>("Right", *this));
+	}
+
+	struct NewStatementBeforeT : ActionT
+	{
+		AtomListPartT &Base;
+		NewStatementBeforeT(AtomListPartT &Base) : ActionT("Insert statement before"), Base(Base) {}
+		OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+		{
+			TRACE;
+			Base.Core.TextMode = true;
+			return std::unique_ptr<ReactionT>(new AddRemoveT(Base, true, Base.FocusIndex, Base.Core.ProtoatomType->Generate(Base.Core)));
+		}
+	};
+	Core.RegisterAction(make_unique<NewStatementBeforeT>(*this));
+
+	struct NewStatementAfterT : ActionT
+	{
+		AtomListPartT &Base;
+		NewStatementAfterT(AtomListPartT &Base) : ActionT("Insert statement after"), Base(Base) {}
+		OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+		{
+			TRACE;
+			Base.Core.TextMode = true;
+			return std::unique_ptr<ReactionT>(new AddRemoveT(Base, true, Base.FocusIndex + 1, Base.Core.ProtoatomType->Generate(Base.Core)));
+		}
+	};
+	Core.RegisterAction(make_unique<NewStatementAfterT>(*this));
+
+	if (IsFocused())
+	{
+		struct DeleteT : ActionT
+		{
+			AtomListPartT &Base;
+			DeleteT(AtomListPartT &Base) : ActionT("Delete"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				if (Base.Data.size() > 1)
+					return std::unique_ptr<ReactionT>(new AddRemoveT(Base, false, Base.FocusIndex, {}));
+				return {};
+			}
+		};
+		Core.RegisterAction(make_unique<DeleteT>(*this));
+	}
+
+	Parent->RegisterActions();
 }
 
 void AtomListPartT::Defocus(void) { TRACE; Assert(false); }
@@ -688,10 +812,10 @@ void AtomListPartT::Remove(size_t Position)
 
 AtomListPartT::AddRemoveT::AddRemoveT(AtomListPartT &Base, bool Add, size_t Position, NucleusT *Nucleus) : Base(Base), Add(Add), Position(Position), Nucleus(Base.Core, Nucleus) { TRACE; }
 
-std::unique_ptr<ActionT> AtomListPartT::AddRemoveT::Apply(void)
+std::unique_ptr<ReactionT> AtomListPartT::AddRemoveT::Apply(void)
 {
 	TRACE;
-	std::unique_ptr<ActionT> Out;
+	std::unique_ptr<ReactionT> Out;
 	if (Add) 
 	{
 		Out.reset(new AddRemoveT(Base, false, Position, nullptr));
@@ -705,87 +829,13 @@ std::unique_ptr<ActionT> AtomListPartT::AddRemoveT::Apply(void)
 	return std::move(Out);
 }
 
-std::unique_ptr<ActionT> AtomListPartT::Set(NucleusT *Nucleus) 
+std::unique_ptr<ReactionT> AtomListPartT::Set(NucleusT *Nucleus) 
 {
 	TRACE;
-	return std::unique_ptr<ActionT>(new AddRemoveT(*this, true, Data.size(), Nucleus));
+	return std::unique_ptr<ReactionT>(new AddRemoveT(*this, true, Data.size(), Nucleus));
 }
 
-std::unique_ptr<ActionT> AtomListPartT::Set(std::string const &Text) { TRACE; Assert(false); return {}; }
-
-OptionalT<std::unique_ptr<ActionT>> AtomListPartT::HandleInput(InputT const &Input) 
-{
-	TRACE; 
-	if (Input.Main)
-	{
-		if (EffectivelyVertical)
-		{
-			switch (*Input.Main)
-			{
-				case InputT::MainT::Up: 
-				{
-					if (FocusIndex > 0)
-					{
-						FocusIndex -= 1;
-						Data[FocusIndex]->Atom->Focus(FocusDirectionT::FromAhead);
-					}
-					return {};
-				}
-				case InputT::MainT::Down: 
-				{
-					if (FocusIndex + 1 < Data.size()) 
-					{
-						FocusIndex += 1;
-						Data[FocusIndex]->Atom->Focus(FocusDirectionT::FromBehind);
-					}
-					return {};
-				}
-				default: break;
-			}
-		}
-		else
-		{
-			switch (*Input.Main)
-			{
-				case InputT::MainT::Left: 
-				{
-					if (FocusIndex > 0)
-					{
-						FocusIndex -= 1;
-						Data[FocusIndex]->Atom->Focus(FocusDirectionT::FromAhead);
-					}
-					return {};
-				}
-				case InputT::MainT::Right: 
-				{
-					if (FocusIndex + 1 < Data.size()) 
-					{
-						FocusIndex += 1;
-						Data[FocusIndex]->Atom->Focus(FocusDirectionT::FromBehind);
-					}
-					return {};
-				}
-				default: break;
-			}
-		}
-
-		switch (*Input.Main)
-		{
-			case InputT::MainT::NewStatementBefore:
-				Core.TextMode = true;
-				return std::unique_ptr<ActionT>(new AddRemoveT(*this, true, FocusIndex, Core.ProtoatomType->Generate(Core)));
-			case InputT::MainT::NewStatement:
-				Core.TextMode = true;
-				return std::unique_ptr<ActionT>(new AddRemoveT(*this, true, FocusIndex + 1, Core.ProtoatomType->Generate(Core)));
-			case InputT::MainT::Delete:
-				if (Data.size() > 1)
-					return std::unique_ptr<ActionT>(new AddRemoveT(*this, false, FocusIndex, {}));
-				break;
-			default: break;
-		}
-	}
-	return Parent->HandleInput(Input);
-}
+std::unique_ptr<ReactionT> AtomListPartT::Set(std::string const &Text) { TRACE; Assert(false); return {}; }
 
 void AtomListPartT::FocusPrevious(void) 
 {
@@ -873,6 +923,152 @@ void StringPartT::Focus(FocusDirectionT Direction)
 	FlagRefresh();
 }
 
+void StringPartT::RegisterActions(void)
+{
+	TRACE;
+	if (Focused == FocusedT::Text)
+	{
+		struct TextT : ActionT
+		{
+			StringPartT &Base;
+			ActionT::TextArgumentT Argument;
+			TextT(StringPartT &Base) : ActionT("Enter text"), Base(Base)
+				{ Arguments.push_back(&Argument); }
+
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				return std::unique_ptr<ReactionT>(new SetT(
+					Base, 
+					Base.Position + 1, 
+					Base.Data.substr(0, Base.Position) + 
+						Argument.Data + 
+						Base.Data.substr(Base.Position)));
+			}
+		};
+		Core.RegisterAction(make_unique<TextT>(*this));
+
+		struct FocusPreviousT : ActionT
+		{
+			StringPartT &Base;
+			FocusPreviousT(StringPartT &Base) : ActionT("Left"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				if (Base.Position == 0) 
+				{
+					Base.Parent->FocusPrevious();
+				}
+				else
+				{
+					Base.Position -= 1;
+					Base.FlagRefresh();
+				}
+				return {};
+			}
+		};
+		Core.RegisterAction(make_unique<FocusPreviousT>(*this));
+
+		struct FocusNextT : ActionT
+		{
+			StringPartT &Base;
+			FocusNextT(StringPartT &Base) : ActionT("Right"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				if (Base.Position == Base.Data.size()) 
+				{
+					Base.Parent->FocusNext();
+				}
+				else
+				{
+					Base.Position += 1;
+					Base.FlagRefresh();
+				}
+				return {};
+			}
+		};
+		Core.RegisterAction(make_unique<FocusNextT>(*this));
+
+		struct BackspaceT : ActionT
+		{
+			StringPartT &Base;
+			BackspaceT(StringPartT &Base) : ActionT("Backspace"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				if (Base.Position == 0) return {};
+				auto NewData = Base.Data;
+				NewData.erase(Base.Position - 1, 1);
+				auto NewPosition = Base.Position - 1;
+				return std::unique_ptr<ReactionT>(new SetT(Base, NewPosition, NewData));
+			}
+		};
+		Core.RegisterAction(make_unique<BackspaceT>(*this));
+
+		struct DeleteT : ActionT
+		{
+			StringPartT &Base;
+			DeleteT(StringPartT &Base) : ActionT("Delete"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				if (Base.Position == Base.Data.size()) return {};
+				auto NewData = Base.Data;
+				NewData.erase(Base.Position, 1);
+				return std::unique_ptr<ReactionT>(new SetT(Base, Base.Position, NewData));
+			}
+		};
+		Core.RegisterAction(make_unique<DeleteT>(*this));
+
+		if (!Parent->As<CompositeT>()->HasOnePart())
+		{
+			struct ExitT : ActionT
+			{
+				StringPartT &Base;
+				ExitT(StringPartT &Base) : ActionT("Exit"), Base(Base) {}
+				OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+				{
+					TRACE;
+					Base.Core.TextMode = false;
+					Base.Focus(FocusDirectionT::Direct);
+					return {};
+				}
+			};
+			Core.RegisterAction(make_unique<ExitT>(*this));
+		}
+	}
+	else if (Focused == FocusedT::On)
+	{
+		struct DeleteT : ActionT
+		{
+			StringPartT &Base;
+			DeleteT(StringPartT &Base) : ActionT("Delete"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				return std::unique_ptr<ReactionT>(new SetT(Base, 0, ""));
+			}
+		};
+		Core.RegisterAction(make_unique<DeleteT>(*this));
+
+		struct EnterT : ActionT
+		{
+			StringPartT &Base;
+			EnterT(StringPartT &Base) : ActionT("Enter"), Base(Base) {}
+			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			{
+				TRACE;
+				Base.Core.TextMode = true;
+				Base.Focus(FocusDirectionT::Direct);
+				return {};
+			}
+		};
+		Core.RegisterAction(make_unique<EnterT>(*this));
+	}
+	Parent->RegisterActions();
+}
+
 void StringPartT::Defocus(void) 
 {
 	TRACE;
@@ -913,21 +1109,21 @@ void StringPartT::Refresh(void)
 	Visual.Add(SuffixVisual);
 }
 
-std::unique_ptr<ActionT> StringPartT::Set(NucleusT *Nucleus) { TRACE; Assert(false); return {}; }
+std::unique_ptr<ReactionT> StringPartT::Set(NucleusT *Nucleus) { TRACE; Assert(false); return {}; }
 
 StringPartT::SetT::SetT(StringPartT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) { TRACE; }
 
-std::unique_ptr<ActionT> StringPartT::SetT::Apply(void)
+std::unique_ptr<ReactionT> StringPartT::SetT::Apply(void)
 {
 	TRACE;
 	auto Out = new SetT(Base, Base.Position, Base.Data);
 	Base.Data = Data;
 	Base.Position = Position;
 	Base.FlagRefresh();
-	return std::unique_ptr<ActionT>(Out);
+	return std::unique_ptr<ReactionT>(Out);
 }
 
-bool StringPartT::SetT::Combine(std::unique_ptr<ActionT> &Other)
+bool StringPartT::SetT::Combine(std::unique_ptr<ReactionT> &Other)
 {
 	TRACE;
 	auto Set = dynamic_cast<SetT *>(Other.get());
@@ -938,101 +1134,10 @@ bool StringPartT::SetT::Combine(std::unique_ptr<ActionT> &Other)
 	return true;
 }
 
-std::unique_ptr<ActionT> StringPartT::Set(std::string const &Text) 
+std::unique_ptr<ReactionT> StringPartT::Set(std::string const &Text) 
 {
 	TRACE; 
-	return std::unique_ptr<ActionT>(new SetT(*this, Position, Text));
-}
-
-OptionalT<std::unique_ptr<ActionT>> StringPartT::HandleInput(InputT const &Input) 
-{
-	TRACE; 
-	AssertNE(Focused, FocusedT::Off);
-	if (Focused == FocusedT::Text)
-	{
-		if (Input.Text)
-		{
-			return std::unique_ptr<ActionT>(new SetT(
-				*this, 
-				Position + 1, 
-				Data.substr(0, Position) + *Input.Text + Data.substr(Position)));
-		}
-		else if (Input.Main)
-		{
-			switch (*Input.Main)
-			{
-				case InputT::MainT::Left:
-				{
-					if (Position == 0) 
-					{
-						Parent->FocusPrevious();
-					}
-					else
-					{
-						Position -= 1;
-						FlagRefresh();
-					}
-					return {};
-				}
-				case InputT::MainT::Right:
-				{
-					if (Position == Data.size()) 
-					{
-						Parent->FocusNext();
-					}
-					else
-					{
-						Position += 1;
-						FlagRefresh();
-					}
-					return {};
-				}
-				case InputT::MainT::TextBackspace:
-				{
-					if (Position == 0) return {};
-					auto NewData = Data;
-					NewData.erase(Position - 1, 1);
-					auto NewPosition = Position - 1;
-					return std::unique_ptr<ActionT>(new SetT(*this, NewPosition, NewData));
-				}
-				case InputT::MainT::Delete:
-				{
-					if (Position == Data.size()) return {};
-					auto NewData = Data;
-					NewData.erase(Position, 1);
-					return std::unique_ptr<ActionT>(new SetT(*this, Position, NewData));
-				}
-				case InputT::MainT::Exit:
-				{
-					Core.TextMode = false;
-					if (!Parent->As<CompositeT>()->HasOnePart())
-					{
-						Focus(FocusDirectionT::Direct);
-						return {};
-					}
-					break;
-				}
-				default: break;
-			}
-		}
-	}
-	else
-	{
-		if (Input.Main)
-		{
-			switch (*Input.Main)
-			{
-				case InputT::MainT::Enter:
-					Core.TextMode = true;
-					Focus(FocusDirectionT::Direct);
-					return {};
-				case InputT::MainT::Delete:
-					return std::unique_ptr<ActionT>(new SetT(*this, 0, ""));
-				default: break;
-			}
-		}
-	}
-	return Parent->HandleInput(Input);
+	return std::unique_ptr<ReactionT>(new SetT(*this, Position, Text));
 }
 
 Serial::ReadErrorT EnumPartTypeT::Deserialize(Serial::ReadObjectT &Object) 
@@ -1122,6 +1227,23 @@ void EnumPartT::Focus(FocusDirectionT Direction)
 	Visual.SetClass("flag-focused");
 }
 
+void EnumPartT::RegisterActions(void)
+{
+	TRACE;
+	struct AdvanceValueT : ActionT
+	{
+		EnumPartT &Base;
+		AdvanceValueT(EnumPartT &Base) : ActionT("Advance value"), Base(Base) {}
+		OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+		{
+			TRACE;
+			return std::unique_ptr<ReactionT>(new SetT(Base, (Base.Index + 1) % Base.TypeInfo.Values.size()));
+		}
+	};
+	Core.RegisterAction(make_unique<AdvanceValueT>(*this));
+	Parent->RegisterActions();
+}
+
 void EnumPartT::Defocus(void)
 {
 	TRACE;
@@ -1167,34 +1289,17 @@ EnumPartT::SetT::SetT(EnumPartT &Base, size_t Index) : Base(Base), Index(Index)
 	TRACE;
 }
 
-std::unique_ptr<ActionT> EnumPartT::SetT::Apply(void)
+std::unique_ptr<ReactionT> EnumPartT::SetT::Apply(void)
 {
 	TRACE;
 	auto Out = new SetT(Base, Index);
 	Base.Index = Index;
 	Base.FlagRefresh();
-	return std::unique_ptr<ActionT>(Out);
+	return std::unique_ptr<ReactionT>(Out);
 }
 	
-std::unique_ptr<ActionT> EnumPartT::Set(NucleusT *Nucleus) { TRACE; Assert(false); return {}; }
+std::unique_ptr<ReactionT> EnumPartT::Set(NucleusT *Nucleus) { TRACE; Assert(false); return {}; }
 
-std::unique_ptr<ActionT> EnumPartT::Set(std::string const &Text) { TRACE; Assert(false); return {}; }
-
-OptionalT<std::unique_ptr<ActionT>> EnumPartT::HandleInput(InputT const &Input)
-{
-	TRACE; 
-	if (Input.Main)
-	{
-		switch (*Input.Main)
-		{
-			case InputT::MainT::Enter: 
-			{
-				return std::unique_ptr<ActionT>(new SetT(*this, (Index + 1) % TypeInfo.Values.size()));
-			}
-			default: break;
-		}
-	}
-	return Parent->HandleInput(Input);
-}
+std::unique_ptr<ReactionT> EnumPartT::Set(std::string const &Text) { TRACE; Assert(false); return {}; }
 
 }

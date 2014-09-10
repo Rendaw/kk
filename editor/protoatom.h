@@ -38,12 +38,12 @@ struct ProtoatomPartT : NucleusT
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(FocusDirectionT Direction) override;
+	void RegisterActions(void) override;
 	void Defocus(void) override;
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
-	OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input) override;
 	
-	OptionalT<std::unique_ptr<ActionT>> Finish(OptionalT<AtomTypeT *> Type, std::string Text);
+	OptionalT<std::unique_ptr<ReactionT>> Finish(OptionalT<AtomTypeT *> Type, std::string Text);
 	
 	bool IsEmpty(void) const override;
 };

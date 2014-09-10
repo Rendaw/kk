@@ -25,39 +25,91 @@ using namespace Core;
 
 struct WebViewT : QWebView
 {
-	CoreT *Core;
+	CoreT *Core = nullptr;
+
+	std::map<std::string, std::list<std::string>> ActionKeys{
+		{"Enter", {"Return"}},
+		{"Exit", {"Escape"}},
+		{"Up", {"k", "Up"}},
+		{"Down", {"j", "Down"}},
+		{"Left", {"h", "Left"}},
+		{"Right", {"l", "Right"}},
+		{"Delete", {"x", "Delete"}},
+		{"Backspace", {"Backspace"}},
+		{"Finish", {"Space"}},
+		{"Wedge", {"w"}},
+		{"Replace parent", {"r"}},
+		{"Insert statement before", {"O"}},
+		{"Insert statement after", {"o"}},
+		{"Advance value", {"Enter"}},
+	};
+
+	std::list<std::function<bool(QKeyEvent *Event)>> Actions;
+	
+	void SetCore(CoreT *Core)
+	{
+		this->Core = Core;
+
+		Core->ResetActionsCallback = [this](void)
+		{
+			Actions.clear();
+		};
+		Core->RegisterActionCallback = [this](ActionT *Action)
+		{
+			std::cout << "Registering " << Action->Name << std::endl;
+			if (Action->Arguments.empty())
+			{
+				auto FoundSequences = ActionKeys.find(Action->Name);
+				if (FoundSequences == ActionKeys.end()) 
+				{
+					std::cout << "No key found for " << Action->Name << std::endl;
+					return;
+				}
+				for (auto const &SequenceString : FoundSequences->second)
+				{
+					QKeySequence Sequence(SequenceString.c_str());
+					Actions.push_back([this, Action, Sequence](QKeyEvent *Event)
+					{
+						if (Sequence == QKeySequence(Event->key() | Event->modifiers()))
+						{
+							this->Core->HandleInput(Action);
+							return true;
+						}
+						return false;
+					});
+				}
+				return;
+			}
+
+			if (Action->Arguments.size() == 1)
+			{
+				auto TextArgument = dynamic_cast<ActionT::TextArgumentT *>(Action->Arguments[0]);
+				if (TextArgument)
+				{
+					Actions.push_back([this, Action, TextArgument](QKeyEvent *Event)
+					{
+						std::string Text(Event->text().toUtf8().data());
+						if (TextArgument->Regex && std::regex_match(Text, *TextArgument->Regex))
+						{
+							TextArgument->Data = Text;
+							this->Core->HandleInput(Action);
+							return true;
+						}
+						return false;
+					});
+					return;
+				}
+			}
+
+			Assert(false); // TODO, popup dialog or something
+		};
+		
+	}
+
 	void keyPressEvent(QKeyEvent *Event)
 	{
-		OptionalT<InputT::MainT> Main;
-		OptionalT<std::string> Text;
-		std::string RawText = std::string(Event->text().toUtf8().data());
-		if (!RawText.empty() && (RawText.size() == 1) && (RawText[0] >= 33) && (RawText[0] <= 126)) Text = RawText;
-		if (RawText == " ") Text = RawText;
-		switch (Event->key())
-		{
-			case Qt::Key_Left: Main = InputT::MainT::Left; break;
-			case Qt::Key_Right: Main = InputT::MainT::Right; break;
-			case Qt::Key_Up: Main = InputT::MainT::Up; break;
-			case Qt::Key_Down: Main = InputT::MainT::Down; break;
-			case Qt::Key_Backspace: Main = InputT::MainT::TextBackspace; break;
-			case Qt::Key_Delete: Main = InputT::MainT::Delete; break;
-			case Qt::Key_Return: Main = InputT::MainT::Enter; Text = std::string("\n"); break;
-			case Qt::Key_Escape: Main = InputT::MainT::Exit; break;
-			default: break;
-		}
-		if (Text)
-		{
-			if (*Text == "x") Main = InputT::MainT::Delete;
-			else if (*Text == "o") Main = InputT::MainT::NewStatement;
-			else if (*Text == "O") Main = InputT::MainT::NewStatementBefore;
-			else if (*Text == "r") Main = InputT::MainT::ReplaceParent;
-			else if (*Text == "w") Main = InputT::MainT::Wedge;
-			else if (*Text == "h") Main = InputT::MainT::Left;
-			else if (*Text == "j") Main = InputT::MainT::Down;
-			else if (*Text == "k") Main = InputT::MainT::Up;
-			else if (*Text == "l") Main = InputT::MainT::Right;
-		}
-		Core->HandleInput({Main, Text});
+		for (auto &Handler : Actions)
+			if (Handler(Event)) return;
 	}
 };
 
@@ -124,7 +176,7 @@ int main(int argc, char **argv)
 		VisualT BodyVisual(HTMLRoot, HTMLRoot.findFirst("body"));
 
 		CoreT Core(BodyVisual);
-		WebView->Core = &Core;
+		WebView->SetCore(&Core);
 
 		// ----
 		// Toolbar buttons

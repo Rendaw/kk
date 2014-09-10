@@ -6,6 +6,7 @@
 #include <set>
 #include <vector>
 #include <memory>
+#include <regex>
 #include <QWebElement>
 
 #include "../shared/type.h"
@@ -104,19 +105,39 @@ struct VisualT
 		std::unique_ptr<VisualT> TagVisual;
 };
 
-struct ActionT
+struct ReactionT
 {
-	virtual ~ActionT(void);
-	virtual std::unique_ptr<ActionT> Apply(void) = 0;
-	virtual bool Combine(std::unique_ptr<ActionT> &Other);
+	virtual ~ReactionT(void);
+	virtual std::unique_ptr<ReactionT> Apply(void) = 0;
+	virtual bool Combine(std::unique_ptr<ReactionT> &Other);
 };
 
-struct ActionGroupT : ActionT
+struct ActionT
 {
-	void Add(std::unique_ptr<ActionT> Action);
-	void AddReverse(std::unique_ptr<ActionT> Action);
-	std::unique_ptr<ActionT> Apply(void);
-	std::list<std::unique_ptr<ActionT>> Actions;
+	struct ArgumentT
+	{
+		virtual ~ArgumentT(void);
+	};
+	struct TextArgumentT : ArgumentT
+	{
+		std::string Data;
+		OptionalT<std::regex> Regex;
+	};
+
+	std::string Name;
+	std::vector<ArgumentT *> Arguments;
+
+	ActionT(std::string const &Name);
+	virtual ~ActionT(void);
+	virtual OptionalT<std::unique_ptr<ReactionT>> Apply(void) = 0;
+};
+
+struct ReactionGroupT : ReactionT
+{
+	void Add(std::unique_ptr<ReactionT> Reaction);
+	void AddReverse(std::unique_ptr<ReactionT> Reaction);
+	std::unique_ptr<ReactionT> Apply(void);
+	std::list<std::unique_ptr<ReactionT>> Reactions;
 };
 
 struct NucleusT;
@@ -151,14 +172,14 @@ struct AtomT
 	NucleusT const *operator ->(void) const;
 	operator bool(void) const;
 
-	struct SetT : ActionT
+	struct SetT : ReactionT
 	{
 		AtomT &Atom;
 		HoldT Replacement;
 
 		SetT(AtomT &Atom, NucleusT *Replacement);
 		
-		std::unique_ptr<ActionT> Apply(void);
+		std::unique_ptr<ReactionT> Apply(void);
 	};
 	void Set(NucleusT *Nucleus);
 	
@@ -177,30 +198,6 @@ enum ArityT
 	Nullary,
 	Unary,
 	Binary
-};
-
-struct InputT
-{
-	enum struct MainT
-	{
-		// Spatial keys
-		Left,
-		Right,
-		Up,
-		Down,
-		TextBackspace,
-
-		// Relative keys
-		Delete,
-		Enter,
-		Exit,
-		NewStatementBefore,
-		NewStatement,
-		ReplaceParent,
-		Wedge
-	};
-	OptionalT<MainT> Main;
-	OptionalT<std::string> Text;
 };
 
 enum struct FocusDirectionT
@@ -246,12 +243,12 @@ struct NucleusT
 	virtual void Serialize(Serial::WritePolymorphT &Polymorph) const;
 	virtual AtomTypeT const &GetTypeInfo(void) const;
 	virtual void Focus(FocusDirectionT Direction);
+	virtual void RegisterActions(void) = 0;
 	virtual void Defocus(void);
 	virtual void AssumeFocus(void); // If bool is false, optional must not be set
 	virtual void Refresh(void);
-	virtual std::unique_ptr<ActionT> Set(NucleusT *Nucleus);
-	virtual std::unique_ptr<ActionT> Set(std::string const &Text); // TODO StringTypePartT/Common- should add a SetT class to the StringDataPartT class, protoatom should use that set and this should be removed
-	virtual OptionalT<std::unique_ptr<ActionT>> HandleInput(InputT const &Input);
+	virtual std::unique_ptr<ReactionT> Set(NucleusT *Nucleus);
+	virtual std::unique_ptr<ReactionT> Set(std::string const &Text); // TODO StringTypePartT/Common- should add a SetT class to the StringDataPartT class, protoatom should use that set and this should be removed
 
 	virtual void FocusPrevious(void);
 	virtual void FocusNext(void);
@@ -287,13 +284,13 @@ struct AtomTypeT
 	bool SpatiallyVertical = false;
 };
 
-struct FocusT : ActionT
+struct FocusT : ReactionT
 {
 	CoreT &Core;
 	HoldT Target;
 	bool DoNothing;
 	FocusT(CoreT &Core, NucleusT *Nucleus, bool DoNothing = false);
-	std::unique_ptr<ActionT> Apply(void);
+	std::unique_ptr<ReactionT> Apply(void);
 };
 
 struct CoreT
@@ -313,16 +310,21 @@ struct CoreT
 
 	VisualT CursorVisual;
 
+	std::list<std::unique_ptr<ActionT>> Actions;
+	std::function<void(void)> ResetActionsCallback;
+	std::function<void(ActionT *Action)> RegisterActionCallback;
+
 	CoreT(VisualT &RootVisual);
 	~CoreT(void);
 	void Serialize(Filesystem::PathT const &Path);
 	void Deserialize(Filesystem::PathT const &Path);
 	Serial::ReadErrorT Deserialize(AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
-	void HandleInput(InputT const &Input);
+	void HandleInput(ActionT *Action);
+	//void HandleTextInput(std::string const &ActionName, std::string const &Text); // Unimplemented
 	OptionalT<AtomTypeT *> LookUpAtom(std::string const &Text);
 	
-	void Apply(OptionalT<std::unique_ptr<ActionT>> Action);
-	std::list<std::unique_ptr<ActionT>> UndoQueue, RedoQueue;
+	void Apply(OptionalT<std::unique_ptr<ReactionT>> Reaction);
+	std::list<std::unique_ptr<ReactionT>> UndoQueue, RedoQueue;
 	bool HasChanges(void);
 	void Undo(void);
 	void Redo(void);
@@ -330,7 +332,10 @@ struct CoreT
 	// Used by atoms (internal)
 	void AssumeFocus(void);
 
-	std::unique_ptr<ActionT> ActionHandleInput(InputT const &Input);
+	void ResetActions(void);
+	void RegisterAction(std::unique_ptr<ActionT> &&Action);
+
+	std::unique_ptr<ReactionT> ReactionHandleInput(std::string const &ActionName, OptionalT<std::string> Text = {});
 
 	std::string Dump(void) const;
 
