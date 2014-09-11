@@ -310,16 +310,16 @@ struct CoreT
 
 	VisualT CursorVisual;
 
-	std::list<std::unique_ptr<ActionT>> Actions;
+	std::list<std::shared_ptr<ActionT>> Actions;
 	std::function<void(void)> ResetActionsCallback;
-	std::function<void(ActionT *Action)> RegisterActionCallback;
+	std::function<void(std::shared_ptr<ActionT> Action)> RegisterActionCallback;
 
 	CoreT(VisualT &RootVisual);
 	~CoreT(void);
 	void Serialize(Filesystem::PathT const &Path);
 	void Deserialize(Filesystem::PathT const &Path);
 	Serial::ReadErrorT Deserialize(AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
-	void HandleInput(ActionT *Action);
+	void HandleInput(std::shared_ptr<ActionT> Action);
 	//void HandleTextInput(std::string const &ActionName, std::string const &Text); // Unimplemented
 	OptionalT<AtomTypeT *> LookUpAtom(std::string const &Text);
 	
@@ -333,7 +333,7 @@ struct CoreT
 	void AssumeFocus(void);
 
 	void ResetActions(void);
-	void RegisterAction(std::unique_ptr<ActionT> &&Action);
+	void RegisterAction(std::shared_ptr<ActionT> Action);
 
 	std::unique_ptr<ReactionT> ReactionHandleInput(std::string const &ActionName, OptionalT<std::string> Text = {});
 

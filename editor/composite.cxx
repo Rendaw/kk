@@ -109,13 +109,13 @@ void CompositeT::RegisterActions(void)
 		};
 		if (EffectivelyVertical)
 		{
-			Core.RegisterAction(make_unique<FocusPreviousT>("Up", *this));
-			Core.RegisterAction(make_unique<FocusNextT>("Down", *this));
+			Core.RegisterAction(std::make_shared<FocusPreviousT>("Up", *this));
+			Core.RegisterAction(std::make_shared<FocusNextT>("Down", *this));
 		}
 		else
 		{
-			Core.RegisterAction(make_unique<FocusPreviousT>("Left", *this));
-			Core.RegisterAction(make_unique<FocusNextT>("Right", *this));
+			Core.RegisterAction(std::make_shared<FocusPreviousT>("Left", *this));
+			Core.RegisterAction(std::make_shared<FocusNextT>("Right", *this));
 		}
 
 		struct ExitT : ActionT
@@ -130,7 +130,7 @@ void CompositeT::RegisterActions(void)
 				return {};
 			}
 		};
-		Core.RegisterAction(make_unique<ExitT>(*this));
+		Core.RegisterAction(std::make_shared<ExitT>(*this));
 	}
 	else if (Focused.Is<SelfFocusedT>())
 	{
@@ -149,7 +149,7 @@ void CompositeT::RegisterActions(void)
 				return {};
 			}
 		};
-		Core.RegisterAction(make_unique<DeleteT>(*this));
+		Core.RegisterAction(std::make_shared<DeleteT>(*this));
 
 		struct WedgeT : ActionT
 		{
@@ -170,7 +170,7 @@ void CompositeT::RegisterActions(void)
 				return {};
 			}
 		};
-		Core.RegisterAction(make_unique<WedgeT>(*this));
+		Core.RegisterAction(std::make_shared<WedgeT>(*this));
 
 		struct ReplaceParentT : ActionT
 		{
@@ -185,7 +185,7 @@ void CompositeT::RegisterActions(void)
 				return {};
 			}
 		};
-		Core.RegisterAction(make_unique<ReplaceParentT>(*this));
+		Core.RegisterAction(std::make_shared<ReplaceParentT>(*this));
 
 		struct EnterT : ActionT
 		{
@@ -198,7 +198,7 @@ void CompositeT::RegisterActions(void)
 				return {};
 			}
 		};
-		Core.RegisterAction(make_unique<EnterT>(*this));
+		Core.RegisterAction(std::make_shared<EnterT>(*this));
 	}
 	else Assert(false);
 
@@ -685,13 +685,13 @@ void AtomListPartT::RegisterActions(void)
 	};
 	if (EffectivelyVertical)
 	{
-		Core.RegisterAction(make_unique<FocusPreviousT>("Up", *this));
-		Core.RegisterAction(make_unique<FocusNextT>("Down", *this));
+		Core.RegisterAction(std::make_shared<FocusPreviousT>("Up", *this));
+		Core.RegisterAction(std::make_shared<FocusNextT>("Down", *this));
 	}
 	else
 	{
-		Core.RegisterAction(make_unique<FocusPreviousT>("Left", *this));
-		Core.RegisterAction(make_unique<FocusNextT>("Right", *this));
+		Core.RegisterAction(std::make_shared<FocusPreviousT>("Left", *this));
+		Core.RegisterAction(std::make_shared<FocusNextT>("Right", *this));
 	}
 
 	struct NewStatementBeforeT : ActionT
@@ -705,7 +705,7 @@ void AtomListPartT::RegisterActions(void)
 			return std::unique_ptr<ReactionT>(new AddRemoveT(Base, true, Base.FocusIndex, Base.Core.ProtoatomType->Generate(Base.Core)));
 		}
 	};
-	Core.RegisterAction(make_unique<NewStatementBeforeT>(*this));
+	Core.RegisterAction(std::make_shared<NewStatementBeforeT>(*this));
 
 	struct NewStatementAfterT : ActionT
 	{
@@ -718,7 +718,7 @@ void AtomListPartT::RegisterActions(void)
 			return std::unique_ptr<ReactionT>(new AddRemoveT(Base, true, Base.FocusIndex + 1, Base.Core.ProtoatomType->Generate(Base.Core)));
 		}
 	};
-	Core.RegisterAction(make_unique<NewStatementAfterT>(*this));
+	Core.RegisterAction(std::make_shared<NewStatementAfterT>(*this));
 
 	if (IsFocused())
 	{
@@ -734,7 +734,7 @@ void AtomListPartT::RegisterActions(void)
 				return {};
 			}
 		};
-		Core.RegisterAction(make_unique<DeleteT>(*this));
+		Core.RegisterAction(std::make_shared<DeleteT>(*this));
 	}
 
 	Parent->RegisterActions();
@@ -946,7 +946,7 @@ void StringPartT::RegisterActions(void)
 						Base.Data.substr(Base.Position)));
 			}
 		};
-		Core.RegisterAction(make_unique<TextT>(*this));
+		Core.RegisterAction(std::make_shared<TextT>(*this));
 
 		struct FocusPreviousT : ActionT
 		{
@@ -967,7 +967,7 @@ void StringPartT::RegisterActions(void)
 				return {};
 			}
 		};
-		Core.RegisterAction(make_unique<FocusPreviousT>(*this));
+		Core.RegisterAction(std::make_shared<FocusPreviousT>(*this));
 
 		struct FocusNextT : ActionT
 		{
@@ -988,7 +988,7 @@ void StringPartT::RegisterActions(void)
 				return {};
 			}
 		};
-		Core.RegisterAction(make_unique<FocusNextT>(*this));
+		Core.RegisterAction(std::make_shared<FocusNextT>(*this));
 
 		struct BackspaceT : ActionT
 		{
@@ -1004,7 +1004,7 @@ void StringPartT::RegisterActions(void)
 				return std::unique_ptr<ReactionT>(new SetT(Base, NewPosition, NewData));
 			}
 		};
-		Core.RegisterAction(make_unique<BackspaceT>(*this));
+		Core.RegisterAction(std::make_shared<BackspaceT>(*this));
 
 		struct DeleteT : ActionT
 		{
@@ -1019,7 +1019,7 @@ void StringPartT::RegisterActions(void)
 				return std::unique_ptr<ReactionT>(new SetT(Base, Base.Position, NewData));
 			}
 		};
-		Core.RegisterAction(make_unique<DeleteT>(*this));
+		Core.RegisterAction(std::make_shared<DeleteT>(*this));
 
 		if (!Parent->As<CompositeT>()->HasOnePart())
 		{
@@ -1035,7 +1035,7 @@ void StringPartT::RegisterActions(void)
 					return {};
 				}
 			};
-			Core.RegisterAction(make_unique<ExitT>(*this));
+			Core.RegisterAction(std::make_shared<ExitT>(*this));
 		}
 	}
 	else if (Focused == FocusedT::On)
@@ -1050,7 +1050,7 @@ void StringPartT::RegisterActions(void)
 				return std::unique_ptr<ReactionT>(new SetT(Base, 0, ""));
 			}
 		};
-		Core.RegisterAction(make_unique<DeleteT>(*this));
+		Core.RegisterAction(std::make_shared<DeleteT>(*this));
 
 		struct EnterT : ActionT
 		{
@@ -1064,7 +1064,7 @@ void StringPartT::RegisterActions(void)
 				return {};
 			}
 		};
-		Core.RegisterAction(make_unique<EnterT>(*this));
+		Core.RegisterAction(std::make_shared<EnterT>(*this));
 	}
 	Parent->RegisterActions();
 }
@@ -1240,7 +1240,7 @@ void EnumPartT::RegisterActions(void)
 			return std::unique_ptr<ReactionT>(new SetT(Base, (Base.Index + 1) % Base.TypeInfo.Values.size()));
 		}
 	};
-	Core.RegisterAction(make_unique<AdvanceValueT>(*this));
+	Core.RegisterAction(std::make_shared<AdvanceValueT>(*this));
 	Parent->RegisterActions();
 }
 

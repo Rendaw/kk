@@ -39,7 +39,7 @@ struct WebViewT : QWebView
 		{"Finish", {"Space"}},
 		{"Wedge", {"w"}},
 		{"Replace parent", {"r"}},
-		{"Insert statement before", {"O"}},
+		{"Insert statement before", {"Shift + o"}},
 		{"Insert statement after", {"o"}},
 		{"Advance value", {"Enter"}},
 	};
@@ -54,7 +54,7 @@ struct WebViewT : QWebView
 		{
 			Actions.clear();
 		};
-		Core->RegisterActionCallback = [this](ActionT *Action)
+		Core->RegisterActionCallback = [this](std::shared_ptr<ActionT> Action)
 		{
 			std::cout << "Registering " << Action->Name << std::endl;
 			if (Action->Arguments.empty())
@@ -89,13 +89,15 @@ struct WebViewT : QWebView
 					Actions.push_back([this, Action, TextArgument](QKeyEvent *Event)
 					{
 						std::string Text(Event->text().toUtf8().data());
-						if (TextArgument->Regex && std::regex_match(Text, *TextArgument->Regex))
-						{
-							TextArgument->Data = Text;
-							this->Core->HandleInput(Action);
-							return true;
-						}
-						return false;
+						static std::regex Printable("[[:print:]]+"); // Probably needs testing with utf-8
+						// It would be nice if Qt had an "isPrintable" modifier on QKeyEvent
+						// TODO Just blacklist all modifier and unprintable characters, maybe
+						if (!std::regex_match(Text, Printable)) return false;
+						if (TextArgument->Regex && !std::regex_match(Text, *TextArgument->Regex)) 
+							return false;
+						TextArgument->Data = Text;
+						this->Core->HandleInput(Action);
+						return true;
 					});
 					return;
 				}

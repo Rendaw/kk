@@ -95,6 +95,10 @@ VisualT::VisualT(QWebElement const &Root) : Root(Root), ID(::StringT() << "e" <<
 {
 	EvaluateJS(Root, ::StringT()
 		<< ID << " = document.createElement('div');");
+	EvaluateJS(Root, ::StringT()
+		<< ID << ".classList.add('new');");
+	EvaluateJS(Root, ::StringT()
+		<< "setTimeout(function() { " << ID << ".classList.remove('new'); }, 1);");
 }
 
 VisualT::VisualT(QWebElement const &Root, QWebElement const &Element) : VisualT(Root)
@@ -634,7 +638,7 @@ Serial::ReadErrorT CoreT::Deserialize(AtomT &Out, std::string const &TypeName, S
 	return Out->Deserialize(Object);
 }
 
-void CoreT::HandleInput(ActionT *Action)
+void CoreT::HandleInput(std::shared_ptr<ActionT> Action)
 {
 	TRACE;
 	std::cout << "Action " << Action->Name << std::endl;
@@ -709,14 +713,16 @@ void CoreT::AssumeFocus(void)
 	
 void CoreT::ResetActions(void)
 {
+	TRACE;
 	if (ResetActionsCallback) ResetActionsCallback();
 	Actions.clear();
 }
 
-void CoreT::RegisterAction(std::unique_ptr<ActionT> &&Action)
+void CoreT::RegisterAction(std::shared_ptr<ActionT> Action)
 {
-	Actions.push_back(std::move(Action));
-	if (RegisterActionCallback) RegisterActionCallback(Actions.back().get());
+	TRACE;
+	Actions.push_back(Action);
+	if (RegisterActionCallback) RegisterActionCallback(Action);
 }
 
 std::unique_ptr<ReactionT> CoreT::ReactionHandleInput(std::string const &ActionName, OptionalT<std::string> Text)
@@ -742,6 +748,7 @@ std::unique_ptr<ReactionT> CoreT::ReactionHandleInput(std::string const &ActionN
 						if (Assert(TextArgument)) TextArgument->Data = *Text;
 
 					}
+					auto Hold = Action;
 					auto Result = Action->Apply();
 					if (Result) return (*Result)->Apply();
 				}

@@ -7,11 +7,13 @@ div
 	text-align: left;
 	display: inline-block; 
 	text-indent: 0;
+	transition: color 4s;
 }
 
 div.type
 {
 	display: inline;
+	color: #bababa;
 }
 
 div.part
@@ -57,10 +59,31 @@ div.type-cursor
 	margin-right: -0.55em;
 }
 
+/* Protatom */
+div.type-Protoatom,
+div.new
+{
+	color: black;
+}
+
 /* Element */
-div.type-Element > div.part-Key > div.type-String > div.part-Data > div.affix-inner,
+div.type-Element:not(.new),
+div.type-Element > div.part > div.type-String:not(.new)
+{
+	color: #99c947;
+}
+
+div.type-Element > div.part-Key > div.type-String > div.part-Data > div.affix-inner
+{
+	display: none;
+}
 
 /* Module */
+div.type-Module:not(.new)
+{
+	color: #bcb6f3;
+}
+
 div.type-Module > div > div.type-Group > div.affix-outer
 {
 	display: none;
@@ -78,6 +101,11 @@ div.type-Module > div.part-Top > div.type-Group > div.part > div
 }
 
 /* Group */
+div.type-Group:not(.new)
+{
+	/*color: #bababa;*/
+}
+
 div.type-Group > div.part-Statements.flag-vertical > div
 { 
 	/*margin-left: 64px;*/
@@ -109,14 +137,14 @@ body:not(.flag-visualizestructure) div.tag { display: none !important; }
 
 .flag-visualizestructure div.type
 {
-	border: 1px solid LightSteelBlue;
+	border: 1px solid #bababa;
 	margin: 2px;
 	padding: 2px;
 }
 
 .flag-visualizestructure div.part
 {
-	border: 1px solid Lavender;
+	border: 1px solid #cccccc;
 	margin: 2px;
 	padding: 2px;
 }
