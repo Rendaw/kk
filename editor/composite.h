@@ -30,8 +30,6 @@ struct CompositeT : NucleusT
 	void Defocus(void) override;
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
-	std::unique_ptr<ReactionT> Set(NucleusT *Nucleus) override;
-	std::unique_ptr<ReactionT> Set(std::string const &Text) override;
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
 	bool IsEmpty(void) const override;
@@ -101,7 +99,6 @@ struct AtomPartT : NucleusT
 	void Defocus(void) override;
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
-	std::unique_ptr<ReactionT> Set(NucleusT *Nucleus) override;
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
 	bool IsEmpty(void) const override;
@@ -141,24 +138,22 @@ struct AtomListPartT : NucleusT
 	void Refresh(void) override;
 	void Add(size_t Position, NucleusT *Nucleus, bool ShouldFocus = false);
 	void Remove(size_t Position);
-	
-	struct AddRemoveT : ReactionT
-	{
-		AtomListPartT &Base;
-		bool Add;
-		size_t Position;
-		HoldT Nucleus;
 
-		AddRemoveT(AtomListPartT &Base, bool Add, size_t Position, NucleusT *Nucleus);
-
-		std::unique_ptr<ReactionT> Apply(void);
-	};
-
-	std::unique_ptr<ReactionT> Set(NucleusT *Nucleus) override;
-	std::unique_ptr<ReactionT> Set(std::string const &Text) override;
-	
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
+
+	private:
+		struct AddRemoveT : ReactionT
+		{
+			AddRemoveT(AtomListPartT &Base, bool Add, size_t Position, NucleusT *Nucleus);
+
+			void Apply(void);
+
+			AtomListPartT &Base;
+			bool Add;
+			size_t Position;
+			HoldT Nucleus;
+		};
 };
 
 struct StringPartTypeT : CompositeTypePartT
@@ -191,21 +186,7 @@ struct StringPartT : NucleusT
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
 	
-	std::unique_ptr<ReactionT> Set(NucleusT *Nucleus) override;
-	
-	struct SetT : ReactionT
-	{
-		StringPartT &Base;
-		unsigned int Position;
-		std::string Data;
-		
-		SetT(StringPartT &Base, unsigned int Position, std::string const &Data);
-		
-		std::unique_ptr<ReactionT> Apply(void);
-		bool Combine(std::unique_ptr<ReactionT> &Other) override;
-	};
-
-	std::unique_ptr<ReactionT> Set(std::string const &Text) override;
+	void Set(size_t Position, std::string const &Text);
 };
 
 struct EnumPartTypeT : CompositeTypePartT
@@ -235,19 +216,14 @@ struct EnumPartT : NucleusT
 	void Defocus(void) override;
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
-
-	struct SetT : ReactionT
-	{
-		EnumPartT &Base;
-		size_t Index;
-
-		SetT(EnumPartT &Base, size_t Index);
-		std::unique_ptr<ReactionT> Apply(void);
-	};
-	
-	std::unique_ptr<ReactionT> Set(NucleusT *Nucleus) override;
-	std::unique_ptr<ReactionT> Set(std::string const &Text) override;
 };
+
+void CheckStringType(AtomTypeT *Type);
+StringPartT *GetStringPart(NucleusT *Nucleus);
+
+void CheckElementType(AtomTypeT *Type);
+AtomPartT *GetElementLeftPart(NucleusT *Nucleus);
+AtomPartT *GetElementRightPart(NucleusT *Nucleus);
 
 }
 

@@ -7,11 +7,6 @@
 namespace Core
 {
 
-struct ProtoatomTypeT : CompositeTypeT
-{
-	ProtoatomTypeT(void);
-};
-
 struct ProtoatomPartTypeT : CompositeTypePartT
 {
 	using CompositeTypePartT::CompositeTypePartT;
@@ -43,10 +38,15 @@ struct ProtoatomPartT : NucleusT
 	void AssumeFocus(void) override;
 	void Refresh(void) override;
 	
-	OptionalT<std::unique_ptr<ReactionT>> Finish(OptionalT<AtomTypeT *> Type, std::string Text);
-	
 	bool IsEmpty(void) const override;
+
+	void Set(size_t Position, std::string const &Text);
+	void HandleText(std::string const &Text);
+
+	OptionalT<NucleusT *> Finish(OptionalT<AtomTypeT *> Type, std::string Text);
 };
+
+void CheckProtoatomType(AtomTypeT *Type);
 
 template <typename RefT> static OptionalT<ProtoatomPartT *> AsProtoatom(RefT &Test)
 {
@@ -55,6 +55,9 @@ template <typename RefT> static OptionalT<ProtoatomPartT *> AsProtoatom(RefT &Te
 		return Original->Parts[1]->template As<ProtoatomPartT>();
 	return {};
 }
+
+ProtoatomPartT *GetProtoatomPart(NucleusT *Protoatom);
+AtomPartT *GetProtoatomLiftedPart(NucleusT *Protoatom);
 
 }
 

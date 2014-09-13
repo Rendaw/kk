@@ -4,29 +4,13 @@
 
 #include "logging.h"
 #include "composite.h"
+	
+static auto AnyClass = std::regex("[a-zA-Z0-9:!@#$%^&*()<>,./\\[\\]{}|\\`~-_'\"=+]");
+static auto IdentifierClass = Regex::ParserT<>("^[a-zA-Z0-9_]+$");
 
 namespace Core
 {
 
-ProtoatomTypeT::ProtoatomTypeT(void)
-{
-	TRACE;
-	Tag = "Protoatom";
-	{
-		auto Part = new AtomPartTypeT(*this);
-		Part->Tag = "Lifted";
-		//Part->SetDefault = true; // Unnecessary, since protoatom is only added explictly (no generic bubling sets or whatnot)
-		Part->StartEmpty = true;
-		Parts.emplace_back(Part);
-	}
-	{
-		auto Part = new ProtoatomPartTypeT(*this);
-		Part->Tag = "Data";
-		Part->FocusDefault = true;
-		Parts.emplace_back(Part);
-	}
-}
-	
 void ProtoatomPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
 {
 	TRACE;
@@ -72,80 +56,55 @@ AtomTypeT const &ProtoatomPartT::GetTypeInfo(void) const { return TypeInfo; }
 void ProtoatomPartT::Focus(FocusDirectionT Direction)
 {
 	TRACE;
-	if (Parent->As<CompositeT>()->HasOnePart()) Core.TextMode = true;
+
+	if ((Focused == FocusedT::Off) && (Parent->As<CompositeT>()->HasOnePart())) 
+		Core.TextMode = true;
+
 	if (Core.TextMode)
 	{
-		if ((Direction == FocusDirectionT::FromBehind) ||
-			(Direction == FocusDirectionT::Direct))
+		if (Focused != FocusedT::Text)
 		{
-			Position = 0;
+			if ((Direction == FocusDirectionT::FromBehind) ||
+				(Direction == FocusDirectionT::Direct))
+			{
+				Position = 0;
+			}
+			else if (Direction == FocusDirectionT::FromAhead)
+			{
+				Position = Data.size();
+			}
+			Focused = FocusedT::Text;
 		}
-		else if (Direction == FocusDirectionT::FromAhead)
-		{
-			Position = Data.size();
-		}
-		Focused = FocusedT::Text;
 	}
-	else
+	else 
 	{
-		Visual.SetClass("flag-focused");
-		Focused = FocusedT::On;
+		if (Focused != FocusedT::On)
+		{
+			Visual.SetClass("flag-focused");
+			Focused = FocusedT::On;
+		}
 	}
 	FlagRefresh();
 	FlagStatusChange();
 	NucleusT::Focus(Direction);
-	if (Parent->Parent && Parent->Parent->As<AtomPartT>())
-		Parent->Parent->FlagRefresh(); // Hack for hiding empty protoatoms
+	/*if (Parent->Parent && Parent->Parent->As<AtomPartT>())
+		Parent->Parent->FlagRefresh(); // Hack for hiding empty protoatoms*/
 }
 	
 void ProtoatomPartT::RegisterActions(void)
 {
 	TRACE;
 	
-	static auto IdentifierClass = Regex::ParserT<>("^[a-zA-Z0-9_]+$");
-
-	struct SetT : ReactionT
-	{
-		ProtoatomPartT &Base;
-		unsigned int Position;
-		std::string Data;
-		
-		SetT(ProtoatomPartT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) {}
-		
-		std::unique_ptr<ReactionT> Apply(void)
-		{
-			TRACE;
-			auto Out = new SetT(Base, Base.Position, Base.Data);
-			Base.Data = Data;
-			Base.Position = Position;
-			if (Data.empty()) Base.IsIdentifier.Unset();
-			else if (!Base.IsIdentifier)
-				Base.IsIdentifier = IdentifierClass(Base.Data);
-			Base.FlagRefresh();
-			return std::unique_ptr<ReactionT>(Out);
-		}
-		
-		bool Combine(std::unique_ptr<ReactionT> &Other) override
-		{
-			auto Set = dynamic_cast<SetT *>(Other.get());
-			if (!Set) return false;
-			if (&Set->Base != &Base) return false;
-			Position = Set->Position;
-			Data = Set->Data;
-			return true;
-		}
-	};
-
 	if (Focused == FocusedT::Text)
 	{
 		struct FinishT : ActionT
 		{
 			ProtoatomPartT &Base;
 			FinishT(ProtoatomPartT &Base) : ActionT("Finish"), Base(Base) { }
-			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			void Apply(void)
 			{
 				TRACE;
-				return Base.Finish({}, Base.Data);
+				Base.Finish({}, Base.Data);
 			}
 		};
 		Core.RegisterAction(make_unique<FinishT>(*this));
@@ -156,54 +115,14 @@ void ProtoatomPartT::RegisterActions(void)
 			ActionT::TextArgumentT Argument;
 			TextT(ProtoatomPartT &Base) : ActionT("Enter text"), Base(Base)
 			{ 
-				Argument.Regex = std::regex("[a-zA-Z0-9:;\n!@#$%^&*()<>,./\\[\\]{}|\\`~-_'\"=+]");
+				Argument.Regex = AnyClass;
 				Arguments.push_back(&Argument); 
 			}
 
-			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			void Apply(void)
 			{
 				TRACE;
-				// TODO this should handle arbitrary length text strings
-				auto Text = Argument.Data;
-
-				auto NewIsIdentifier = IdentifierClass(Text);
-				
-				if ((Text == "\n") || (Text == ";"))
-				{
-					// TODO move to group, have group finish protoatom?
-					auto Reactions = new ReactionGroupT;
-					auto Finished = Base.Finish({}, Base.Data);
-					if (Finished) Reactions->Add(std::move(*Finished));
-					auto InputReaction = Base.Core.ReactionHandleInput("Insert statement after");
-					//auto InputReaction = Base.Parent->HandleInput(InputT{InputT::MainT::NewStatement, {}});
-					if (InputReaction) Reactions->Add(std::move(InputReaction));
-					return std::unique_ptr<ReactionT>(Reactions);
-				}
-				else if (!Base.IsIdentifier || (*Base.IsIdentifier == NewIsIdentifier))
-				{
-					Assert(Text.length() == 1);
-					auto NewData = Base.Data;
-					NewData.insert(Base.Position, Text);
-					auto NewPosition = Base.Position + 1;
-					if (NewPosition == NewData.size()) // Only do auto conversion if appending text
-					{
-						auto Found = Base.Core.LookUpAtom(NewData);
-						if (Found && Found->ReplaceImmediately) 
-							return Base.Finish(Found, NewData);
-					}
-					return std::unique_ptr<ReactionT>(new SetT(Base, NewPosition, NewData));
-				}
-				else if (Base.IsIdentifier && (*Base.IsIdentifier != NewIsIdentifier))
-				{
-					Assert(!Base.Data.empty());
-					auto Finished = Base.Finish({}, Base.Data);
-					Assert(Finished);
-					auto ReactionGroup = new ReactionGroupT();
-					ReactionGroup->Add(std::move(*Finished));
-					ReactionGroup->Add(Base.Core.ReactionHandleInput("Enter text", Text));
-					return std::unique_ptr<ReactionT>(ReactionGroup);
-				}
-				return {};
+				Base.HandleText(Argument.Data);
 			}
 		};
 		Core.RegisterAction(make_unique<TextT>(*this));
@@ -212,7 +131,7 @@ void ProtoatomPartT::RegisterActions(void)
 		{
 			ProtoatomPartT &Base;
 			FocusPreviousT(ProtoatomPartT &Base) : ActionT("Left"), Base(Base) {}
-			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			void Apply(void)
 			{
 				TRACE;
 				if (Base.Position == 0) 
@@ -224,7 +143,6 @@ void ProtoatomPartT::RegisterActions(void)
 					Base.Position -= 1;
 					Base.FlagRefresh();
 				}
-				return {};
 			}
 		};
 		Core.RegisterAction(make_unique<FocusPreviousT>(*this));
@@ -233,7 +151,7 @@ void ProtoatomPartT::RegisterActions(void)
 		{
 			ProtoatomPartT &Base;
 			FocusNextT(ProtoatomPartT &Base) : ActionT("Right"), Base(Base) {}
-			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			void Apply(void)
 			{
 				TRACE;
 				if (Base.Position == Base.Data.size()) 
@@ -245,7 +163,6 @@ void ProtoatomPartT::RegisterActions(void)
 					Base.Position += 1;
 					Base.FlagRefresh();
 				}
-				return {};
 			}
 		};
 		Core.RegisterAction(make_unique<FocusNextT>(*this));
@@ -254,14 +171,14 @@ void ProtoatomPartT::RegisterActions(void)
 		{
 			ProtoatomPartT &Base;
 			BackspaceT(ProtoatomPartT &Base) : ActionT("Backspace"), Base(Base) {}
-			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			void Apply(void)
 			{
 				TRACE;
-				if (Base.Position == 0) return {};
+				if (Base.Position == 0) return;
 				auto NewData = Base.Data;
 				NewData.erase(Base.Position - 1, 1);
 				auto NewPosition = Base.Position - 1;
-				return std::unique_ptr<ReactionT>(new SetT(Base, NewPosition, NewData));
+				Base.Set(NewPosition, NewData);
 			}
 		};
 		Core.RegisterAction(make_unique<BackspaceT>(*this));
@@ -270,13 +187,13 @@ void ProtoatomPartT::RegisterActions(void)
 		{
 			ProtoatomPartT &Base;
 			DeleteT(ProtoatomPartT &Base) : ActionT("Delete"), Base(Base) {}
-			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			void Apply(void)
 			{
 				TRACE;
-				if (Base.Position == Base.Data.size()) return {};
+				if (Base.Position == Base.Data.size()) return;
 				auto NewData = Base.Data;
 				NewData.erase(Base.Position, 1);
-				return std::unique_ptr<ReactionT>(new SetT(Base, Base.Position, NewData));
+				Base.Set(Base.Position, NewData);
 			}
 		};
 		Core.RegisterAction(make_unique<DeleteT>(*this));
@@ -287,12 +204,11 @@ void ProtoatomPartT::RegisterActions(void)
 			{
 				ProtoatomPartT &Base;
 				ExitT(ProtoatomPartT &Base) : ActionT("Exit"), Base(Base) {}
-				OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+				void Apply(void)
 				{
 					TRACE;
 					Base.Core.TextMode = false;
 					Base.Focus(FocusDirectionT::Direct);
-					return {};
 				}
 			};
 			Core.RegisterAction(make_unique<ExitT>(*this));
@@ -304,10 +220,10 @@ void ProtoatomPartT::RegisterActions(void)
 		{
 			ProtoatomPartT &Base;
 			DeleteT(ProtoatomPartT &Base) : ActionT("Delete"), Base(Base) {}
-			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			void Apply(void)
 			{
 				TRACE;
-				return std::unique_ptr<ReactionT>(new SetT(Base, 0, ""));
+				Base.Set(0, "");
 			}
 		};
 		Core.RegisterAction(make_unique<DeleteT>(*this));
@@ -316,12 +232,11 @@ void ProtoatomPartT::RegisterActions(void)
 		{
 			ProtoatomPartT &Base;
 			EnterT(ProtoatomPartT &Base) : ActionT("Enter"), Base(Base) {}
-			OptionalT<std::unique_ptr<ReactionT>> Apply(void)
+			void Apply(void)
 			{
 				TRACE;
 				Base.Core.TextMode = true;
 				Base.Focus(FocusDirectionT::Direct);
-				return {};
 			}
 		};
 		Core.RegisterAction(make_unique<EnterT>(*this));
@@ -358,14 +273,80 @@ void ProtoatomPartT::Refresh(void)
 }
 
 bool ProtoatomPartT::IsEmpty(void) const { TRACE; return Data.empty(); }
+	
+void ProtoatomPartT::Set(size_t NewPosition, std::string const &NewData)
+{
+	TRACE;
+	struct SetT : ReactionT
+	{
+		ProtoatomPartT &Base;
+		unsigned int Position;
+		std::string Data;
+		
+		SetT(ProtoatomPartT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) {}
+		
+		void Apply(void) { Base.Set(Position, Data); }
+		
+		bool Combine(std::unique_ptr<ReactionT> &Other) override
+		{
+			auto Set = dynamic_cast<SetT *>(Other.get());
+			if (!Set) return false;
+			if (&Set->Base != &Base) return false;
+			Position = Set->Position;
+			Data = Set->Data;
+			return true;
+		}
+	};
 
-OptionalT<std::unique_ptr<ReactionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT *> Type, std::string Text)
+	Core.AddUndoReaction(make_unique<SetT>(*this, Position, Data));
+	Data = NewData;
+	Position = NewPosition;
+	if (Data.empty()) IsIdentifier.Unset();
+	else if (!IsIdentifier) IsIdentifier = IdentifierClass(Data);
+	FlagRefresh();
+}
+
+void ProtoatomPartT::HandleText(std::string const &Text)
+{
+	TRACE;
+	// TODO this should handle arbitrary length text strings
+
+	auto NewIsIdentifier = IdentifierClass(Text);
+	
+	if (!IsIdentifier || (*IsIdentifier == NewIsIdentifier))
+	{
+		Assert(Text.length() == 1);
+		auto NewData = Data;
+		NewData.insert(Position, Text);
+		auto NewPosition = Position + 1;
+		if (NewPosition == NewData.size()) // Only do auto conversion if appending text
+		{
+			auto Found = Core.LookUpAtomType(NewData);
+			if (Found && Found->ReplaceImmediately) 
+			{
+				Finish(Found, NewData);
+				return;
+			}
+		}
+		Set(NewPosition, NewData);
+	}
+	else if (IsIdentifier && (*IsIdentifier != NewIsIdentifier))
+	{
+		Assert(!Data.empty());
+		auto Finished = Finish({}, Data);
+		Assert(Finished);
+		auto Protoatom = AsProtoatom(Finished);
+		Assert(Protoatom);
+		Protoatom->HandleText(Text);
+	}
+}
+
+OptionalT<NucleusT *> ProtoatomPartT::Finish(OptionalT<AtomTypeT *> Type, std::string Text)
 {
 	TRACE;
 	Assert(Parent->Atom);
-	auto &Lifted = Parent->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Data;
-	Type = Type ? Type : Core.LookUpAtom(Data);
-	auto Reactions = new ReactionGroupT;
+	auto &Lifted = GetProtoatomLiftedPart(Parent.Nucleus)->Data;
+	Type = Type ? Type : Core.LookUpAtomType(Data);
 	if (Type)
 	{
 		if (((*Type)->Arity == ArityT::Nullary) || (*Type)->Prefix)
@@ -375,14 +356,15 @@ OptionalT<std::unique_ptr<ReactionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT
 				std::cout << "NOTE: Can't finish to nullary or prefixed op if protoatom has lifed." << std::endl; 
 				return {}; 
 			}
-			auto Finished = Type->Generate(Core);
-			Reactions->Add(std::unique_ptr<ReactionT>(new AtomT::SetT(*PartParent()->Atom, Finished)));
+			PartParent()->Atom->Set(Type->Generate(Core));
+			return {};
 		}
 		else
 		{
-			auto Child = Lifted ? Lifted.Nucleus : Core.ProtoatomType->Generate(Core);
-			Reactions->Add(std::unique_ptr<ReactionT>(new AtomT::SetT(*PartParent()->Atom, Child)));
+			auto Protoatom = Lifted ? nullptr : Core.ProtoatomType->Generate(Core);
+			auto Child = Lifted ? Lifted.Nucleus : Protoatom;
 			AtomT *WedgeAtom = PartParent()->Atom;
+			PartParent()->Atom->Set(Child);
 			while ((*WedgeAtom)->PartParent() && 
 				(
 					((*WedgeAtom)->PartParent()->GetTypeInfo().Precedence > (*Type)->Precedence) || 
@@ -398,8 +380,23 @@ OptionalT<std::unique_ptr<ReactionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT
 			}
 			auto Finished = (*Type)->Generate(Core);
 			Assert(Finished);
-			Reactions->Add(std::unique_ptr<ReactionT>(new AtomT::SetT(*WedgeAtom, Finished)));
-			Reactions->Add(Finished->Set(Child));
+			WedgeAtom->Set(Finished);
+			{
+				auto Composite = Finished->As<CompositeT>();
+				bool Placed = false;
+				for (auto &Part : Composite->Parts)
+				{
+					auto AtomPart = (*Part->Atom)->As<AtomPartT>();
+					if (AtomPart) 
+					{
+						AtomPart->Data.Set(Child);
+						Placed = true;
+						break;
+					}
+				}
+				Assert(Placed);
+			}
+			return Protoatom;
 		}
 	}
 	else
@@ -416,7 +413,8 @@ OptionalT<std::unique_ptr<ReactionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT
 			{
 				Assert(Atom);
 				std::cout << "Replacing " << this << " with " << Lifted.Nucleus << ", atom " << Atom << std::endl;
-				return std::unique_ptr<ReactionT>(new AtomT::SetT(*PartParent()->Atom, Lifted.Nucleus));
+				PartParent()->Atom->Set(Lifted.Nucleus);
+				return {};
 			}
 
 			std::cout << "NOTE: Can't finish as new element if protoatom has lifted." << std::endl; 
@@ -424,29 +422,48 @@ OptionalT<std::unique_ptr<ReactionT>> ProtoatomPartT::Finish(OptionalT<AtomTypeT
 		}
 		
 		auto String = Core.StringType->Generate(Core);
-		Reactions->Add(String->Set(Text));
+		GetStringPart(String)->Set(0, Text);
 
 		auto Protoatom = Core.ProtoatomType->Generate(Core);
 
 		auto ParentAsComposite = PartParent()->As<CompositeT>();
 		if (ParentAsComposite && (&ParentAsComposite->TypeInfo == Core.ElementType))
 		{
-			Reactions->Add(Protoatom->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Set(String));
+			GetProtoatomLiftedPart(Protoatom)->Data.Set(String);
 		}
 		else
 		{
 			auto Element = Core.ElementType->Generate(Core);
-			Reactions->Add(Element->As<CompositeT>()->Parts[1]->Set(String));
-			Reactions->Add(Protoatom->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Set(Element));
+			GetElementRightPart(Element)->Data.Set(String);
+			GetProtoatomLiftedPart(Protoatom)->Data.Set(Element);
 		}
 
+		PartParent()->Atom->Set(Protoatom);
+
 		std::cout << Core.Dump() << std::endl; // DEBUG
-		Reactions->Add(std::unique_ptr<ReactionT>(new AtomT::SetT(*PartParent()->Atom, Protoatom)));
-
 		std::cout << "Standard no-type finish." << std::endl;
+		return Protoatom;
 	}
+}
 
-	return std::unique_ptr<ReactionT>(Reactions);
+void CheckProtoatomType(AtomTypeT *Type)
+{
+	auto Composite = dynamic_cast<CompositeTypeT *>(Type);
+	Assert(Composite);
+	if (!AssertE(Composite->Parts.size(), 2)) throw ConstructionErrorT() << "Protoatom must have 2 parts.";
+	if (!Assert(dynamic_cast<AtomPartTypeT *>(Composite->Parts[0].get()))) throw ConstructionErrorT() << "Protoatom part 1 must be an atom.";
+	if (!Assert(dynamic_cast<AtomPartTypeT *>(Composite->Parts[0].get())->StartEmpty)) throw ConstructionErrorT() << "The Protoatom atom part must be StartEmpty.";
+	if (!(dynamic_cast<ProtoatomPartTypeT *>(Composite->Parts[1].get()))) throw ConstructionErrorT() << "Protoatom part 2 must be a \"protoatom\" part.";
+}
+
+ProtoatomPartT *GetProtoatomPart(NucleusT *Protoatom)
+{
+	return *Protoatom->As<CompositeT>()->Parts[1]->As<ProtoatomPartT>();
+}
+
+AtomPartT *GetProtoatomLiftedPart(NucleusT *Protoatom)
+{
+	return *Protoatom->As<CompositeT>()->Parts[0]->As<AtomPartT>();
 }
 
 }

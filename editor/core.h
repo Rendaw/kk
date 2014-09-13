@@ -108,7 +108,7 @@ struct VisualT
 struct ReactionT
 {
 	virtual ~ReactionT(void);
-	virtual std::unique_ptr<ReactionT> Apply(void) = 0;
+	virtual void Apply(void) = 0;
 	virtual bool Combine(std::unique_ptr<ReactionT> &Other);
 };
 
@@ -129,15 +129,11 @@ struct ActionT
 
 	ActionT(std::string const &Name);
 	virtual ~ActionT(void);
-	virtual OptionalT<std::unique_ptr<ReactionT>> Apply(void) = 0;
-};
 
-struct ReactionGroupT : ReactionT
-{
-	void Add(std::unique_ptr<ReactionT> Reaction);
-	void AddReverse(std::unique_ptr<ReactionT> Reaction);
-	std::unique_ptr<ReactionT> Apply(void);
-	std::list<std::unique_ptr<ReactionT>> Reactions;
+	friend struct CoreT;
+	protected:
+		// Core use only
+		virtual void Apply(void) = 0;
 };
 
 struct NucleusT;
@@ -172,15 +168,6 @@ struct AtomT
 	NucleusT const *operator ->(void) const;
 	operator bool(void) const;
 
-	struct SetT : ReactionT
-	{
-		AtomT &Atom;
-		HoldT Replacement;
-
-		SetT(AtomT &Atom, NucleusT *Replacement);
-		
-		std::unique_ptr<ReactionT> Apply(void);
-	};
 	void Set(NucleusT *Nucleus);
 	
 	typedef std::function<void(NucleusT *Nucleus)> AtomCallbackT;
@@ -190,6 +177,7 @@ struct AtomT
 	NucleusT *Nucleus;
 
 	private:
+		void SetInternal(NucleusT *Nucleus);
 		void Clear(void);
 };
 
@@ -247,8 +235,6 @@ struct NucleusT
 	virtual void Defocus(void);
 	virtual void AssumeFocus(void); // If bool is false, optional must not be set
 	virtual void Refresh(void);
-	virtual std::unique_ptr<ReactionT> Set(NucleusT *Nucleus);
-	virtual std::unique_ptr<ReactionT> Set(std::string const &Text); // TODO StringTypePartT/Common- should add a SetT class to the StringDataPartT class, protoatom should use that set and this should be removed
 
 	virtual void FocusPrevious(void);
 	virtual void FocusNext(void);
@@ -286,11 +272,16 @@ struct AtomTypeT
 
 struct FocusT : ReactionT
 {
-	CoreT &Core;
-	HoldT Target;
-	bool DoNothing;
 	FocusT(CoreT &Core, NucleusT *Nucleus, bool DoNothing = false);
-	std::unique_ptr<ReactionT> Apply(void);
+
+	friend struct CoreT;
+	protected:
+		void Apply(void);
+
+	private:
+		CoreT &Core;
+		HoldT Target;
+		bool DoNothing;
 };
 
 struct CoreT
@@ -320,26 +311,38 @@ struct CoreT
 	void Deserialize(Filesystem::PathT const &Path);
 	Serial::ReadErrorT Deserialize(AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
 	void HandleInput(std::shared_ptr<ActionT> Action);
-	//void HandleTextInput(std::string const &ActionName, std::string const &Text); // Unimplemented
-	OptionalT<AtomTypeT *> LookUpAtom(std::string const &Text);
+	OptionalT<AtomTypeT *> LookUpAtomType(std::string const &Text);
 	
-	void Apply(OptionalT<std::unique_ptr<ReactionT>> Reaction);
-	std::list<std::unique_ptr<ReactionT>> UndoQueue, RedoQueue;
 	bool HasChanges(void);
 	void Undo(void);
 	void Redo(void);
 
+	void Focus(NucleusT *Nucleus);
+
 	// Used by atoms (internal)
+	void AddUndoReaction(std::unique_ptr<ReactionT> Reaction);
+
 	void AssumeFocus(void);
 
 	void ResetActions(void);
 	void RegisterAction(std::shared_ptr<ActionT> Action);
 
-	std::unique_ptr<ReactionT> ReactionHandleInput(std::string const &ActionName, OptionalT<std::string> Text = {});
-
 	std::string Dump(void) const;
 
 	private:
+		struct UndoLevelT
+		{
+			std::list<std::unique_ptr<ReactionT>> Reactions;
+
+			void Add(std::unique_ptr<ReactionT> Reaction);
+			void ApplyUndo(void);
+			void ApplyRedo(void);
+			bool Combine(std::unique_ptr<UndoLevelT> &Other);
+		};
+
+		std::list<std::unique_ptr<UndoLevelT>> UndoQueue, RedoQueue;
+		std::unique_ptr<UndoLevelT> NewUndoLevel;
+
 		void Refresh(void);
 };
 

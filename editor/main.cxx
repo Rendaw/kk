@@ -39,8 +39,9 @@ struct WebViewT : QWebView
 		{"Finish", {"Space"}},
 		{"Wedge", {"w"}},
 		{"Replace parent", {"r"}},
-		{"Insert statement before", {"Shift + o"}},
+		{"Insert statement before", {"Shift+O"}},
 		{"Insert statement after", {"o"}},
+		{"Finish and insert statement after", {";", "Return"}},
 		{"Advance value", {"Enter"}},
 	};
 
@@ -110,6 +111,7 @@ struct WebViewT : QWebView
 
 	void keyPressEvent(QKeyEvent *Event)
 	{
+		std::cout << "Got key event " << QKeySequence(Event->key() | Event->modifiers()).toString().toUtf8().data() << std::endl;
 		for (auto &Handler : Actions)
 			if (Handler(Event)) return;
 	}

@@ -176,29 +176,6 @@ ActionT::ArgumentT::~ArgumentT(void) {}
 
 ActionT::~ActionT(void) {}
 
-void ReactionGroupT::Add(std::unique_ptr<ReactionT> Reaction)
-{
-	Reactions.push_back(std::move(Reaction));
-}
-
-void ReactionGroupT::AddReverse(std::unique_ptr<ReactionT> Reaction)
-{
-	Reactions.push_front(std::move(Reaction));
-}
-	
-struct NOPT : ReactionT
-{
-	std::unique_ptr<ReactionT> Apply(void) { return std::unique_ptr<ReactionT>(new NOPT); }
-};
-
-std::unique_ptr<ReactionT> ReactionGroupT::Apply(void)
-{
-	auto Out = new ReactionGroupT;
-	for (auto &Reaction : Reactions)
-		Out->AddReverse(Reaction->Apply());
-	return std::unique_ptr<ReactionT>(std::move(Out));
-}
-
 AtomT::AtomT(AtomT &&Other) : Core(Other.Core), Callback(Other.Callback), Parent(Other.Parent), Nucleus(Other.Nucleus)
 {
 	if (Nucleus) Nucleus->Atom = this;
@@ -234,35 +211,37 @@ NucleusT const *AtomT::operator ->(void) const
 
 AtomT::operator bool(void) const { return Nucleus; }
 
-AtomT::SetT::SetT(AtomT &Atom, NucleusT *Replacement) : Atom(Atom), Replacement(Atom.Core, Replacement) { }
-		
-std::unique_ptr<ReactionT> AtomT::SetT::Apply(void)
-{
-	auto Out = new SetT(Atom, Atom.Nucleus);
-	Atom.Set(Replacement.Nucleus);
-	return std::unique_ptr<ReactionT>(std::move(Out));
-}
-
-void AtomT::Set(NucleusT *Nucleus)
+void AtomT::Set(NucleusT *Replacement)
 {
 	TRACE;
-	if (Callback) Callback(Nucleus);
-	Clear();
-	Assert(Nucleus);
-	if (!Nucleus) return;
-	this->Nucleus = Nucleus;
-	Nucleus->Count += 1;
-	if (Nucleus->Atom)
+
+	struct SetT : ReactionT
 	{
-		//std::cout << "Relocating atom " << Nucleus << std::endl;
-		if (Nucleus->Atom->Callback) Nucleus->Atom->Callback(nullptr);
-		Nucleus->Atom->Clear();
+		AtomT &Base;
+		HoldT Replacement;
+
+		SetT(AtomT &Base, NucleusT *Replacement) : Base(Base), Replacement(Base.Core, Replacement) { }
+		
+		void Apply(void) { Base.Set(Replacement.Nucleus); }
+	};
+	Core.AddUndoReaction(make_unique<SetT>(*this, Nucleus));
+	if (Callback) Callback(Replacement);
+	Clear();
+	Assert(Replacement);
+	if (!Replacement) return;
+	Nucleus = Replacement;
+	std::cout << "Set " << this << " to " << Replacement << std::endl;
+	Replacement->Count += 1;
+	if (Replacement->Atom)
+	{
+		//std::cout << "Relocating atom " << Replacement << std::endl;
+		if (Replacement->Atom->Callback) Replacement->Atom->Callback(nullptr);
+		Replacement->Atom->Clear();
 	}
-	Assert(!Nucleus->Atom);
-	Nucleus->Atom = this;
-	Nucleus->Parent = Parent;
+	Assert(!Replacement->Atom);
+	Replacement->Atom = this;
+	Replacement->Parent = Parent;
 	//std::cout << "Set result: " << Core.Dump() << std::endl;
-	Core.AssumeFocus();
 }
 
 void AtomT::Clear(void)
@@ -274,6 +253,7 @@ void AtomT::Clear(void)
 	Nucleus->Count -= 1;
 	if (Nucleus->Count == 0) Core.DeletionCandidates.insert(Nucleus);
 	Nucleus = nullptr;
+	std::cout << "Cleared " << this << std::endl;
 }
 	
 HoldT::HoldT(CoreT &Core) : Core(Core), Nucleus(nullptr) {}
@@ -375,15 +355,8 @@ AtomTypeT const &NucleusT::GetTypeInfo(void) const
 
 void NucleusT::Focus(FocusDirectionT Direction) 
 {
-	if (Core.Focused.Nucleus == this) return;
-	if (Core.Focused)
-	{
-		Core.Focused->Defocus();
-	}
-	Core.Focused = this;
-	Core.ResetActions();
-	RegisterActions();
-	std::cout << "FOCUSED " << this << std::endl;
+	TRACE;
+	Core.Focus(this);
 }
 
 void NucleusT::Defocus(void) {}
@@ -392,10 +365,6 @@ void NucleusT::AssumeFocus(void) { }
 
 void NucleusT::Refresh(void) { Assert(false); }
 
-std::unique_ptr<ReactionT> NucleusT::Set(NucleusT *Nucleus) { Assert(false); return {}; }
-	
-std::unique_ptr<ReactionT> NucleusT::Set(std::string const &Text) { Assert(false); return {}; }
-		
 void NucleusT::FocusPrevious(void) { TRACE; }
 
 void NucleusT::FocusNext(void) { TRACE; }
@@ -485,11 +454,10 @@ FocusT::FocusT(CoreT &Core, NucleusT *Nucleus, bool DoNothing) : Core(Core), Tar
 {
 }
 
-std::unique_ptr<ReactionT> FocusT::Apply(void)
+void FocusT::Apply(void)
 {
-	auto Out = new FocusT(Core, Target.Nucleus, !DoNothing);
+	Core.AddUndoReaction(make_unique<FocusT>(Core, Target.Nucleus, !DoNothing));
 	Target->Focus(FocusDirectionT::Direct);
-	return std::unique_ptr<ReactionT>(Out);
 }
 
 CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused(*this), TextMode(true), ProtoatomType(nullptr), ElementType(nullptr), StringType(nullptr), CursorVisual(RootVisual.Root)
@@ -542,39 +510,20 @@ CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused
 	{
 		auto Found = Types.find("Protoatom");
 		if (Found == Types.end()) throw ConstructionErrorT() << "Missing Protoatom type definition.";
+		CheckProtoatomType(Found->second.get());
 		ProtoatomType = Found->second.get();
-		auto ProtoatomType = Found->second.get();
-		auto Composite = dynamic_cast<CompositeTypeT *>(ProtoatomType);
-		Assert(Composite);
-		if (!AssertE(Composite->Parts.size(), 2)) throw ConstructionErrorT() << "Protoatom must have 2 parts.";
-		if (!Assert(dynamic_cast<AtomPartTypeT *>(Composite->Parts[0].get()))) throw ConstructionErrorT() << "Protoatom part 1 must be an atom.";
-		if (!Assert(dynamic_cast<AtomPartTypeT *>(Composite->Parts[0].get())->StartEmpty)) throw ConstructionErrorT() << "The Protoatom atom part must be StartEmpty.";
-		if (!(dynamic_cast<ProtoatomPartTypeT *>(Composite->Parts[1].get()))) throw ConstructionErrorT() << "Protoatom part 2 must be a \"protoatom\" part.";
 	}
 	{
 		auto Found = Types.find("Element");
 		if (Found == Types.end()) throw ConstructionErrorT() << "Missing Element type definition.";
+		CheckElementType(Found->second.get());
 		ElementType = Found->second.get();
-		auto ElementType = Found->second.get();
-		auto Composite = dynamic_cast<CompositeTypeT *>(ElementType);
-		Assert(Composite);
-		if (!(
-			(Composite->Parts.size() == 2) &&
-			(dynamic_cast<AtomPartTypeT *>(Composite->Parts[0].get())) &&
-			(dynamic_cast<AtomPartTypeT *>(Composite->Parts[1].get()))
-		)) throw ConstructionErrorT() << "Element has unusable definition.";
 	}
 	{
 		auto Found = Types.find("String");
 		if (Found == Types.end()) throw ConstructionErrorT() << "Missing String type definition.";
+		CheckStringType(Found->second.get());
 		StringType = Found->second.get();
-		auto StringType = Found->second.get();
-		auto Composite = dynamic_cast<CompositeTypeT *>(StringType);
-		Assert(Composite);
-		if (!(
-			(Composite->Parts.size() == 1) &&
-			(dynamic_cast<StringPartTypeT *>(Composite->Parts[0].get()))
-		)) throw ConstructionErrorT() << "String has unusable definition.";
 	}
 
 	for (auto &Type : Types)
@@ -609,6 +558,7 @@ void CoreT::Deserialize(Filesystem::PathT const &Path)
 {
 	UndoQueue.clear();
 	RedoQueue.clear();
+	NewUndoLevel.reset(new UndoLevelT());
 	AtomT NewRoot(*this);
 	{
 		Serial::ReadT Read;
@@ -626,7 +576,10 @@ void CoreT::Deserialize(Filesystem::PathT const &Path)
 		if (ParseError) throw ConstructionErrorT() << *ParseError;
 	}
 	Root.Set(NewRoot.Nucleus);
+	NewUndoLevel.reset(nullptr);
+	AssumeFocus();
 	Refresh();
+	Focused->RegisterActions();
 }
 
 Serial::ReadErrorT CoreT::Deserialize(AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object)
@@ -638,50 +591,59 @@ Serial::ReadErrorT CoreT::Deserialize(AtomT &Out, std::string const &TypeName, S
 	return Out->Deserialize(Object);
 }
 
+bool InHandleInput = false; // DEBUG
 void CoreT::HandleInput(std::shared_ptr<ActionT> Action)
 {
 	TRACE;
+	Assert(!InHandleInput);
+	InHandleInput = true;
+
+	Assert(!NewUndoLevel);
+	NewUndoLevel.reset(new UndoLevelT());
+
 	std::cout << "Action " << Action->Name << std::endl;
-	auto Reaction = Action->Apply();
-	if (Reaction)
-		Apply(std::move(*Reaction));
+	Action->Apply();
+	
+	AssumeFocus();
+
+	ResetActions();
+
+	if (NewUndoLevel->Reactions.empty()) NewUndoLevel.reset(nullptr);
+	else
+	{
+		// Tree modification occurred
+		
+		if (!UndoQueue.empty())
+		{
+			auto CombineResult = UndoQueue.front()->Combine(NewUndoLevel);
+			if (CombineResult) NewUndoLevel.reset(nullptr);
+		}
+		if (NewUndoLevel) UndoQueue.push_front(std::move(NewUndoLevel));
+		RedoQueue.clear();
+	
+		for (auto &Candidate : DeletionCandidates)
+			if (Candidate->Count == 0) 
+			{
+				std::cout << "DEBUG: Deleting " << Candidate << std::endl;
+				delete Candidate;
+			}
+		DeletionCandidates.clear();
+	}
+
 	Refresh();
+
+	Focused->RegisterActions();
+
+	InHandleInput = false;
 }
 
-OptionalT<AtomTypeT *> CoreT::LookUpAtom(std::string const &Text)
+OptionalT<AtomTypeT *> CoreT::LookUpAtomType(std::string const &Text)
 {
 	auto Type = TypeLookup.find(Text);
 	if (Type == TypeLookup.end()) return {};
 	return &*Type->second;
 }
 
-void CoreT::Apply(OptionalT<std::unique_ptr<ReactionT>> Reaction)
-{
-	if (!Reaction) return;
-
-	auto Rereaction = (*Reaction)->Apply();
-
-	if (!UndoQueue.empty())
-	{
-		if (!UndoQueue.front()->Combine(Rereaction))
-			UndoQueue.push_front(std::move(Rereaction));
-	}
-	RedoQueue.clear();
-
-	Refresh();
-
-	for (auto &Candidate : DeletionCandidates)
-		if (Candidate->Count == 0) 
-		{
-			std::cout << "DEBUG: Deleting " << Candidate << std::endl;
-			delete Candidate;
-		}
-	DeletionCandidates.clear();
-	
-	//std::cout << RootVisual.Dump() << std::endl;
-	//std::cout << Dump() << std::endl;
-}
-	
 bool CoreT::HasChanges(void)
 {
 	return !UndoQueue.empty() || !RedoQueue.empty();
@@ -690,15 +652,35 @@ bool CoreT::HasChanges(void)
 void CoreT::Undo(void)
 {
 	if (UndoQueue.empty()) return;
-	RedoQueue.push_front(UndoQueue.front()->Apply());
+	NewUndoLevel.reset(new UndoLevelT());
+	UndoQueue.front()->ApplyUndo();
+	RedoQueue.push_front(std::move(NewUndoLevel));
+	Assert(!NewUndoLevel);
 	UndoQueue.pop_front();
 }
 
 void CoreT::Redo(void)
 {
 	if (RedoQueue.empty()) return;
-	UndoQueue.push_front(RedoQueue.front()->Apply());
+	NewUndoLevel.reset(new UndoLevelT());
+	RedoQueue.front()->ApplyRedo();
+	UndoQueue.push_front(std::move(NewUndoLevel));
+	Assert(!NewUndoLevel);
 	RedoQueue.pop_front();
+}
+	
+void CoreT::Focus(NucleusT *Nucleus)
+{
+	if (Focused.Nucleus == Nucleus) return;
+	if (Focused) Focused->Defocus();
+	Focused = Nucleus;
+	std::cout << "FOCUSED " << Nucleus << std::endl;
+}
+	
+void CoreT::AddUndoReaction(std::unique_ptr<ReactionT> Reaction)
+{
+	Assert(NewUndoLevel);
+	NewUndoLevel->Add(std::move(Reaction));
 }
 	
 void CoreT::AssumeFocus(void)
@@ -725,40 +707,6 @@ void CoreT::RegisterAction(std::shared_ptr<ActionT> Action)
 	if (RegisterActionCallback) RegisterActionCallback(Action);
 }
 
-std::unique_ptr<ReactionT> CoreT::ReactionHandleInput(std::string const &ActionName, OptionalT<std::string> Text)
-{
-	struct HandleInputT : ReactionT
-	{
-		CoreT &Core;
-		std::string const ActionName;
-		OptionalT<std::string> Text;
-
-		HandleInputT(CoreT &Core, std::string const &ActionName, OptionalT<std::string> Text) : Core(Core), ActionName(ActionName), Text(Text) {}
-
-		std::unique_ptr<ReactionT> Apply(void)
-		{
-			Assert(Core.Focused);
-			for (auto &Action : Core.Actions)
-			{
-				if (Action->Name == ActionName) 
-				{ 
-					if (Text && AssertE(Action->Arguments.size(), 1))
-					{
-						auto TextArgument = dynamic_cast<ActionT::TextArgumentT *>(Action->Arguments[0]);
-						if (Assert(TextArgument)) TextArgument->Data = *Text;
-
-					}
-					auto Hold = Action;
-					auto Result = Action->Apply();
-					if (Result) return (*Result)->Apply();
-				}
-			}
-			return std::unique_ptr<ReactionT>(new NOPT);
-		};
-	};
-	return std::unique_ptr<ReactionT>(new HandleInputT(*this, ActionName, Text));
-}
-	
 std::string CoreT::Dump(void) const
 {
 	if (!Root) return {};
@@ -768,6 +716,36 @@ std::string CoreT::Dump(void) const
 		Root->Serialize(WriteRoot.Polymorph("Root"));
 	}
 	return Writer.Dump();
+}
+
+void CoreT::UndoLevelT::Add(std::unique_ptr<ReactionT> Reaction)
+{
+	if (!Reactions.empty() && Reactions.back()->Combine(Reaction)) return;
+	Reactions.push_back(std::move(Reaction));
+}
+
+void CoreT::UndoLevelT::ApplyUndo(void)
+{
+	for (auto &Reaction : Reactions)
+		Reaction->Apply();
+}
+
+void CoreT::UndoLevelT::ApplyRedo(void)
+{
+	for (auto Reaction = Reactions.rbegin(); Reaction != Reactions.rend(); ++Reaction)
+		(*Reaction)->Apply();
+}
+
+bool CoreT::UndoLevelT::Combine(std::unique_ptr<UndoLevelT> &Other)
+{
+	auto OtherGroup = dynamic_cast<UndoLevelT *>(Other.get());
+	if (!OtherGroup) return false;
+	return 
+	(
+		(Reactions.size() == 1) && 
+		(OtherGroup->Reactions.size() == 1) && 
+		Reactions.front()->Combine(OtherGroup->Reactions.front())
+	);
 }
 		
 void CoreT::Refresh(void)
