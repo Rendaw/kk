@@ -369,8 +369,6 @@ void NucleusT::FocusPrevious(void) { TRACE; }
 
 void NucleusT::FocusNext(void) { TRACE; }
 	
-bool NucleusT::IsEmpty(void) const { TRACE; return false; }
-	
 bool NucleusT::IsFocused(void) const { return Core.Focused.Nucleus == this; }
 
 void NucleusT::FlagRefresh(void) 
@@ -460,11 +458,28 @@ void FocusT::Apply(void)
 	Target->Focus(FocusDirectionT::Direct);
 }
 
-CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused(*this), TextMode(true), ProtoatomType(nullptr), ElementType(nullptr), StringType(nullptr), CursorVisual(RootVisual.Root)
+CoreT::CoreT(VisualT &RootVisual) : 
+	RootVisual(RootVisual), 
+	Root(*this), 
+	Focused(*this), 
+	TextMode(true), 
+	SoloProtoatomType(nullptr), 
+	InsertProtoatomType(nullptr), 
+	AppendProtoatomType(nullptr), 
+	ElementType(nullptr), 
+	StringType(nullptr), 
+	CursorVisual(RootVisual.Root)
 {
 	CursorVisual.SetClass("type-cursor");
 	CursorVisual.Add("|");
 	
+	Types.emplace("SoloProtoatom", make_unique<SoloProtoatomTypeT>());
+	SoloProtoatomType = Types["SoloProtoatom"].get();
+	Types.emplace("InsertProtoatom", make_unique<InsertProtoatomTypeT>());
+	InsertProtoatomType = Types["InsertProtoatom"].get();
+	Types.emplace("AppendProtoatom", make_unique<AppendProtoatomTypeT>());
+	AppendProtoatomType = Types["AppendProtoatom"].get();
+
 	{
 		Serial::ReadT Read;
 		Read.Object([this](Serial::ReadObjectT &Object) -> Serial::ReadErrorT
@@ -507,12 +522,6 @@ CoreT::CoreT(VisualT &RootVisual) : RootVisual(RootVisual), Root(*this), Focused
 		std::cout << "config.json:\n" << Writer.Dump() << std::endl;
 	}
 
-	{
-		auto Found = Types.find("Protoatom");
-		if (Found == Types.end()) throw ConstructionErrorT() << "Missing Protoatom type definition.";
-		CheckProtoatomType(Found->second.get());
-		ProtoatomType = Found->second.get();
-	}
 	{
 		auto Found = Types.find("Element");
 		if (Found == Types.end()) throw ConstructionErrorT() << "Missing Element type definition.";

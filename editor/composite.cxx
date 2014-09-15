@@ -138,11 +138,11 @@ void CompositeT::RegisterActions(void)
 			void Apply(void)
 			{
 				TRACE;
-				auto ThisRef = &Base;
-				if (!AsProtoatom(ThisRef) || !Base.IsEmpty())
+				auto Protoatom = Base.As<SoloProtoatomT>();
+				if (!Protoatom || !Protoatom->IsEmpty())
 				{
 					if (Base.Atom) 
-						Base.Atom->Set(Base.Core.ProtoatomType->Generate(Base.Core));
+						Base.Atom->Set(Base.Core.SoloProtoatomType->Generate(Base.Core));
 				}
 			}
 		};
@@ -151,21 +151,23 @@ void CompositeT::RegisterActions(void)
 		struct WedgeT : ActionT
 		{
 			CompositeT &Base;
-			WedgeT(CompositeT &Base) : ActionT("Wedge"), Base(Base) {}
+			bool const Before;
+			WedgeT(CompositeT &Base, bool Before) : ActionT(Before ? "Insert before" : "Insert after"), Base(Base), Before(Before) {}
 			void Apply(void)
 			{
 				TRACE;
 				if (Base.Atom)
 				{
 					Base.Core.TextMode = true;
-					auto Replacement = Base.Core.ProtoatomType->Generate(Base.Core);
+					auto Replacement = (Before ? Base.Core.InsertProtoatomType : Base.Core.AppendProtoatomType)->Generate(Base.Core);
 					auto BaseAtom = Base.Atom;
-					Replacement->As<CompositeT>()->Parts[0]->As<AtomPartT>()->Data.Set(&Base);
+					Replacement->As<WedgeProtoatomT>()->SetLifted(&Base);
 					BaseAtom->Set(Replacement);
 				}
 			}
 		};
-		Core.RegisterAction(std::make_shared<WedgeT>(*this));
+		Core.RegisterAction(std::make_shared<WedgeT>(*this, true));
+		Core.RegisterAction(std::make_shared<WedgeT>(*this, false));
 
 		struct ReplaceParentT : ActionT
 		{
@@ -277,14 +279,6 @@ void CompositeT::FocusNext(void)
 	}
 }
 	
-bool CompositeT::IsEmpty(void) const
-{
-	TRACE;
-	for (auto &Part : Parts)
-		if (!Part->IsEmpty()) return false;
-	return true;
-}
-
 bool CompositeT::IsFocused(void) const
 {
 	TRACE;
@@ -311,20 +305,6 @@ bool CompositeT::FocusDefault(void)
 	return false;
 }
 	
-bool CompositeT::HasOnePart(void)
-{
-	TRACE;
-	size_t Count = 0;
-	for (auto &Part : Parts)
-	{
-		// These conditions are kind of a hack, designed to make strings (1 part) and protoatoms (1 potentially empty atom part, 1 potentially empty text part) autoselect the text part when that's the obvious choice
-		if (!Part->IsEmpty() || 
-			dynamic_cast<CompositeTypePartT const *>(&Part->GetTypeInfo())->FocusDefault) 
-			++Count;
-	}
-	return Count == 1;
-}
-
 Serial::ReadErrorT CompositeTypeT::Deserialize(Serial::ReadObjectT &Object)
 {
 	TRACE;
@@ -347,7 +327,6 @@ Serial::ReadErrorT CompositeTypeT::Deserialize(Serial::ReadObjectT &Object)
 			else if (Type == "AtomList") Out = new AtomListPartTypeT(*this);
 			else if (Type == "String") Out = new StringPartTypeT(*this);
 			else if (Type == "Enum") Out = new EnumPartTypeT(*this);
-			else if (Type == "Protoatom") Out = new ProtoatomPartTypeT(*this);
 			else return (::StringT() << "Unknown part type \"" << Type << "\"").str();
 			Parts.push_back(std::unique_ptr<CompositeTypePartT>(Out));
 			return Out->Deserialize(Object);
@@ -368,20 +347,7 @@ void CompositeTypeT::Serialize(Serial::WriteObjectT &Object) const
 	for (auto &Part : Parts) Part->Serialize(Array.Polymorph());
 }
 
-NucleusT *CompositeTypeT::Generate(CoreT &Core)
-{
-	TRACE;
-	auto Out = new CompositeT(Core, *this);
-	for (auto &Part : Parts) 
-	{
-		Out->Parts.emplace_back(Core);
-		Out->Parts.back().Parent = Out;
-		Out->Parts.back().Set(Part->Generate(Core));
-		Out->Parts.back().Callback = [](NucleusT *) { Assert(false); }; // Parts can't be replaced
-		Out->Parts.back()->WatchStatus((uintptr_t)Out, [](NucleusT *Nucleus) { Nucleus->Parent->FlagStatusChange(); });
-	}
-	return Out;
-}
+NucleusT *CompositeTypeT::Generate(CoreT &Core) { TRACE; return GenerateComposite<CompositeT>(*this, Core); }
 
 CompositeTypePartT::CompositeTypePartT(CompositeTypeT &Parent) : Parent(Parent) { TRACE; }
 
@@ -394,8 +360,6 @@ Serial::ReadErrorT CompositeTypePartT::Deserialize(Serial::ReadObjectT &Object)
 		{ SpatiallyVertical = Value; return {}; });
 	Object.Bool("FocusDefault", [this](bool Value) -> Serial::ReadErrorT 
 		{ FocusDefault = Value; return {}; });
-	Object.Bool("SetDefault", [this](bool Value) -> Serial::ReadErrorT 
-		{ SetDefault = Value; return {}; });
 	Object.String("DisplayPrefix", [this](std::string &&Value) -> Serial::ReadErrorT 
 		{ DisplayPrefix = std::move(Value); return {}; });
 	Object.String("DisplaySuffix", [this](std::string &&Value) -> Serial::ReadErrorT 
@@ -409,7 +373,6 @@ void CompositeTypePartT::Serialize(Serial::WriteObjectT &Object) const
 	Object.String("Tag", Tag);
 	Object.Bool("SpatiallyVertical", SpatiallyVertical);
 	Object.Bool("FocusDefault", FocusDefault);
-	Object.Bool("SetDefault", SetDefault);
 	if (DisplayPrefix) Object.String("DisplayPrefix", *DisplayPrefix);
 	if (DisplaySuffix) Object.String("DisplaySuffix", *DisplaySuffix);
 }
@@ -458,7 +421,7 @@ AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), Typ
 		FlagRefresh(); 
 	};
 	if (!TypeInfo.StartEmpty)
-		Data.Set(Core.ProtoatomType->Generate(Core));
+		Data.Set(Core.SoloProtoatomType->Generate(Core));
 }
 
 Serial::ReadErrorT AtomPartT::Deserialize(Serial::ReadObjectT &Object)
@@ -534,7 +497,10 @@ void AtomPartT::Refresh(void)
 		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
 	}
 	
-	if (Data->IsEmpty() && !Data->IsFocused()) return;
+	{
+		auto Protoatom = Data->As<SoloProtoatomT>();
+		if (Protoatom && Protoatom->IsEmpty() && !Protoatom->IsFocused()) return;
+	}
 	Visual.Add(PrefixVisual);
 	Visual.Add(Data->Visual);
 	Visual.Add(SuffixVisual);
@@ -544,8 +510,6 @@ void AtomPartT::FocusPrevious(void) { TRACE; Parent->FocusPrevious(); }
 
 void AtomPartT::FocusNext(void) { TRACE; Parent->FocusNext(); }
 	
-bool AtomPartT::IsEmpty(void) const { TRACE; return !Data; }
-
 void AtomListPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
 {
 	TRACE;
@@ -564,7 +528,7 @@ AtomListPartT::AtomListPartT(CoreT &Core, AtomListPartTypeT &TypeInfo) : Nucleus
 	TRACE;
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
-	Add(0, Core.ProtoatomType->Generate(Core));
+	Add(0, Core.SoloProtoatomType->Generate(Core));
 }
 
 Serial::ReadErrorT AtomListPartT::Deserialize(Serial::ReadObjectT &Object)
@@ -663,7 +627,7 @@ void AtomListPartT::RegisterActions(void)
 		{
 			TRACE;
 			Base.Core.TextMode = true;
-			Base.Add(Base.FocusIndex, Base.Core.ProtoatomType->Generate(Base.Core), true);
+			Base.Add(Base.FocusIndex, Base.Core.SoloProtoatomType->Generate(Base.Core), true);
 		}
 	};
 	Core.RegisterAction(std::make_shared<NewStatementBeforeT>(*this));
@@ -676,7 +640,7 @@ void AtomListPartT::RegisterActions(void)
 		{
 			TRACE;
 			Base.Core.TextMode = true;
-			Base.Add(Base.FocusIndex + 1, Base.Core.ProtoatomType->Generate(Base.Core), true);
+			Base.Add(Base.FocusIndex + 1, Base.Core.SoloProtoatomType->Generate(Base.Core), true);
 		}
 	};
 	Core.RegisterAction(std::make_shared<NewStatementAfterT>(*this));
@@ -697,14 +661,11 @@ void AtomListPartT::RegisterActions(void)
 				}
 				if (!ProtoatomPart)
 				{
-					auto Protoatom = AsProtoatom(Base.Core.Focused);
-					if (Protoatom) 
-					{
-						ProtoatomPart = GetProtoatomPart(*Protoatom);
-					}
+					auto Protoatom = Base.Core.Focused->As<ProtoatomT>();
+					if (Protoatom) ProtoatomPart = Protoatom->GetProtoatomPart();
 				}
 				if (ProtoatomPart) ProtoatomPart->Finish({}, ProtoatomPart->Data);
-				Base.Add(Base.FocusIndex + 1, Base.Core.ProtoatomType->Generate(Base.Core), true);
+				Base.Add(Base.FocusIndex + 1, Base.Core.SoloProtoatomType->Generate(Base.Core), true);
 			}
 		};
 		Core.RegisterAction(std::make_shared<NewStatementAfterT>(*this));
@@ -876,7 +837,7 @@ AtomTypeT const &StringPartT::GetTypeInfo(void) const { return TypeInfo; }
 void StringPartT::Focus(FocusDirectionT Direction) 
 {
 	TRACE; 
-	if (Parent->As<CompositeT>()->HasOnePart()) Core.TextMode = true;
+	if (Parent->As<CompositeT>()->Parts.size() == 1) Core.TextMode = true;
 	if (Core.TextMode)
 	{
 		if (Focused != FocusedT::Text)
@@ -997,7 +958,7 @@ void StringPartT::RegisterActions(void)
 		};
 		Core.RegisterAction(std::make_shared<DeleteT>(*this));
 
-		if (!Parent->As<CompositeT>()->HasOnePart())
+		if (Parent->As<CompositeT>()->Parts.size() > 1)
 		{
 			struct ExitT : ActionT
 			{

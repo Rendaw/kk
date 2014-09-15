@@ -239,7 +239,6 @@ struct NucleusT
 	virtual void FocusPrevious(void);
 	virtual void FocusNext(void);
 	
-	virtual bool IsEmpty(void) const;
 	virtual bool IsFocused(void) const;
 		
 	void FlagRefresh(void);
@@ -293,7 +292,7 @@ struct CoreT
 	bool TextMode;
 	
 	std::map<std::string, std::unique_ptr<AtomTypeT>> Types;
-	AtomTypeT *ProtoatomType, *ElementType, *StringType;
+	AtomTypeT *SoloProtoatomType, *InsertProtoatomType, *AppendProtoatomType, *ElementType, *StringType;
 	std::map<std::string, AtomTypeT *> TypeLookup;
 
 	std::set<NucleusT *> DeletionCandidates;

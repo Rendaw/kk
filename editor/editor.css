@@ -60,7 +60,8 @@ div.type-cursor
 }
 
 /* Protatom */
-div.type-Protoatom,
+div.type-SoloProtoatom,
+div.type-WedgeProtoatom,
 div.new
 {
 	color: black;

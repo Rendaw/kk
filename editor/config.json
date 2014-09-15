@@ -1,20 +1,6 @@
 {
 	"Types": [
 		{
-			"Tag": "utf8:Protoatom",
-			"Parts": [
-				["utf8:Atom", {
-					"Tag": "utf8:Lifted",
-					"StartEmpty": true,
-					"SetDefault": true
-				}],
-				["utf8:Protoatom", {
-					"Tag": "utf8:Data",
-					"FocusDefault": true
-				}]
-			]
-		},
-		{
 			"Tag": "utf8:Module",
 			"LookupSequence": "utf8:module",
 			"SpatiallyVertical": true,
@@ -28,7 +14,6 @@
 				}],
 				["utf8:Atom", {
 					"Tag": "utf8:Top",
-					"SetDefault": true,
 					"FocusDefault": true
 				}]
 			]
@@ -37,10 +22,13 @@
 			"Tag": "utf8:Group",
 			"LookupSequence": "utf8:{",
 			"ReplaceImmediately": true,
+			"Arity": "utf8:Unary",
+			"Prefix": true,
 			"DisplayPrefix": "utf8:{",
 			"DisplaySuffix": "utf8:}",
 			"SpatiallyVertical": true,
 			"Precedence": 0,
+			"LeftAssociative": false,
 			"Parts": [
 				["utf8:AtomList", {
 					"Tag": "utf8:Statements",
@@ -60,8 +48,7 @@
 			"Parts": [
 				["utf8:Atom", {
 					"Tag": "utf8:Base",
-					"DisplaySuffix": "utf8:.",
-					"SetDefault": true
+					"DisplaySuffix": "utf8:."
 				}],
 				["utf8:Atom", {
 					"Tag": "utf8:Key",
@@ -80,7 +67,6 @@
 					"Tag": "utf8:Data",
 					"DisplayPrefix": "utf8:'",
 					"DisplaySuffix": "utf8:'",
-					"SetDefault": true,
 					"FocusDefault": true
 				}]
 			]
@@ -95,8 +81,7 @@
 			"Precedence": 800,
 			"Parts": [
 				["utf8:Atom", {
-					"Tag": "utf8:Left",
-					"SetDefault": true
+					"Tag": "utf8:Left"
 				}],
 				["utf8:Atom", {
 					"Tag": "utf8:Right",

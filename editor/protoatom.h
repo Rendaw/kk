@@ -7,57 +7,53 @@
 namespace Core
 {
 
-struct ProtoatomPartTypeT : CompositeTypePartT
-{
-	using CompositeTypePartT::CompositeTypePartT;
-	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
-	using CompositeTypePartT::Serialize; // Is this funny?
-	NucleusT *Generate(CoreT &Core) override;
-};
 struct ProtoatomPartT : NucleusT
 {
-	ProtoatomPartTypeT &TypeInfo;
-	
-	OptionalT<bool> IsIdentifier;
 	std::string Data;
-	enum struct FocusedT
-	{
-		Off,
-		On,
-		Text
-	} Focused = FocusedT::Off;
-	size_t Position = 0;
 
-	ProtoatomPartT(CoreT &Core, ProtoatomPartTypeT &TypeInfo);
-	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
-	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
-	AtomTypeT const &GetTypeInfo(void) const override;
-	void Focus(FocusDirectionT Direction) override;
-	void RegisterActions(void) override;
-	void Defocus(void) override;
-	void AssumeFocus(void) override;
-	void Refresh(void) override;
-	
-	bool IsEmpty(void) const override;
-
-	void Set(size_t Position, std::string const &Text);
-	void HandleText(std::string const &Text);
-
-	OptionalT<NucleusT *> Finish(OptionalT<AtomTypeT *> Type, std::string Text);
+	using NucleusT::NucleusT;
+	virtual void HandleText(std::string const &Text) = 0;
+	virtual OptionalT<NucleusT *> Finish(OptionalT<AtomTypeT *> Type, std::string Text) = 0;
 };
 
-void CheckProtoatomType(AtomTypeT *Type);
-
-template <typename RefT> static OptionalT<ProtoatomPartT *> AsProtoatom(RefT &Test)
+struct ProtoatomT : CompositeT
 {
-	auto Original = Test->template As<CompositeT>();
-	if (Original && (Original->Parts.size() == 2)) 
-		return Original->Parts[1]->template As<ProtoatomPartT>();
-	return {};
-}
+	using CompositeT::CompositeT;
+	virtual ProtoatomPartT *GetProtoatomPart(void) = 0;
+};
 
-ProtoatomPartT *GetProtoatomPart(NucleusT *Protoatom);
-AtomPartT *GetProtoatomLiftedPart(NucleusT *Protoatom);
+struct SoloProtoatomT : ProtoatomT
+{
+	using ProtoatomT::ProtoatomT;
+	bool IsEmpty(void);
+	ProtoatomPartT *GetProtoatomPart(void);
+};
+
+struct WedgeProtoatomT : ProtoatomT
+{
+	using ProtoatomT::ProtoatomT;
+	ProtoatomPartT *GetProtoatomPart(void);
+	void SetLifted(NucleusT *Lifted);
+	AtomPartT *GetLiftedPart(void);
+};
+
+struct SoloProtoatomTypeT : CompositeTypeT 
+{
+	SoloProtoatomTypeT(void);
+	NucleusT *Generate(CoreT &Core) override;
+};
+
+struct InsertProtoatomTypeT : CompositeTypeT
+{
+	InsertProtoatomTypeT(void);
+	NucleusT *Generate(CoreT &Core) override;
+};
+
+struct AppendProtoatomTypeT : CompositeTypeT
+{
+	AppendProtoatomTypeT(void);
+	NucleusT *Generate(CoreT &Core) override;
+};
 
 }
 

@@ -11,459 +11,599 @@ static auto IdentifierClass = Regex::ParserT<>("^[a-zA-Z0-9_]+$");
 namespace Core
 {
 
-void ProtoatomPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
+template <typename TypeT> struct ProtoatomPartTypeT : CompositeTypePartT
 {
-	TRACE;
-	Serial::WritePolymorphT Polymorph("ProtoatomPart", std::move(Prepolymorph));
-	Serialize(Polymorph);
-}
+	using CompositeTypePartT::CompositeTypePartT;
 
-NucleusT *ProtoatomPartTypeT::Generate(CoreT &Core)
-{
-	TRACE;
-	return new ProtoatomPartT(Core, *this);
-}
+	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const { }
 
-ProtoatomPartT::ProtoatomPartT(CoreT &Core, ProtoatomPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo)
-{
-	TRACE;
-	Visual.SetClass("part");
-	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
-}
-
-Serial::ReadErrorT ProtoatomPartT::Deserialize(Serial::ReadObjectT &Object)
-{
-	TRACE;
-	Object.Bool("IsIdentifier", [this](bool Value) -> Serial::ReadErrorT { IsIdentifier = Value; return {}; });
-	Object.String("Data", [this](std::string &&Value) -> Serial::ReadErrorT { Data = std::move(Value); return {}; });
-	Object.UInt("Position", [this](uint64_t Value) -> Serial::ReadErrorT { Position = Value; return {}; }); // Apparently you can assign a uint64_t to a string, with no errors or warnings
-	return {};
-}
-
-void ProtoatomPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
-{
-	TRACE;
-	/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
-	if (IsIdentifier) Polymorph.Bool("IsIdentifier", *IsIdentifier);
-	Polymorph.String("Data", Data);
-	Polymorph.UInt("Position", Position);
-}
-
-AtomTypeT const &ProtoatomPartT::GetTypeInfo(void) const { return TypeInfo; }
-	
-void ProtoatomPartT::Focus(FocusDirectionT Direction)
-{
-	TRACE;
-
-	if ((Focused == FocusedT::Off) && (Parent->As<CompositeT>()->HasOnePart())) 
-		Core.TextMode = true;
-
-	if (Core.TextMode)
+	NucleusT *Generate(CoreT &Core)
 	{
-		if (Focused != FocusedT::Text)
-		{
-			if ((Direction == FocusDirectionT::FromBehind) ||
-				(Direction == FocusDirectionT::Direct))
-			{
-				Position = 0;
-			}
-			else if (Direction == FocusDirectionT::FromAhead)
-			{
-				Position = Data.size();
-			}
-			Focused = FocusedT::Text;
-		}
+		TRACE;
+		return new TypeT(Core, *this);
 	}
-	else 
-	{
-		if (Focused != FocusedT::On)
-		{
-			Visual.SetClass("flag-focused");
-			Focused = FocusedT::On;
-		}
-	}
-	FlagRefresh();
-	FlagStatusChange();
-	NucleusT::Focus(Direction);
-	/*if (Parent->Parent && Parent->Parent->As<AtomPartT>())
-		Parent->Parent->FlagRefresh(); // Hack for hiding empty protoatoms*/
-}
-	
-void ProtoatomPartT::RegisterActions(void)
+};
+
+struct BaseProtoatomPartT : ProtoatomPartT
 {
-	TRACE;
+	CompositeTypePartT &TypeInfo;
 	
-	if (Focused == FocusedT::Text)
+	OptionalT<bool> CouldBeIdentifier;
+	enum struct FocusedT
 	{
-		struct FinishT : ActionT
-		{
-			ProtoatomPartT &Base;
-			FinishT(ProtoatomPartT &Base) : ActionT("Finish"), Base(Base) { }
-			void Apply(void)
-			{
-				TRACE;
-				Base.Finish({}, Base.Data);
-			}
-		};
-		Core.RegisterAction(make_unique<FinishT>(*this));
+		Off,
+		On,
+		Text
+	} Focused = FocusedT::Off;
+	size_t Position = 0;
 
-		struct TextT : ActionT
-		{
-			ProtoatomPartT &Base;
-			ActionT::TextArgumentT Argument;
-			TextT(ProtoatomPartT &Base) : ActionT("Enter text"), Base(Base)
-			{ 
-				Argument.Regex = AnyClass;
-				Arguments.push_back(&Argument); 
-			}
+	BaseProtoatomPartT(CoreT &Core, CompositeTypePartT &TypeInfo) : ProtoatomPartT(Core), TypeInfo(TypeInfo)
+	{
+		TRACE;
+		Visual.SetClass("part");
+		Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
+	}
 
-			void Apply(void)
-			{
-				TRACE;
-				Base.HandleText(Argument.Data);
-			}
-		};
-		Core.RegisterAction(make_unique<TextT>(*this));
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override
+	{
+		TRACE;
+		Object.Bool("CouldBeIdentifier", [this](bool Value) -> Serial::ReadErrorT { CouldBeIdentifier = Value; return {}; });
+		Object.String("Data", [this](std::string &&Value) -> Serial::ReadErrorT { Data = std::move(Value); return {}; });
+		Object.UInt("Position", [this](uint64_t Value) -> Serial::ReadErrorT { Position = Value; return {}; }); // Apparently you can assign a uint64_t to a string, with no errors or warnings
+		return {};
+	}
 
-		struct FocusPreviousT : ActionT
+	void Serialize(Serial::WritePolymorphT &Polymorph) const override
+	{
+		TRACE;
+		/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
+		Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
+		Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
+		if (CouldBeIdentifier) Polymorph.Bool("CouldBeIdentifier", *CouldBeIdentifier);
+		Polymorph.String("Data", Data);
+		Polymorph.UInt("Position", Position);
+	}
+
+	AtomTypeT const &GetTypeInfo(void) const override { return TypeInfo; }
+		
+	void Focus(FocusDirectionT Direction) override
+	{
+		TRACE;
+
+		if ((Focused == FocusedT::Off) && (Parent->As<CompositeT>()->Parts.size() == 1)) 
+			Core.TextMode = true;
+
+		if (Core.TextMode)
 		{
-			ProtoatomPartT &Base;
-			FocusPreviousT(ProtoatomPartT &Base) : ActionT("Left"), Base(Base) {}
-			void Apply(void)
+			if (Focused != FocusedT::Text)
 			{
-				TRACE;
-				if (Base.Position == 0) 
+				if ((Direction == FocusDirectionT::FromBehind) ||
+					(Direction == FocusDirectionT::Direct))
 				{
-					Base.Parent->FocusPrevious();
+					Position = 0;
 				}
-				else
+				else if (Direction == FocusDirectionT::FromAhead)
 				{
-					Base.Position -= 1;
-					Base.FlagRefresh();
+					Position = Data.size();
 				}
+				Focused = FocusedT::Text;
 			}
-		};
-		Core.RegisterAction(make_unique<FocusPreviousT>(*this));
-
-		struct FocusNextT : ActionT
+		}
+		else 
 		{
-			ProtoatomPartT &Base;
-			FocusNextT(ProtoatomPartT &Base) : ActionT("Right"), Base(Base) {}
-			void Apply(void)
+			if (Focused != FocusedT::On)
 			{
-				TRACE;
-				if (Base.Position == Base.Data.size()) 
-				{
-					Base.Parent->FocusNext();
-				}
-				else
-				{
-					Base.Position += 1;
-					Base.FlagRefresh();
-				}
+				Visual.SetClass("flag-focused");
+				Focused = FocusedT::On;
 			}
-		};
-		Core.RegisterAction(make_unique<FocusNextT>(*this));
-
-		struct BackspaceT : ActionT
+		}
+		FlagRefresh();
+		FlagStatusChange();
+		NucleusT::Focus(Direction);
+		/*if (Parent->Parent && Parent->Parent->As<AtomPartT>())
+			Parent->Parent->FlagRefresh(); // Hack for hiding empty protoatoms*/
+	}
+		
+	void RegisterActions(void) override
+	{
+		TRACE;
+		
+		if (Focused == FocusedT::Text)
 		{
-			ProtoatomPartT &Base;
-			BackspaceT(ProtoatomPartT &Base) : ActionT("Backspace"), Base(Base) {}
-			void Apply(void)
+			struct FinishT : ActionT
 			{
-				TRACE;
-				if (Base.Position == 0) return;
-				auto NewData = Base.Data;
-				NewData.erase(Base.Position - 1, 1);
-				auto NewPosition = Base.Position - 1;
-				Base.Set(NewPosition, NewData);
-			}
-		};
-		Core.RegisterAction(make_unique<BackspaceT>(*this));
-
-		struct DeleteT : ActionT
-		{
-			ProtoatomPartT &Base;
-			DeleteT(ProtoatomPartT &Base) : ActionT("Delete"), Base(Base) {}
-			void Apply(void)
-			{
-				TRACE;
-				if (Base.Position == Base.Data.size()) return;
-				auto NewData = Base.Data;
-				NewData.erase(Base.Position, 1);
-				Base.Set(Base.Position, NewData);
-			}
-		};
-		Core.RegisterAction(make_unique<DeleteT>(*this));
-
-		if (!Parent->As<CompositeT>()->HasOnePart())
-		{
-			struct ExitT : ActionT
-			{
-				ProtoatomPartT &Base;
-				ExitT(ProtoatomPartT &Base) : ActionT("Exit"), Base(Base) {}
+				BaseProtoatomPartT &Base;
+				FinishT(BaseProtoatomPartT &Base) : ActionT("Finish"), Base(Base) { }
 				void Apply(void)
 				{
 					TRACE;
-					Base.Core.TextMode = false;
+					Base.Finish({}, Base.Data);
+				}
+			};
+			Core.RegisterAction(make_unique<FinishT>(*this));
+
+			struct TextT : ActionT
+			{
+				BaseProtoatomPartT &Base;
+				ActionT::TextArgumentT Argument;
+				TextT(BaseProtoatomPartT &Base) : ActionT("Enter text"), Base(Base)
+				{ 
+					Argument.Regex = AnyClass;
+					Arguments.push_back(&Argument); 
+				}
+
+				void Apply(void)
+				{
+					TRACE;
+					Base.HandleText(Argument.Data);
+				}
+			};
+			Core.RegisterAction(make_unique<TextT>(*this));
+
+			struct FocusPreviousT : ActionT
+			{
+				BaseProtoatomPartT &Base;
+				FocusPreviousT(BaseProtoatomPartT &Base) : ActionT("Left"), Base(Base) {}
+				void Apply(void)
+				{
+					TRACE;
+					if (Base.Position == 0) 
+					{
+						Base.Parent->FocusPrevious();
+					}
+					else
+					{
+						Base.Position -= 1;
+						Base.FlagRefresh();
+					}
+				}
+			};
+			Core.RegisterAction(make_unique<FocusPreviousT>(*this));
+
+			struct FocusNextT : ActionT
+			{
+				BaseProtoatomPartT &Base;
+				FocusNextT(BaseProtoatomPartT &Base) : ActionT("Right"), Base(Base) {}
+				void Apply(void)
+				{
+					TRACE;
+					if (Base.Position == Base.Data.size()) 
+					{
+						Base.Parent->FocusNext();
+					}
+					else
+					{
+						Base.Position += 1;
+						Base.FlagRefresh();
+					}
+				}
+			};
+			Core.RegisterAction(make_unique<FocusNextT>(*this));
+
+			struct BackspaceT : ActionT
+			{
+				BaseProtoatomPartT &Base;
+				BackspaceT(BaseProtoatomPartT &Base) : ActionT("Backspace"), Base(Base) {}
+				void Apply(void)
+				{
+					TRACE;
+					if (Base.Position == 0) return;
+					auto NewData = Base.Data;
+					NewData.erase(Base.Position - 1, 1);
+					auto NewPosition = Base.Position - 1;
+					Base.Set(NewPosition, NewData);
+				}
+			};
+			Core.RegisterAction(make_unique<BackspaceT>(*this));
+
+			struct DeleteT : ActionT
+			{
+				BaseProtoatomPartT &Base;
+				DeleteT(BaseProtoatomPartT &Base) : ActionT("Delete"), Base(Base) {}
+				void Apply(void)
+				{
+					TRACE;
+					if (Base.Position == Base.Data.size()) return;
+					auto NewData = Base.Data;
+					NewData.erase(Base.Position, 1);
+					Base.Set(Base.Position, NewData);
+				}
+			};
+			Core.RegisterAction(make_unique<DeleteT>(*this));
+
+			if (Parent->As<CompositeT>()->Parts.size() > 1)
+			{
+				struct ExitT : ActionT
+				{
+					BaseProtoatomPartT &Base;
+					ExitT(BaseProtoatomPartT &Base) : ActionT("Exit"), Base(Base) {}
+					void Apply(void)
+					{
+						TRACE;
+						Base.Core.TextMode = false;
+						Base.Focus(FocusDirectionT::Direct);
+					}
+				};
+				Core.RegisterAction(make_unique<ExitT>(*this));
+			}
+		}
+		else if (Focused == FocusedT::On)
+		{
+			struct DeleteT : ActionT
+			{
+				BaseProtoatomPartT &Base;
+				DeleteT(BaseProtoatomPartT &Base) : ActionT("Delete"), Base(Base) {}
+				void Apply(void)
+				{
+					TRACE;
+					Base.Set(0, "");
+				}
+			};
+			Core.RegisterAction(make_unique<DeleteT>(*this));
+
+			struct EnterT : ActionT
+			{
+				BaseProtoatomPartT &Base;
+				EnterT(BaseProtoatomPartT &Base) : ActionT("Enter"), Base(Base) {}
+				void Apply(void)
+				{
+					TRACE;
+					Base.Core.TextMode = true;
 					Base.Focus(FocusDirectionT::Direct);
 				}
 			};
-			Core.RegisterAction(make_unique<ExitT>(*this));
+			Core.RegisterAction(make_unique<EnterT>(*this));
 		}
+		Parent->RegisterActions();
 	}
-	else if (Focused == FocusedT::On)
+
+	void Defocus(void) override
 	{
-		struct DeleteT : ActionT
+		TRACE;
+		Focused = FocusedT::Off;
+		Visual.UnsetClass("flag-focused");
+		FlagRefresh();
+		FlagStatusChange();
+	}
+
+	void AssumeFocus(void) override
+	{
+		TRACE;
+		Focus(FocusDirectionT::Direct);
+	}
+
+	void Refresh(void) override
+	{
+		TRACE;
+		Visual.Start();
+		if (Focused == FocusedT::Text)
 		{
-			ProtoatomPartT &Base;
-			DeleteT(ProtoatomPartT &Base) : ActionT("Delete"), Base(Base) {}
-			void Apply(void)
+			Visual.Add(Data.substr(0, Position));
+			Visual.Add(Core.CursorVisual);
+			Visual.Add(Data.substr(Position));
+		}
+		else Visual.Add(Data);
+	}
+
+	void Set(size_t NewPosition, std::string const &NewData)
+	{
+		TRACE;
+		struct SetT : ReactionT
+		{
+			BaseProtoatomPartT &Base;
+			unsigned int Position;
+			std::string Data;
+			
+			SetT(BaseProtoatomPartT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) {}
+			
+			void Apply(void) { Base.Set(Position, Data); }
+			
+			bool Combine(std::unique_ptr<ReactionT> &Other) override
 			{
-				TRACE;
-				Base.Set(0, "");
+				auto Set = dynamic_cast<SetT *>(Other.get());
+				if (!Set) return false;
+				if (&Set->Base != &Base) return false;
+				Position = Set->Position;
+				Data = Set->Data;
+				return true;
 			}
 		};
-		Core.RegisterAction(make_unique<DeleteT>(*this));
 
-		struct EnterT : ActionT
+		Core.AddUndoReaction(make_unique<SetT>(*this, Position, Data));
+		Data = NewData;
+		Position = NewPosition;
+		if (Data.empty()) CouldBeIdentifier.Unset();
+		else if (!CouldBeIdentifier) CouldBeIdentifier = IdentifierClass(Data);
+		FlagRefresh();
+	}
+
+	void HandleText(std::string const &Text) override
+	{
+		TRACE;
+		// TODO this should handle arbitrary length text strings
+
+		auto NewCouldBeIdentifier = IdentifierClass(Text);
+		
+		if (!CouldBeIdentifier || (*CouldBeIdentifier == NewCouldBeIdentifier))
 		{
-			ProtoatomPartT &Base;
-			EnterT(ProtoatomPartT &Base) : ActionT("Enter"), Base(Base) {}
-			void Apply(void)
+			Assert(Text.length() == 1);
+			auto NewData = Data;
+			NewData.insert(Position, Text);
+			auto NewPosition = Position + 1;
+			if (NewPosition == NewData.size()) // Only do auto conversion if appending text
 			{
-				TRACE;
-				Base.Core.TextMode = true;
-				Base.Focus(FocusDirectionT::Direct);
+				auto Found = Core.LookUpAtomType(NewData);
+				if (Found && Found->ReplaceImmediately) 
+				{
+					Finish(Found, NewData);
+					return;
+				}
 			}
-		};
-		Core.RegisterAction(make_unique<EnterT>(*this));
-	}
-	Parent->RegisterActions();
-}
-
-void ProtoatomPartT::Defocus(void) 
-{
-	TRACE;
-	Focused = FocusedT::Off;
-	Visual.UnsetClass("flag-focused");
-	FlagRefresh();
-	FlagStatusChange();
-}
-
-void ProtoatomPartT::AssumeFocus(void)
-{
-	TRACE;
-	Focus(FocusDirectionT::Direct);
-}
-
-void ProtoatomPartT::Refresh(void)
-{
-	TRACE;
-	Visual.Start();
-	if (Focused == FocusedT::Text)
-	{
-		Visual.Add(Data.substr(0, Position));
-		Visual.Add(Core.CursorVisual);
-		Visual.Add(Data.substr(Position));
-	}
-	else Visual.Add(Data);
-}
-
-bool ProtoatomPartT::IsEmpty(void) const { TRACE; return Data.empty(); }
-	
-void ProtoatomPartT::Set(size_t NewPosition, std::string const &NewData)
-{
-	TRACE;
-	struct SetT : ReactionT
-	{
-		ProtoatomPartT &Base;
-		unsigned int Position;
-		std::string Data;
-		
-		SetT(ProtoatomPartT &Base, unsigned int Position, std::string const &Data) : Base(Base), Position(Position), Data(Data) {}
-		
-		void Apply(void) { Base.Set(Position, Data); }
-		
-		bool Combine(std::unique_ptr<ReactionT> &Other) override
-		{
-			auto Set = dynamic_cast<SetT *>(Other.get());
-			if (!Set) return false;
-			if (&Set->Base != &Base) return false;
-			Position = Set->Position;
-			Data = Set->Data;
-			return true;
+			Set(NewPosition, NewData);
 		}
-	};
-
-	Core.AddUndoReaction(make_unique<SetT>(*this, Position, Data));
-	Data = NewData;
-	Position = NewPosition;
-	if (Data.empty()) IsIdentifier.Unset();
-	else if (!IsIdentifier) IsIdentifier = IdentifierClass(Data);
-	FlagRefresh();
-}
-
-void ProtoatomPartT::HandleText(std::string const &Text)
-{
-	TRACE;
-	// TODO this should handle arbitrary length text strings
-
-	auto NewIsIdentifier = IdentifierClass(Text);
-	
-	if (!IsIdentifier || (*IsIdentifier == NewIsIdentifier))
-	{
-		Assert(Text.length() == 1);
-		auto NewData = Data;
-		NewData.insert(Position, Text);
-		auto NewPosition = Position + 1;
-		if (NewPosition == NewData.size()) // Only do auto conversion if appending text
+		else if (CouldBeIdentifier && (*CouldBeIdentifier != NewCouldBeIdentifier))
 		{
-			auto Found = Core.LookUpAtomType(NewData);
-			if (Found && Found->ReplaceImmediately) 
+			Assert(!Data.empty());
+			auto Finished = Finish({}, Data);
+			Assert(Finished);
+			if (auto Protoatom = Finished->As<ProtoatomT>())
 			{
-				Finish(Found, NewData);
-				return;
+				Protoatom->GetProtoatomPart()->HandleText(Text);
+			}
+			else if (auto String = Finished->As<StringPartT>())
+			{
+				String->Set(0, Text);
+			}
+			else
+			{
+				std::cout << "Finished was not text capable (for carryover)." << std::endl;
 			}
 		}
-		Set(NewPosition, NewData);
 	}
-	else if (IsIdentifier && (*IsIdentifier != NewIsIdentifier))
+
+	virtual OptionalT<NucleusT *> Finish(OptionalT<AtomTypeT *> Type, std::string Text) = 0;
+};
+
+std::pair<AtomT *, NucleusT *> FindPrecedencePlacement(AtomT *Parent, NucleusT *Child, AtomTypeT *Type)
+{
+	// Search upward until appropriate precedential location for type found
+	while ((*Parent)->PartParent() && 
+		(
+			((*Parent)->PartParent()->GetTypeInfo().Precedence > Type->Precedence) || 
+			(
+				((*Parent)->PartParent()->GetTypeInfo().Precedence == Type->Precedence) &&
+				((*Parent)->PartParent()->GetTypeInfo().LeftAssociative)
+			)
+		))
 	{
-		Assert(!Data.empty());
-		auto Finished = Finish({}, Data);
-		Assert(Finished);
-		auto Protoatom = AsProtoatom(Finished);
-		Assert(Protoatom);
-		Protoatom->HandleText(Text);
+		std::cout << "Parent precedence " << (*Parent)->PartParent()->GetTypeInfo().Precedence << std::endl;
+		Parent = (*Parent)->PartParent()->Atom;
+		Child = Parent->Nucleus;
 	}
+	return {Parent, Child};
 }
 
-OptionalT<NucleusT *> ProtoatomPartT::Finish(OptionalT<AtomTypeT *> Type, std::string Text)
+NucleusT *PlaceAndFindCarryoverDest(NucleusT *Finished, OptionalT<NucleusT *> PlaceMe, bool Insert, bool Prefix)
 {
-	TRACE;
-	Assert(Parent->Atom);
-	auto &Lifted = GetProtoatomLiftedPart(Parent.Nucleus)->Data;
-	Type = Type ? Type : Core.LookUpAtomType(Data);
-	if (Type)
+	// Placement at 0 unless insert + !prefix
+	// Return 1st after operator (start from 0 if insert, 1 if append)
+	auto Composite = Finished->As<CompositeT>();
+	bool Placed = false;
+	bool First = true; // AtomPart's data for placement, any part for return
+	for (auto &Part : Composite->Parts)
 	{
-		if (((*Type)->Arity == ArityT::Nullary) || (*Type)->Prefix)
+		auto AtomPart = (*Part->Atom)->As<AtomPartT>();
+		auto AtomListPart = (*Part->Atom)->As<AtomListPartT>();
+		if (PlaceMe && !Placed)
 		{
-			if (Lifted)
+			if (AtomPart || AtomListPart) 
 			{
-				std::cout << "NOTE: Can't finish to nullary or prefixed op if protoatom has lifed." << std::endl; 
-				return {}; 
+				if (!(Insert && !Prefix) || !First)
+				{
+					if (AtomPart) AtomPart->Data.Set(*PlaceMe);
+					else AtomListPart->Data[0]->Atom.Set(*PlaceMe);
+					Placed = true;
+				}
+				First = false;
 			}
-			PartParent()->Atom->Set(Type->Generate(Core));
-			return {};
 		}
 		else
 		{
-			auto Protoatom = Lifted ? nullptr : Core.ProtoatomType->Generate(Core);
-			auto Child = Lifted ? Lifted.Nucleus : Protoatom;
-			AtomT *WedgeAtom = PartParent()->Atom;
-			PartParent()->Atom->Set(Child);
-			while ((*WedgeAtom)->PartParent() && 
-				(
-					((*WedgeAtom)->PartParent()->GetTypeInfo().Precedence > (*Type)->Precedence) || 
-					(
-						((*WedgeAtom)->PartParent()->GetTypeInfo().Precedence == (*Type)->Precedence) &&
-						((*WedgeAtom)->PartParent()->GetTypeInfo().LeftAssociative)
-					)
-				))
+			if (Insert || !First)
 			{
-				std::cout << "Parent precedence " << (*WedgeAtom)->PartParent()->GetTypeInfo().Precedence << std::endl;
-				WedgeAtom = (*WedgeAtom)->PartParent()->Atom;
-				Child = WedgeAtom->Nucleus;
+				if (AtomPart) return AtomPart->Data.Nucleus;
+				else if (AtomListPart) return AtomListPart->Data[0]->Atom.Nucleus;
+				else return Part.Nucleus;
 			}
-			auto Finished = (*Type)->Generate(Core);
-			Assert(Finished);
-			WedgeAtom->Set(Finished);
-			{
-				auto Composite = Finished->As<CompositeT>();
-				bool Placed = false;
-				for (auto &Part : Composite->Parts)
-				{
-					auto AtomPart = (*Part->Atom)->As<AtomPartT>();
-					if (AtomPart) 
-					{
-						AtomPart->Data.Set(Child);
-						Placed = true;
-						break;
-					}
-				}
-				Assert(Placed);
-			}
-			return Protoatom;
+			First = false;
 		}
 	}
-	else
-	{
-		if (Data.empty())
-		{
-			std::cout << "NOTE: Can't finish as new element if empty." << std::endl; 
-			return {};
-		}
+	Assert(Placed);
+	return nullptr;
+}
 
-		if (Lifted) 
+struct WedgeProtoatomPartT : BaseProtoatomPartT
+{
+	using BaseProtoatomPartT::BaseProtoatomPartT;
+
+	void Drop(void)
+	{
+		if (!Parent) return;
+		auto Lifted = Parent->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Nucleus;
+		if (!Lifted) return;
+		PartParent()->Atom->Set(Lifted);
+	}
+	
+	void Defocus(void) override
+	{
+		if (Data.empty()) Drop();
+		ProtoatomPartT::Defocus();
+	}
+
+	OptionalT<NucleusT *> Finish(OptionalT<AtomTypeT *> Type, std::string Text)
+	{
+		TRACE;
+		Assert(Parent->Atom);
+		Type = Type ? Type : Core.LookUpAtomType(Data);
+
+		if (!Type) return {};
+		if ((*Type)->Arity == ArityT::Nullary) return {};
+
+		bool Insert = dynamic_cast<InsertProtoatomTypeT const *>(&PartParent()->GetTypeInfo());
+		if (Insert && ((*Type)->Arity == ArityT::Unary) && !(*Type)->Prefix) return {}; // Has to have slot after key
+		if (!Insert && (*Type)->Prefix) return {}; // Has to have slot before key
+
+		auto ParentAtom = PartParent()->Atom;
+		auto Lifted = Parent->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Nucleus;
+
+		Drop(); // Invalidates above references
+
+		auto Placement = FindPrecedencePlacement(ParentAtom, Lifted, *Type);
+		auto WedgeAtom = Placement.first;
+		auto Child = Placement.second;
+
+		auto Finished = (*Type)->Generate(Core);
+		Assert(Finished);
+		WedgeAtom->Set(Finished);
+
+		return PlaceAndFindCarryoverDest(Finished, Child, Insert, (*Type)->Prefix);
+	}
+};
+
+struct SoloProtoatomPartT : BaseProtoatomPartT
+{
+	using BaseProtoatomPartT::BaseProtoatomPartT;
+	
+	OptionalT<NucleusT *> Finish(OptionalT<AtomTypeT *> Type, std::string Text) override
+	{
+		TRACE;
+		Assert(Parent->Atom);
+		Type = Type ? Type : Core.LookUpAtomType(Data);
+		if (Type)
+		{
+			if (((*Type)->Arity == ArityT::Nullary) || (*Type)->Prefix)
+			{
+				PartParent()->Atom->Set(Type->Generate(Core));
+				return {};
+			}
+			else
+			{
+				auto Protoatom = Core.SoloProtoatomType->Generate(Core);
+				auto ParentAtom = PartParent()->Atom; // Store: PartParent stops working after next statement
+				ParentAtom->Set(Protoatom);
+
+				auto Placement = FindPrecedencePlacement(ParentAtom, Protoatom, *Type);
+				auto WedgeAtom = Placement.first;
+				auto Child = Placement.second;
+
+				auto Finished = (*Type)->Generate(Core);
+				Assert(Finished);
+				WedgeAtom->Set(Finished);
+
+				return PlaceAndFindCarryoverDest(Finished, Child, false, (*Type)->Prefix);
+			}
+		}
+		else
 		{
 			if (Data.empty())
 			{
-				Assert(Atom);
-				std::cout << "Replacing " << this << " with " << Lifted.Nucleus << ", atom " << Atom << std::endl;
-				PartParent()->Atom->Set(Lifted.Nucleus);
+				std::cout << "NOTE: Can't finish as new element if empty." << std::endl; 
 				return {};
 			}
 
-			std::cout << "NOTE: Can't finish as new element if protoatom has lifted." << std::endl; 
-			return {};
+			auto String = Core.StringType->Generate(Core);
+			GetStringPart(String)->Set(0, Text);
+
+			auto Protoatom = Core.AppendProtoatomType->Generate(Core);
+
+			auto ParentAsComposite = PartParent()->As<CompositeT>();
+			if (ParentAsComposite && (&ParentAsComposite->TypeInfo == Core.ElementType))
+			{
+				Protoatom->As<WedgeProtoatomT>()->SetLifted(String);
+			}
+			else
+			{
+				auto Element = Core.ElementType->Generate(Core);
+				GetElementRightPart(Element)->Data.Set(String);
+				Protoatom->As<WedgeProtoatomT>()->SetLifted(Element);
+			}
+
+			PartParent()->Atom->Set(Protoatom);
+
+			std::cout << Core.Dump() << std::endl; // DEBUG
+			std::cout << "Standard no-type finish." << std::endl;
+			Protoatom->Focus(FocusDirectionT::Direct);
+			return Protoatom;
 		}
-		
-		auto String = Core.StringType->Generate(Core);
-		GetStringPart(String)->Set(0, Text);
-
-		auto Protoatom = Core.ProtoatomType->Generate(Core);
-
-		auto ParentAsComposite = PartParent()->As<CompositeT>();
-		if (ParentAsComposite && (&ParentAsComposite->TypeInfo == Core.ElementType))
-		{
-			GetProtoatomLiftedPart(Protoatom)->Data.Set(String);
-		}
-		else
-		{
-			auto Element = Core.ElementType->Generate(Core);
-			GetElementRightPart(Element)->Data.Set(String);
-			GetProtoatomLiftedPart(Protoatom)->Data.Set(Element);
-		}
-
-		PartParent()->Atom->Set(Protoatom);
-
-		std::cout << Core.Dump() << std::endl; // DEBUG
-		std::cout << "Standard no-type finish." << std::endl;
-		return Protoatom;
 	}
-}
+};
 
-void CheckProtoatomType(AtomTypeT *Type)
+SoloProtoatomTypeT::SoloProtoatomTypeT(void)
 {
-	auto Composite = dynamic_cast<CompositeTypeT *>(Type);
-	Assert(Composite);
-	if (!AssertE(Composite->Parts.size(), 2)) throw ConstructionErrorT() << "Protoatom must have 2 parts.";
-	if (!Assert(dynamic_cast<AtomPartTypeT *>(Composite->Parts[0].get()))) throw ConstructionErrorT() << "Protoatom part 1 must be an atom.";
-	if (!Assert(dynamic_cast<AtomPartTypeT *>(Composite->Parts[0].get())->StartEmpty)) throw ConstructionErrorT() << "The Protoatom atom part must be StartEmpty.";
-	if (!(dynamic_cast<ProtoatomPartTypeT *>(Composite->Parts[1].get()))) throw ConstructionErrorT() << "Protoatom part 2 must be a \"protoatom\" part.";
+	TRACE;
+	Tag = "SoloProtoatom";
+	auto ProtoatomPart = make_unique<ProtoatomPartTypeT<SoloProtoatomPartT>>(*this);
+	ProtoatomPart->FocusDefault = true;
+	Parts.push_back(std::move(ProtoatomPart));
 }
-
-ProtoatomPartT *GetProtoatomPart(NucleusT *Protoatom)
+	
+NucleusT *SoloProtoatomTypeT::Generate(CoreT &Core)
+	{ TRACE; return GenerateComposite<SoloProtoatomT>(*this, Core); }
+	
+InsertProtoatomTypeT::InsertProtoatomTypeT(void)
 {
-	return *Protoatom->As<CompositeT>()->Parts[1]->As<ProtoatomPartT>();
+	TRACE;
+	Tag = "InsertProtoatom";
+	auto ProtoatomPart = make_unique<ProtoatomPartTypeT<WedgeProtoatomPartT>>(*this);
+	ProtoatomPart->FocusDefault = true;
+	Parts.push_back(std::move(ProtoatomPart));
+	auto AtomPart = new AtomPartTypeT(*this);
+	AtomPart->StartEmpty = true;
+	Parts.push_back(std::unique_ptr<CompositeTypePartT>(AtomPart));
 }
 
-AtomPartT *GetProtoatomLiftedPart(NucleusT *Protoatom)
+NucleusT *InsertProtoatomTypeT::Generate(CoreT &Core)
+	{ TRACE; return GenerateComposite<WedgeProtoatomT>(*this, Core); }
+
+AppendProtoatomTypeT::AppendProtoatomTypeT(void)
 {
-	return *Protoatom->As<CompositeT>()->Parts[0]->As<AtomPartT>();
+	TRACE;
+	Tag = "AppendProtoatom";
+	auto AtomPart = new AtomPartTypeT(*this);
+	AtomPart->StartEmpty = true;
+	Parts.push_back(std::unique_ptr<CompositeTypePartT>(AtomPart));
+	auto ProtoatomPart = make_unique<ProtoatomPartTypeT<WedgeProtoatomPartT>>(*this);
+	ProtoatomPart->FocusDefault = true;
+	Parts.push_back(std::move(ProtoatomPart));
 }
 
+NucleusT *AppendProtoatomTypeT::Generate(CoreT &Core)
+	{ TRACE; return GenerateComposite<WedgeProtoatomT>(*this, Core); }
+
+bool SoloProtoatomT::IsEmpty(void)
+{
+	return Parts[0]->As<SoloProtoatomPartT>()->Data.empty();
 }
+
+ProtoatomPartT *SoloProtoatomT::GetProtoatomPart(void)
+{
+	return *Parts[0]->As<ProtoatomPartT>();
+}
+
+ProtoatomPartT *WedgeProtoatomT::GetProtoatomPart(void)
+{
+	return *(dynamic_cast<InsertProtoatomTypeT *>(&TypeInfo) ? Parts[0] : Parts[1])->As<ProtoatomPartT>();
+}
+
+void WedgeProtoatomT::SetLifted(NucleusT *Lifted)
+{
+	(dynamic_cast<InsertProtoatomTypeT *>(&TypeInfo) ? Parts[1] : Parts[0])->As<AtomPartT>()->Data.Set(Lifted);
+}
+
+AtomPartT *WedgeProtoatomT::GetLiftedPart(void)
+{
+	return *(dynamic_cast<InsertProtoatomTypeT *>(&TypeInfo) ? Parts[1] : Parts[0])->As<AtomPartT>();
+}
+	
+}
+

@@ -32,12 +32,9 @@ struct CompositeT : NucleusT
 	void Refresh(void) override;
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
-	bool IsEmpty(void) const override;
 	bool IsFocused(void) const override;
 	
 	bool FocusDefault(void);
-
-	bool HasOnePart(void); // Only one part exists or is non-empty
 };
 
 struct CompositeTypePartT;
@@ -60,7 +57,6 @@ struct CompositeTypePartT : AtomTypeT
 	
 	// Unconfigurable
 	bool FocusDefault = false;
-	bool SetDefault = false;
 
 	// Configurable
 	OptionalT<std::string> DisplayPrefix, DisplaySuffix;
@@ -70,6 +66,20 @@ struct CompositeTypePartT : AtomTypeT
 	virtual void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const = 0;
 	void Serialize(Serial::WriteObjectT &Object) const override;
 };
+
+template <typename CompositeDerivateT> NucleusT *GenerateComposite(CompositeTypeT &Type, CoreT &Core)
+{
+	auto Out = new CompositeDerivateT(Core, Type);
+	for (auto &Part : Type.Parts) 
+	{
+		Out->Parts.emplace_back(Core);
+		Out->Parts.back().Parent = Out;
+		Out->Parts.back().Set(Part->Generate(Core));
+		Out->Parts.back().Callback = [](NucleusT *) { Assert(false); }; // Parts can't be replaced
+		Out->Parts.back()->WatchStatus((uintptr_t)Out, [](NucleusT *Nucleus) { Nucleus->Parent->FlagStatusChange(); });
+	}
+	return Out;
+}
 
 struct AtomPartTypeT : CompositeTypePartT
 {
@@ -101,7 +111,6 @@ struct AtomPartT : NucleusT
 	void Refresh(void) override;
 	void FocusPrevious(void) override;
 	void FocusNext(void) override;
-	bool IsEmpty(void) const override;
 };
 
 struct AtomListPartTypeT : CompositeTypePartT
