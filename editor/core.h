@@ -79,12 +79,15 @@ struct CoreT;
 	std::string Dump(void);
 };*/
 
+struct NucleusT;
 struct VisualT
 {
 	VisualT(QWebElement const &Element);
 	VisualT(QWebElement const &Root, QWebElement const &Element);
 	VisualT(VisualT const &) = delete;
 	~VisualT(void);
+
+	void SetFocusTarget(NucleusT const *Nucleus);
 
 	void SetClass(std::string const &Class);
 	void UnsetClass(std::string const &Class);
@@ -310,6 +313,7 @@ struct CoreT
 	void Redo(void);
 
 	void Focus(NucleusT *Nucleus);
+	void Refresh(void);
 
 	// Used by atoms (internal)
 	void AddUndoReaction(std::unique_ptr<ReactionT> Reaction);
@@ -334,8 +338,6 @@ struct CoreT
 
 		std::list<std::unique_ptr<UndoLevelT>> UndoQueue, RedoQueue;
 		std::unique_ptr<UndoLevelT> NewUndoLevel;
-
-		void Refresh(void);
 };
 
 }

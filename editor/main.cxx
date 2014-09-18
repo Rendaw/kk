@@ -116,6 +116,27 @@ struct WebViewT : QWebView
 		for (auto &Handler : Actions)
 			if (Handler(Event)) return;
 	}
+
+	void mousePressEvent(QMouseEvent *Event)
+	{
+		auto HTMLRoot = page()->mainFrame()->documentElement(); // QWebElement
+		/*auto Result = HTMLRoot.evaluateJavaScript((
+				StringT() << "document.elementFromPoint(" << Event->x() << ", " << Event->y() << ").Nucleus;"
+			).str().c_str());*/
+		auto Result = HTMLRoot.evaluateJavaScript((
+				StringT() << "(function() {"
+					"var Found = document.elementFromPoint(" << Event->x() << ", " << Event->y() << ");"
+					"while (!Found.Nucleus && Found.parentNode) { Found = Found.parentNode; };"
+					"if (Found) { return Found.Nucleus; };"
+					"})();"
+			).str().c_str());
+		bool Converted = false;
+		NucleusT *Found = reinterpret_cast<NucleusT *>(Result.toLongLong(&Converted));
+		if (!Converted) return;
+		Core->TextMode = false;
+		Found->Focus(FocusDirectionT::Direct);
+		Core->Refresh();
+	}
 };
 
 struct WebPageT : QWebPage

@@ -113,6 +113,12 @@ VisualT::~VisualT(void)
 	EvaluateJS(Root, ::StringT()
 		<< "delete window." << ID << ";");
 }
+
+void VisualT::SetFocusTarget(NucleusT const *Nucleus)
+{
+	EvaluateJS(Root, ::StringT()
+		<< ID << ".Nucleus = " << reinterpret_cast<intptr_t>(Nucleus) << ";");
+}
 	
 void VisualT::SetClass(std::string const &Class)
 {
@@ -330,7 +336,8 @@ OptionalT<NucleusT *> NucleusT::PartParent(void)
 
 NucleusT::NucleusT(CoreT &Core) : Core(Core), Parent(Core), Visual(Core.RootVisual.Root), Atom(nullptr) 
 {
-       Core.NeedRefresh.insert(this);	
+	Visual.SetFocusTarget(this);
+	Core.NeedRefresh.insert(this);	
 }
 
 NucleusT::~NucleusT(void) {}
@@ -656,6 +663,13 @@ void CoreT::Focus(NucleusT *Nucleus)
 	std::cout << "FOCUSED " << Nucleus << std::endl;
 }
 	
+void CoreT::Refresh(void)
+{
+	for (auto &Refreshable : NeedRefresh)
+		Refreshable->Refresh();
+	NeedRefresh.clear();
+}
+	
 void CoreT::AddUndoReaction(std::unique_ptr<ReactionT> Reaction)
 {
 	Assert(NewUndoLevel);
@@ -727,12 +741,5 @@ bool CoreT::UndoLevelT::Combine(std::unique_ptr<UndoLevelT> &Other)
 	);
 }
 		
-void CoreT::Refresh(void)
-{
-	for (auto &Refreshable : NeedRefresh)
-		Refreshable->Refresh();
-	NeedRefresh.clear();
-}
-	
 }
 
