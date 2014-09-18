@@ -371,7 +371,7 @@ OptionalT<OperatorDirectionT> CompositeT::GetOperandSide(AtomT *Operand)
 	{
 		auto &Part = Parts[PartIndex];
 
-		if (PartIndex > TypeInfo.OperatorPosition) Out = OperatorDirectionT::Right;
+		if (PartIndex >= TypeInfo.OperatorPosition) Out = OperatorDirectionT::Right;
 
 		if (auto AtomPart = Part->As<AtomPartT>())
 		{
@@ -1340,7 +1340,6 @@ AtomPartT *GetElementRightPart(NucleusT *Nucleus)
 
 bool IsPrecedent(AtomT &ParentAtom, NucleusT *Child)
 {
-	std::cout << "Precedent of " << ParentAtom->PartParent()->GetTypeInfo().Tag << " vs " << Child->GetTypeInfo().Tag << std::endl;
 	// Answers "If ChildType were in ParentAtom, would it be precedent compared to Parent containing ParentAtom?"
 	auto Parent = *ParentAtom->PartParent()->As<CompositeT>();
 	auto ParentSide = Parent->GetOperandSide(&ParentAtom);

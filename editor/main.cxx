@@ -58,7 +58,7 @@ struct WebViewT : QWebView
 		};
 		Core->RegisterActionCallback = [this](std::shared_ptr<ActionT> Action)
 		{
-			std::cout << "Registering " << Action->Name << std::endl;
+			//std::cout << "Registering " << Action->Name << std::endl;
 			if (Action->Arguments.empty())
 			{
 				auto FoundSequences = ActionKeys.find(Action->Name);

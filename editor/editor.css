@@ -47,6 +47,9 @@ div.flag-vertical > div.part
 	display: block;
 }
 
+div.part.flag-antiprecedent:before { content: "("; }
+div.part.flag-antiprecedent:after { content: ")"; }
+
 /* Cursor */
 div.type-cursor
 {

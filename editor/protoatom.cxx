@@ -465,10 +465,12 @@ struct SoloProtoatomPartT : BaseProtoatomPartT
 
 std::pair<AtomT *, NucleusT *> FindPrecedencePlacement(AtomT *ChildAtom, NucleusT *Child, NucleusT *Replacement)
 {
+	std::cout << "Finding of placement of " << (*ChildAtom)->PartParent()->GetTypeInfo().Tag << " vs " << Replacement->GetTypeInfo().Tag << std::endl;
 	while ((*ChildAtom)->PartParent() && !IsPrecedent(*ChildAtom, Replacement))
 	{
 		ChildAtom = (*ChildAtom)->PartParent()->Atom;
 		Child = ChildAtom->Nucleus;
+		std::cout << "not precedent, moving up: " << (*ChildAtom)->PartParent()->GetTypeInfo().Tag << std::endl;
 	}
 	return {ChildAtom, Child};
 }
@@ -493,8 +495,6 @@ OptionalT<NucleusT *> TypedFinish(CoreT &Core, bool Bubble, bool Insert, AtomTyp
 	HoldT Finished(Core, Type.Generate(Core));
 	Assert(Finished);
 
-	// TODO GetOperand -> returns atom reference (AtomPart or AtomListPart), on side Direction of operand, from leftmost to right by offset.  For RTL reading, this would probably have to be reversed.
-	// TODO GetAnyOperand -> Same as above but may include any atom part (including enum, string, etc)
 	auto SetOperand = Finished->As<CompositeT>()->GetOperand(*Direction, 0);
 	NucleusT *Carryover = nullptr;
 	{
@@ -561,6 +561,8 @@ InsertProtoatomTypeT::InsertProtoatomTypeT(void)
 {
 	TRACE;
 	Tag = "InsertProtoatom";
+	Precedence = 800;
+	LeftAssociative = false;
 	auto ProtoatomPart = make_unique<ProtoatomPartTypeT<WedgeProtoatomPartT>>(*this);
 	ProtoatomPart->FocusDefault = true;
 	Parts.push_back(std::move(ProtoatomPart));
@@ -576,6 +578,8 @@ AppendProtoatomTypeT::AppendProtoatomTypeT(void)
 {
 	TRACE;
 	Tag = "AppendProtoatom";
+	Precedence = 800;
+	LeftAssociative = true;
 	auto AtomPart = new AtomPartTypeT(*this);
 	AtomPart->StartEmpty = true;
 	Parts.push_back(std::unique_ptr<CompositePartTypeT>(AtomPart));

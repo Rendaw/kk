@@ -230,7 +230,7 @@ void AtomT::Set(NucleusT *Replacement)
 	Assert(Replacement);
 	if (!Replacement) return;
 	Nucleus = Replacement;
-	std::cout << "Set " << this << " to " << Replacement << std::endl;
+	//std::cout << "Set " << this << " to " << Replacement << std::endl;
 	Replacement->Count += 1;
 	if (Replacement->Atom)
 	{
