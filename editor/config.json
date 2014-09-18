@@ -20,16 +20,14 @@
 		},
 		{
 			"Tag": "utf8:Group",
-			"LookupSequence": "utf8:{",
 			"ReplaceImmediately": true,
-			"Arity": "utf8:Unary",
-			"Prefix": true,
-			"DisplayPrefix": "utf8:{",
-			"DisplaySuffix": "utf8:}",
 			"SpatiallyVertical": true,
 			"Precedence": 0,
 			"LeftAssociative": false,
 			"Parts": [
+				["utf8:Operator", {
+					"Pattern": "utf8:{"
+				}],
 				["utf8:AtomList", {
 					"Tag": "utf8:Statements",
 					"DisplaySuffix": "utf8:;",
@@ -42,13 +40,14 @@
 			"Tag": "utf8:Element",
 			"LookupSequence": "utf8:.",
 			"ReplaceImmediately": true,
-			"Arity": "utf8:Binary",
-			"Prefix": false,
 			"Precedence": 900,
+			"LeftAssociative": true,
 			"Parts": [
 				["utf8:Atom", {
-					"Tag": "utf8:Base",
-					"DisplaySuffix": "utf8:."
+					"Tag": "utf8:Base"
+				}],
+				["utf8:Operator", {
+					"Pattern": "utf8:."
 				}],
 				["utf8:Atom", {
 					"Tag": "utf8:Key",
@@ -58,11 +57,12 @@
 		},
 		{
 			"Tag": "utf8:String",
-			"LookupSequence": "utf8:'",
 			"ReplaceImmediately": true,
-			"Arity": "utf8:Nullary",
-			"Prefix": true,
+			"LeftAssociative": false,
 			"Parts": [
+				["utf8:Operator", {
+					"Pattern": "utf8:'"
+				}],
 				["utf8:String", {
 					"Tag": "utf8:Data",
 					"DisplayPrefix": "utf8:'",
@@ -73,18 +73,32 @@
 		},
 		{
 			"Tag": "utf8:Assignment",
-			"LookupSequence": "utf8:=",
 			"ReplaceImmediately": true,
-			"DisplayInfix": "utf8:=",
-			"Arity": "utf8:Binary",
-			"Prefix": false,
-			"Precedence": 800,
+			"LeftAssociative": false,
+			"Precedence": 200,
 			"Parts": [
 				["utf8:Atom", {
 					"Tag": "utf8:Left"
 				}],
+				["utf8:Operator", {
+					"Pattern": "utf8:="
+				}],
 				["utf8:Atom", {
 					"Tag": "utf8:Right",
+					"FocusDefault": true
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:Function",
+			"ReplaceImmediately": false,
+			"Precedence": 600,
+			"Parts": [
+				["utf8:Operator", {
+					"Pattern": "utf8:function"
+				}],
+				["utf8:Atom", {
+					"Tag": "utf8:Signature",
 					"FocusDefault": true
 				}]
 			]

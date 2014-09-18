@@ -11,9 +11,9 @@ static auto IdentifierClass = Regex::ParserT<>("^[a-zA-Z0-9_]+$");
 namespace Core
 {
 
-template <typename TypeT> struct ProtoatomPartTypeT : CompositeTypePartT
+template <typename TypeT> struct ProtoatomPartTypeT : CompositePartTypeT
 {
-	using CompositeTypePartT::CompositeTypePartT;
+	using CompositePartTypeT::CompositePartTypeT;
 
 	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const { }
 
@@ -26,7 +26,7 @@ template <typename TypeT> struct ProtoatomPartTypeT : CompositeTypePartT
 
 struct BaseProtoatomPartT : ProtoatomPartT
 {
-	CompositeTypePartT &TypeInfo;
+	CompositePartTypeT &TypeInfo;
 	
 	OptionalT<bool> CouldBeIdentifier;
 	enum struct FocusedT
@@ -37,7 +37,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 	} Focused = FocusedT::Off;
 	size_t Position = 0;
 
-	BaseProtoatomPartT(CoreT &Core, CompositeTypePartT &TypeInfo) : ProtoatomPartT(Core), TypeInfo(TypeInfo)
+	BaseProtoatomPartT(CoreT &Core, CompositePartTypeT &TypeInfo) : ProtoatomPartT(Core), TypeInfo(TypeInfo)
 	{
 		TRACE;
 		Visual.SetClass("part");
@@ -364,109 +364,47 @@ struct BaseProtoatomPartT : ProtoatomPartT
 	virtual OptionalT<NucleusT *> Finish(OptionalT<AtomTypeT *> Type, std::string Text) = 0;
 };
 
-std::pair<AtomT *, NucleusT *> FindPrecedencePlacement(AtomT *Parent, NucleusT *Child, AtomTypeT *Type)
-{
-	// Search upward until appropriate precedential location for type found
-	while ((*Parent)->PartParent() && 
-		(
-			((*Parent)->PartParent()->GetTypeInfo().Precedence > Type->Precedence) || 
-			(
-				((*Parent)->PartParent()->GetTypeInfo().Precedence == Type->Precedence) &&
-				((*Parent)->PartParent()->GetTypeInfo().LeftAssociative)
-			)
-		))
-	{
-		std::cout << "Parent precedence " << (*Parent)->PartParent()->GetTypeInfo().Precedence << std::endl;
-		Parent = (*Parent)->PartParent()->Atom;
-		Child = Parent->Nucleus;
-	}
-	return {Parent, Child};
-}
-
-NucleusT *PlaceAndFindCarryoverDest(NucleusT *Finished, OptionalT<NucleusT *> PlaceMe, bool Insert, bool Prefix)
-{
-	// Placement at 0 unless insert + !prefix
-	// Return 1st after operator (start from 0 if insert, 1 if append)
-	auto Composite = Finished->As<CompositeT>();
-	bool Placed = false;
-	bool First = true; // AtomPart's data for placement, any part for return
-	for (auto &Part : Composite->Parts)
-	{
-		auto AtomPart = (*Part->Atom)->As<AtomPartT>();
-		auto AtomListPart = (*Part->Atom)->As<AtomListPartT>();
-		if (PlaceMe && !Placed)
-		{
-			if (AtomPart || AtomListPart) 
-			{
-				if (!(Insert && !Prefix) || !First)
-				{
-					if (AtomPart) AtomPart->Data.Set(*PlaceMe);
-					else AtomListPart->Data[0]->Atom.Set(*PlaceMe);
-					Placed = true;
-				}
-				First = false;
-			}
-		}
-		else
-		{
-			if (Insert || !First)
-			{
-				if (AtomPart) return AtomPart->Data.Nucleus;
-				else if (AtomListPart) return AtomListPart->Data[0]->Atom.Nucleus;
-				else return Part.Nucleus;
-			}
-			First = false;
-		}
-	}
-	Assert(Placed);
-	return nullptr;
-}
+std::pair<AtomT *, NucleusT *> FindPrecedencePlacement(AtomT *ChildAtom, NucleusT *Child, NucleusT *Replacement);
+OptionalT<NucleusT *> TypedFinish(CoreT &Core, bool Bubble, bool Insert, AtomTypeT &Type, AtomT *ParentAtom, OptionalT<NucleusT *> Set);
 
 struct WedgeProtoatomPartT : BaseProtoatomPartT
 {
+	bool Bubble = false;
+
 	using BaseProtoatomPartT::BaseProtoatomPartT;
 
-	void Drop(void)
-	{
-		if (!Parent) return;
-		auto Lifted = Parent->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Nucleus;
-		if (!Lifted) return;
-		PartParent()->Atom->Set(Lifted);
-	}
-	
 	void Defocus(void) override
 	{
-		if (Data.empty()) Drop();
+		if (Data.empty())
+		{
+			if (Parent)
+			{
+				auto Lifted = Parent->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Nucleus;
+				if (Lifted)
+				{
+					Core.AddUndoReaction(make_unique<FocusT>(Core, this));
+					PartParent()->Atom->Set(Lifted);
+				}
+			}
+		}
 		ProtoatomPartT::Defocus();
 	}
 
-	OptionalT<NucleusT *> Finish(OptionalT<AtomTypeT *> Type, std::string Text)
+	OptionalT<NucleusT *> Finish(OptionalT<AtomTypeT *> Type, std::string Text) override
 	{
 		TRACE;
 		Assert(Parent->Atom);
 		Type = Type ? Type : Core.LookUpAtomType(Data);
 
 		if (!Type) return {};
-		if ((*Type)->Arity == ArityT::Nullary) return {};
 
-		bool Insert = dynamic_cast<InsertProtoatomTypeT const *>(&PartParent()->GetTypeInfo());
-		if (Insert && ((*Type)->Arity == ArityT::Unary) && !(*Type)->Prefix) return {}; // Has to have slot after key
-		if (!Insert && (*Type)->Prefix) return {}; // Has to have slot before key
-
-		auto ParentAtom = PartParent()->Atom;
-		auto Lifted = Parent->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Nucleus;
-
-		Drop(); // Invalidates above references
-
-		auto Placement = FindPrecedencePlacement(ParentAtom, Lifted, *Type);
-		auto WedgeAtom = Placement.first;
-		auto Child = Placement.second;
-
-		auto Finished = (*Type)->Generate(Core);
-		Assert(Finished);
-		WedgeAtom->Set(Finished);
-
-		return PlaceAndFindCarryoverDest(Finished, Child, Insert, (*Type)->Prefix);
+		return TypedFinish(
+			Core, 
+			Bubble, 
+			(bool)dynamic_cast<InsertProtoatomTypeT const *>(&PartParent()->GetTypeInfo()), 
+			**Type, 
+			PartParent()->Atom, 
+			PartParent()->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Nucleus);
 	}
 };
 
@@ -481,27 +419,13 @@ struct SoloProtoatomPartT : BaseProtoatomPartT
 		Type = Type ? Type : Core.LookUpAtomType(Data);
 		if (Type)
 		{
-			if (((*Type)->Arity == ArityT::Nullary) || (*Type)->Prefix)
-			{
-				PartParent()->Atom->Set(Type->Generate(Core));
-				return {};
-			}
-			else
-			{
-				auto Protoatom = Core.SoloProtoatomType->Generate(Core);
-				auto ParentAtom = PartParent()->Atom; // Store: PartParent stops working after next statement
-				ParentAtom->Set(Protoatom);
-
-				auto Placement = FindPrecedencePlacement(ParentAtom, Protoatom, *Type);
-				auto WedgeAtom = Placement.first;
-				auto Child = Placement.second;
-
-				auto Finished = (*Type)->Generate(Core);
-				Assert(Finished);
-				WedgeAtom->Set(Finished);
-
-				return PlaceAndFindCarryoverDest(Finished, Child, false, (*Type)->Prefix);
-			}
+			return TypedFinish(
+				Core, 
+				false, 
+				false, 
+				**Type, 
+				PartParent()->Atom, 
+				{});
 		}
 		else
 		{
@@ -515,6 +439,7 @@ struct SoloProtoatomPartT : BaseProtoatomPartT
 			GetStringPart(String)->Set(0, Text);
 
 			auto Protoatom = Core.AppendProtoatomType->Generate(Core);
+			Protoatom->As<ProtoatomT>()->GetProtoatomPart()->As<WedgeProtoatomPartT>()->Bubble = true;
 
 			auto ParentAsComposite = PartParent()->As<CompositeT>();
 			if (ParentAsComposite && (&ParentAsComposite->TypeInfo == Core.ElementType))
@@ -538,6 +463,88 @@ struct SoloProtoatomPartT : BaseProtoatomPartT
 	}
 };
 
+std::pair<AtomT *, NucleusT *> FindPrecedencePlacement(AtomT *ChildAtom, NucleusT *Child, NucleusT *Replacement)
+{
+	while ((*ChildAtom)->PartParent() && !IsPrecedent(*ChildAtom, Replacement))
+	{
+		ChildAtom = (*ChildAtom)->PartParent()->Atom;
+		Child = ChildAtom->Nucleus;
+	}
+	return {ChildAtom, Child};
+}
+
+OptionalT<NucleusT *> TypedFinish(CoreT &Core, bool Bubble, bool Insert, AtomTypeT &Type, AtomT *ParentAtom, OptionalT<NucleusT *> Set)
+{
+	OptionalT<size_t> CarryoverPlaces;
+	OptionalT<OperatorDirectionT> Direction; 
+	if (Insert)
+	{
+		Assert(!Bubble);
+		Direction = OperatorDirectionT::Right;
+		CarryoverPlaces = 1;
+		Bubble = false;
+	}
+	else
+	{
+		Direction = OperatorDirectionT::Left;
+		CarryoverPlaces = 0;
+	}
+
+	HoldT Finished(Core, Type.Generate(Core));
+	Assert(Finished);
+
+	// TODO GetOperand -> returns atom reference (AtomPart or AtomListPart), on side Direction of operand, from leftmost to right by offset.  For RTL reading, this would probably have to be reversed.
+	// TODO GetAnyOperand -> Same as above but may include any atom part (including enum, string, etc)
+	auto SetOperand = Finished->As<CompositeT>()->GetOperand(*Direction, 0);
+	NucleusT *Carryover = nullptr;
+	{
+		auto CarryoverOperand = Finished->As<CompositeT>()->GetAnyOperand(OperatorDirectionT::Right, *CarryoverPlaces);
+		Assert(CarryoverOperand);
+		if (CarryoverOperand) Carryover = *CarryoverOperand;
+	}
+
+	auto WedgeBottom = ParentAtom;
+	NucleusT *WedgeTop = nullptr;
+
+	if (!SetOperand) 
+	{
+		if (Set) return {}; // Invalid type
+	}
+	else
+	{
+		if (Set)
+		{
+			WedgeTop = *Set;	
+			WedgeBottom->Set(WedgeTop); // Drop lifted before bubbling
+		}
+
+		if (Bubble)
+		{
+			auto Placement = FindPrecedencePlacement(WedgeBottom, WedgeTop, Finished.Nucleus);
+			WedgeBottom = Placement.first;
+			WedgeTop = Placement.second;
+		}
+
+		if (WedgeTop)
+			SetOperand->Set(WedgeTop);
+	}
+
+	if (Carryover)
+	{
+		WedgeBottom->Set(Finished.Nucleus);
+	}
+	else
+	{
+		Carryover = Core.AppendProtoatomType->Generate(Core);
+		Carryover->As<ProtoatomT>()->GetProtoatomPart()->As<WedgeProtoatomPartT>()->Bubble = true;
+		Carryover->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Set(Finished.Nucleus);
+		WedgeBottom->Set(Carryover);
+	}
+
+	Assert(Carryover);
+	return Carryover;
+}
+
 SoloProtoatomTypeT::SoloProtoatomTypeT(void)
 {
 	TRACE;
@@ -559,7 +566,7 @@ InsertProtoatomTypeT::InsertProtoatomTypeT(void)
 	Parts.push_back(std::move(ProtoatomPart));
 	auto AtomPart = new AtomPartTypeT(*this);
 	AtomPart->StartEmpty = true;
-	Parts.push_back(std::unique_ptr<CompositeTypePartT>(AtomPart));
+	Parts.push_back(std::unique_ptr<CompositePartTypeT>(AtomPart));
 }
 
 NucleusT *InsertProtoatomTypeT::Generate(CoreT &Core)
@@ -571,7 +578,7 @@ AppendProtoatomTypeT::AppendProtoatomTypeT(void)
 	Tag = "AppendProtoatom";
 	auto AtomPart = new AtomPartTypeT(*this);
 	AtomPart->StartEmpty = true;
-	Parts.push_back(std::unique_ptr<CompositeTypePartT>(AtomPart));
+	Parts.push_back(std::unique_ptr<CompositePartTypeT>(AtomPart));
 	auto ProtoatomPart = make_unique<ProtoatomPartTypeT<WedgeProtoatomPartT>>(*this);
 	ProtoatomPart->FocusDefault = true;
 	Parts.push_back(std::move(ProtoatomPart));

@@ -397,32 +397,10 @@ void NucleusT::IgnoreStatus(uintptr_t ID)
 	
 AtomTypeT::~AtomTypeT(void) {}
 
-std::map<ArityT, std::string> ReverseArityLookup = 
-{
-	{Nullary, "Nullary"},
-	{Unary, "Unary"},
-	{Binary, "Binary"}
-};
-std::map<std::string, ArityT> ArityLookup = 
-{
-	{"Nullary", Nullary},
-	{"Unary", Unary},
-	{"Binary", Binary}
-};
-
 Serial::ReadErrorT AtomTypeT::Deserialize(Serial::ReadObjectT &Object)
 {
 	Object.String("Tag", [this](std::string &&Value) -> Serial::ReadErrorT { Tag = std::move(Value); return {}; });
-	Object.String("LookupSequence", [this](std::string &&Value) -> Serial::ReadErrorT { LookupSequence = std::move(Value); return {}; });
 	Object.Bool("ReplaceImmediately", [this](bool Value) -> Serial::ReadErrorT { ReplaceImmediately = Value; return {}; });
-	Object.String("Arity", [this](std::string &&Value) -> Serial::ReadErrorT
-	{
-		auto Found = ArityLookup.find(Value);
-		if (Found == ArityLookup.end()) return (::StringT() << "Unknown arity " << Value).str();
-		Arity = Found->second;
-		return {};
-	});
-	Object.Bool("Prefix", [this](bool Value) -> Serial::ReadErrorT { Prefix = Value; return {}; });
 	Object.Bool("LeftAssociative", [this](bool Value) -> Serial::ReadErrorT { LeftAssociative = Value; return {}; });
 	Object.Int("Precedence", [this](int64_t Value) -> Serial::ReadErrorT { Precedence = Value; return {}; });
 	Object.Bool("SpatiallyVertical", [this](bool Value) -> Serial::ReadErrorT { SpatiallyVertical = Value; return {}; });
@@ -432,15 +410,7 @@ Serial::ReadErrorT AtomTypeT::Deserialize(Serial::ReadObjectT &Object)
 void AtomTypeT::Serialize(Serial::WriteObjectT &Object) const
 {
 	Object.String("Tag", Tag);
-	if (LookupSequence) Object.String("LookupSequence", *LookupSequence);
 	Object.Bool("ReplaceImmediately", ReplaceImmediately);
-	{
-		auto Found = ReverseArityLookup.find(Arity);
-		Assert(Found != ReverseArityLookup.end());
-		if (Found != ReverseArityLookup.end()) 
-			Object.String("Arity", Found->second);
-	}
-	Object.Bool("Prefix", Prefix);
 	Object.Bool("LeftAssociative", LeftAssociative);
 	Object.Int("Precedence", Precedence);
 	Object.Bool("SpatiallyVertical", SpatiallyVertical);
@@ -536,7 +506,7 @@ CoreT::CoreT(VisualT &RootVisual) :
 	}
 
 	for (auto &Type : Types)
-		if (Type.second->LookupSequence) TypeLookup[*Type.second->LookupSequence] = Type.second.get();
+		if (Type.second->Operator) TypeLookup[*Type.second->Operator] = Type.second.get();
 	
 	Root.Callback = [this](NucleusT *Nucleus)
 	{

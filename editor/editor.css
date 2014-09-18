@@ -67,6 +67,12 @@ div.new
 	color: black;
 }
 
+/* String */
+div.type-String > div.part-Data:after
+{
+	content: "'"
+}
+
 /* Element */
 div.type-Element:not(.new),
 div.type-Element > div.part > div.type-String:not(.new)
@@ -74,10 +80,13 @@ div.type-Element > div.part > div.type-String:not(.new)
 	color: #99c947;
 }
 
-div.type-Element > div.part-Key > div.type-String > div.part-Data > div.affix-inner
+div.type-Element > div.part-Base:empty + div.operator
 {
 	display: none;
 }
+
+div.type-Element > div.part-Key > div.type-String > div.part-Data:after { content: none; }
+div.type-Element > div.part-Key > div.type-String > div.operator { display: none; }
 
 /* Module */
 div.type-Module:not(.new)
@@ -85,10 +94,8 @@ div.type-Module:not(.new)
 	color: #bcb6f3;
 }
 
-div.type-Module > div > div.type-Group > div.affix-outer
-{
-	display: none;
-}
+div.type-Module > div > div.type-Group > div.operator { display: none; }
+div.type-Module > div > div.type-Group:after { display: none; }
 
 div.type-Module,
 div.type-Module > div,
@@ -114,16 +121,21 @@ div.type-Group > div.part-Statements.flag-vertical > div
 	text-indent: -64px;
 }
 
-div.type-Group > div.affix-outer:nth-child(4)
+div.type-Group > div.part-Statements > div:after { content: ";"; }
+
+div.type-Group:after
 {
+	content: "}";
 	margin-left: -64px;
 }
 
 /* Assignment */
-div.type-Assignment > div.affix-outer:not(:empty)
+div.type-Assignment > div.operator
 {
 	padding: 0px 12px;
 }
+
+/* Function */
 
 /* Visualize structure mode */
 body:not(.flag-visualizestructure) div.tag { display: none !important; }

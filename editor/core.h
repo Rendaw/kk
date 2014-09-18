@@ -181,13 +181,6 @@ struct AtomT
 		void Clear(void);
 };
 
-enum ArityT
-{
-	Nullary,
-	Unary,
-	Binary
-};
-
 enum struct FocusDirectionT
 {
 	FromAhead,
@@ -258,11 +251,11 @@ struct AtomTypeT
 	virtual NucleusT *Generate(CoreT &Core);
 
 	std::string Tag = "EditorUnimplemented";
-	OptionalT<std::string> LookupSequence;
+
+	size_t OperatorPosition = 0;
+	OptionalT<std::string> Operator;
 
 	bool ReplaceImmediately = false;
-	ArityT Arity = ArityT::Nullary;
-	bool Prefix = true;
 	int Precedence = 1000;
 	bool LeftAssociative = true;
 	

@@ -6,12 +6,18 @@
 namespace Core
 {
 
+enum struct OperatorDirectionT
+{
+	Left,
+	Right
+};
+
 struct CompositeTypeT;
 
 struct CompositeT : NucleusT
 {
 	CompositeTypeT &TypeInfo;
-	VisualT PrefixVisual, InfixVisual, SuffixVisual;
+	VisualT OperatorVisual;
 
 	struct SelfFocusedT {};
 	typedef size_t PartFocusedT;
@@ -20,7 +26,7 @@ struct CompositeT : NucleusT
 	bool EffectivelyVertical;
 
 	std::vector<AtomT> Parts;
-	
+
 	CompositeT(CoreT &Core, CompositeTypeT &TypeInfo);
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
@@ -35,36 +41,46 @@ struct CompositeT : NucleusT
 	bool IsFocused(void) const override;
 	
 	bool FocusDefault(void);
+
+	OptionalT<AtomT *> GetOperand(OperatorDirectionT Direction, size_t Offset);
+	OptionalT<NucleusT *> GetAnyOperand(OperatorDirectionT Direction, size_t Offset);
+	OptionalT<OperatorDirectionT> GetOperandSide(AtomT *Operand);
 };
 
-struct CompositeTypePartT;
+struct CompositePartTypeT;
 
 struct CompositeTypeT : AtomTypeT
 {
-	// Configurable
-	OptionalT<std::string> DisplayPrefix, DisplayInfix, DisplaySuffix;
-
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object);
 	void Serialize(Serial::WriteObjectT &Object) const override;
 	NucleusT *Generate(CoreT &Core) override;
+	
+	bool IsAssociative(OperatorDirectionT Direction) const;
 
-	std::vector<std::unique_ptr<CompositeTypePartT>> Parts;
+	std::vector<std::unique_ptr<CompositePartTypeT>> Parts;
 };
 
-struct CompositeTypePartT : AtomTypeT
+struct CompositePartTypeT : AtomTypeT
 {
 	CompositeTypeT &Parent;
 	
-	// Unconfigurable
 	bool FocusDefault = false;
 
-	// Configurable
-	OptionalT<std::string> DisplayPrefix, DisplaySuffix;
-
-	CompositeTypePartT(CompositeTypeT &Parent);
+	CompositePartTypeT(CompositeTypeT &Parent);
 	virtual Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object);
 	virtual void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const = 0;
 	void Serialize(Serial::WriteObjectT &Object) const override;
+};
+
+struct OperatorPartTypeT : CompositePartTypeT
+{
+	std::string Pattern;
+	
+	using CompositePartTypeT::CompositePartTypeT;
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
+	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
+	void Serialize(Serial::WriteObjectT &Object) const override;
+	NucleusT *Generate(CoreT &Core) override;
 };
 
 template <typename CompositeDerivateT> NucleusT *GenerateComposite(CompositeTypeT &Type, CoreT &Core)
@@ -72,6 +88,7 @@ template <typename CompositeDerivateT> NucleusT *GenerateComposite(CompositeType
 	auto Out = new CompositeDerivateT(Core, Type);
 	for (auto &Part : Type.Parts) 
 	{
+		if (dynamic_cast<OperatorPartTypeT *>(Part.get())) continue;
 		Out->Parts.emplace_back(Core);
 		Out->Parts.back().Parent = Out;
 		Out->Parts.back().Set(Part->Generate(Core));
@@ -81,11 +98,11 @@ template <typename CompositeDerivateT> NucleusT *GenerateComposite(CompositeType
 	return Out;
 }
 
-struct AtomPartTypeT : CompositeTypePartT
+struct AtomPartTypeT : CompositePartTypeT
 {
 	bool StartEmpty = false;
 	
-	using CompositeTypePartT::CompositeTypePartT;
+	using CompositePartTypeT::CompositePartTypeT;
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
 	void Serialize(Serial::WriteObjectT &Object) const override;
@@ -94,7 +111,6 @@ struct AtomPartTypeT : CompositeTypePartT
 struct AtomPartT : NucleusT
 {
 	AtomPartTypeT &TypeInfo;
-	VisualT PrefixVisual, SuffixVisual;
 	
 	bool EffectivelyVertical;
 	
@@ -113,11 +129,11 @@ struct AtomPartT : NucleusT
 	void FocusNext(void) override;
 };
 
-struct AtomListPartTypeT : CompositeTypePartT
+struct AtomListPartTypeT : CompositePartTypeT
 {
-	using CompositeTypePartT::CompositeTypePartT;
+	using CompositePartTypeT::CompositePartTypeT;
 	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
-	using CompositeTypePartT::Serialize; // Is this funny?
+	using CompositePartTypeT::Serialize; // Is this funny?
 	NucleusT *Generate(CoreT &Core) override;
 };
 struct AtomListPartT : NucleusT
@@ -131,7 +147,6 @@ struct AtomListPartT : NucleusT
 	struct ItemT
 	{
 		VisualT Visual;
-		VisualT PrefixVisual, SuffixVisual;
 		AtomT Atom;
 	};
 	std::vector<std::unique_ptr<ItemT>> Data;
@@ -165,17 +180,16 @@ struct AtomListPartT : NucleusT
 		};
 };
 
-struct StringPartTypeT : CompositeTypePartT
+struct StringPartTypeT : CompositePartTypeT
 {
-	using CompositeTypePartT::CompositeTypePartT;
+	using CompositePartTypeT::CompositePartTypeT;
 	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
-	using CompositeTypePartT::Serialize; // Is this funny?
+	using CompositePartTypeT::Serialize; // Is this funny?
 	NucleusT *Generate(CoreT &Core) override;
 };
 struct StringPartT : NucleusT
 {
 	StringPartTypeT &TypeInfo;
-	VisualT PrefixVisual, SuffixVisual;
 	enum struct FocusedT
 	{
 		Off,
@@ -198,12 +212,12 @@ struct StringPartT : NucleusT
 	void Set(size_t Position, std::string const &Text);
 };
 
-struct EnumPartTypeT : CompositeTypePartT
+struct EnumPartTypeT : CompositePartTypeT
 {
 	std::vector<std::string> Values;
 	std::map<std::string, size_t> ValueLookup;
 	
-	using CompositeTypePartT::CompositeTypePartT;
+	using CompositePartTypeT::CompositePartTypeT;
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
 	void Serialize(Serial::WriteObjectT &Object) const override;
@@ -212,7 +226,6 @@ struct EnumPartTypeT : CompositeTypePartT
 struct EnumPartT : NucleusT
 {
 	EnumPartTypeT &TypeInfo;
-	VisualT PrefixVisual, SuffixVisual;
 
 	size_t Index;
 
@@ -233,6 +246,8 @@ StringPartT *GetStringPart(NucleusT *Nucleus);
 void CheckElementType(AtomTypeT *Type);
 AtomPartT *GetElementLeftPart(NucleusT *Nucleus);
 AtomPartT *GetElementRightPart(NucleusT *Nucleus);
+
+bool IsPrecedent(AtomT &ParentAtom, NucleusT *Child);
 
 }
 

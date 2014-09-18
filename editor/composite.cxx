@@ -6,15 +6,13 @@
 namespace Core
 {
 
-CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), InfixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), EffectivelyVertical(TypeInfo.SpatiallyVertical)
+CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), OperatorVisual(Core.RootVisual.Root), EffectivelyVertical(TypeInfo.SpatiallyVertical)
 {
 	TRACE;
 	Visual.Tag().Add(TypeInfo.Tag);
 	Visual.SetClass("type");
 	Visual.SetClass(StringT() << "type-" << TypeInfo.Tag);
-	PrefixVisual.SetClass("affix-outer");
-	InfixVisual.SetClass("affix-outer");
-	SuffixVisual.SetClass("affix-outer");
+	OperatorVisual.SetClass("operator");
 }
 
 Serial::ReadErrorT CompositeT::Deserialize(Serial::ReadObjectT &Object)
@@ -37,7 +35,6 @@ void CompositeT::Serialize(Serial::WritePolymorphT &Polymorph) const
 
 AtomTypeT const &CompositeT::GetTypeInfo(void) const
 {
-	TRACE;
 	return TypeInfo;
 }
 
@@ -217,20 +214,11 @@ void CompositeT::AssumeFocus(void)
 void CompositeT::Refresh(void)
 {
 	TRACE;
-	if (TypeInfo.DisplayPrefix) 
+
+	if (TypeInfo.Operator)
 	{
-		PrefixVisual.Start();
-		PrefixVisual.Add(*TypeInfo.DisplayPrefix);
-	}
-	if (TypeInfo.DisplayInfix) 
-	{
-		InfixVisual.Start();
-		InfixVisual.Add(*TypeInfo.DisplayInfix);
-	}
-	if (TypeInfo.DisplaySuffix) 
-	{
-		SuffixVisual.Start();
-		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
+		OperatorVisual.Start();
+		OperatorVisual.Add(*TypeInfo.Operator);
 	}
 	
 	Visual.Start();
@@ -239,15 +227,13 @@ void CompositeT::Refresh(void)
  		Visual.SetClass("flag-vertical");
 	else Visual.UnsetClass("flag-vertical");
 	
-	Visual.Add(PrefixVisual);
 	size_t Index = 0;
 	for (auto &Part : Parts)
 	{
-		if (Index == 1) Visual.Add(InfixVisual);
+		if (TypeInfo.Operator && (Index == TypeInfo.OperatorPosition)) Visual.Add(OperatorVisual);
 		Visual.Add(Part->Visual);
 		++Index;
 	}
-	Visual.Add(SuffixVisual);
 }
 
 void CompositeT::FocusPrevious(void)
@@ -292,12 +278,12 @@ bool CompositeT::FocusDefault(void)
 {
 	TRACE;
 	size_t Index = 0;
-	for (auto &PartInfo : TypeInfo.Parts)
+	for (auto &Part : Parts)
 	{
-		if (PartInfo->FocusDefault) 
+		if (dynamic_cast<CompositePartTypeT const *>(&Part->GetTypeInfo())->FocusDefault) 
 		{
 			Focused = PartFocusedT{Index};
-			Parts[Index]->AssumeFocus();
+			Part->AssumeFocus();
 			return true;
 		}
 		++Index;
@@ -305,6 +291,101 @@ bool CompositeT::FocusDefault(void)
 	return false;
 }
 	
+OptionalT<AtomT *> CompositeT::GetOperand(OperatorDirectionT Direction, size_t Offset)
+{
+	size_t Position = 0;
+	bool StartSkipOperator = false;
+	size_t PartIndex = 0;
+	if (Direction == OperatorDirectionT::Right)
+	{
+		StartSkipOperator = true;
+		PartIndex = TypeInfo.OperatorPosition;
+	}
+	for (; PartIndex < Parts.size(); ++PartIndex)
+	{
+		auto &Part = Parts[PartIndex];
+
+		if (StartSkipOperator) StartSkipOperator = false;
+		else if (PartIndex == TypeInfo.OperatorPosition) break;
+
+		if (auto AtomPart = Part->As<AtomPartT>())
+		{
+			if (Position == Offset) return &AtomPart->Data;
+			++Position;
+		}
+		else if (auto AtomListPart = Part->As<AtomListPartT>())
+		{
+			for (auto &Part : AtomListPart->Data)
+			{
+				if (Position == Offset) return &Part->Atom;
+				++Position;
+			}
+		}
+	}
+	return {};
+}
+
+OptionalT<NucleusT *> CompositeT::GetAnyOperand(OperatorDirectionT Direction, size_t Offset)
+{
+	size_t Position = 0;
+	bool StartSkipOperator = false;
+	size_t PartIndex = 0;
+	if (Direction == OperatorDirectionT::Right)
+	{
+		StartSkipOperator = true;
+		PartIndex = TypeInfo.OperatorPosition;
+	}
+	for (; PartIndex < Parts.size(); ++PartIndex)
+	{
+		auto &Part = Parts[PartIndex];
+
+		if (StartSkipOperator) StartSkipOperator = false;
+		else if (PartIndex == TypeInfo.OperatorPosition) break;
+
+		if (auto AtomPart = Part->As<AtomPartT>())
+		{
+			if (Position == Offset) return AtomPart->Data.Nucleus;
+			++Position;
+		}
+		else if (auto AtomListPart = Part->As<AtomListPartT>())
+		{
+			for (auto &Part : AtomListPart->Data)
+			{
+				if (Position == Offset) return Part->Atom.Nucleus;
+				++Position;
+			}
+		}
+		else
+		{
+			if (Position == Offset) return Part.Nucleus;
+			++Position;
+		}
+	}
+	return {};
+}
+
+OptionalT<OperatorDirectionT> CompositeT::GetOperandSide(AtomT *Operand)
+{
+	auto Out = OperatorDirectionT::Left;
+	for (auto PartIndex = 0; PartIndex < Parts.size(); ++PartIndex)
+	{
+		auto &Part = Parts[PartIndex];
+
+		if (PartIndex > TypeInfo.OperatorPosition) Out = OperatorDirectionT::Right;
+
+		if (auto AtomPart = Part->As<AtomPartT>())
+		{
+			if (&AtomPart->Data == Operand) return Out;
+		}
+		else if (auto AtomListPart = Part->As<AtomListPartT>())
+		{
+			for (auto &Part : AtomListPart->Data)
+				if (&Part->Atom == Operand) return Out;
+		}
+	}
+	return {};
+}
+
 Serial::ReadErrorT CompositeTypeT::Deserialize(Serial::ReadObjectT &Object)
 {
 	TRACE;
@@ -312,24 +393,34 @@ Serial::ReadErrorT CompositeTypeT::Deserialize(Serial::ReadObjectT &Object)
 		auto Error = AtomTypeT::Deserialize(Object);
 		if (Error) return Error;
 	}
-	Object.String("DisplayPrefix", [this](std::string &&Value) -> Serial::ReadErrorT 
-		{ DisplayPrefix = std::move(Value); return {}; });
-	Object.String("DisplayInfix", [this](std::string &&Value) -> Serial::ReadErrorT 
-		{ DisplayInfix = std::move(Value); return {}; });
-	Object.String("DisplaySuffix", [this](std::string &&Value) -> Serial::ReadErrorT 
-		{ DisplaySuffix = std::move(Value); return {}; });
 	Object.Array("Parts", [this](Serial::ReadArrayT &Array) -> Serial::ReadErrorT
 	{
 		Array.Polymorph([this](std::string &&Type, Serial::ReadObjectT &Object) -> Serial::ReadErrorT 
 		{
-			CompositeTypePartT *Out = nullptr;
-			if (Type == "Atom") Out = new AtomPartTypeT(*this);
+			CompositePartTypeT *Out = nullptr;
+			if (Type == "Operator") Out = new OperatorPartTypeT(*this);
+			else if (Type == "Atom") Out = new AtomPartTypeT(*this);
 			else if (Type == "AtomList") Out = new AtomListPartTypeT(*this);
 			else if (Type == "String") Out = new StringPartTypeT(*this);
 			else if (Type == "Enum") Out = new EnumPartTypeT(*this);
 			else return (::StringT() << "Unknown part type \"" << Type << "\"").str();
-			Parts.push_back(std::unique_ptr<CompositeTypePartT>(Out));
+			Parts.push_back(std::unique_ptr<CompositePartTypeT>(Out));
 			return Out->Deserialize(Object);
+		});
+		Array.Finally([this](void) -> Serial::ReadErrorT
+		{
+			size_t Position = 0;
+			for (auto &Part : Parts) 
+			{
+				if (auto OperatorType = dynamic_cast<OperatorPartTypeT *>(Part.get()))
+				{
+					OperatorPosition = Position;
+					Operator = OperatorType->Pattern;
+					return {};
+				}
+				++Position;
+			}
+			return {};
 		});
 		return {};
 	});
@@ -340,18 +431,20 @@ void CompositeTypeT::Serialize(Serial::WriteObjectT &Object) const
 {
 	TRACE;
 	AtomTypeT::Serialize(Object);
-	if (DisplayPrefix) Object.String("DisplayPrefix", *DisplayPrefix);
-	if (DisplayInfix) Object.String("DisplayInfix", *DisplayInfix);
-	if (DisplaySuffix) Object.String("DisplaySuffix", *DisplaySuffix);
 	auto Array = Object.Array("Parts");
 	for (auto &Part : Parts) Part->Serialize(Array.Polymorph());
 }
 
 NucleusT *CompositeTypeT::Generate(CoreT &Core) { TRACE; return GenerateComposite<CompositeT>(*this, Core); }
 
-CompositeTypePartT::CompositeTypePartT(CompositeTypeT &Parent) : Parent(Parent) { TRACE; }
+bool CompositeTypeT::IsAssociative(OperatorDirectionT Direction) const
+{
+	return LeftAssociative == (Direction == OperatorDirectionT::Left);
+}
+	
+CompositePartTypeT::CompositePartTypeT(CompositeTypeT &Parent) : Parent(Parent) { TRACE; }
 
-Serial::ReadErrorT CompositeTypePartT::Deserialize(Serial::ReadObjectT &Object)
+Serial::ReadErrorT CompositePartTypeT::Deserialize(Serial::ReadObjectT &Object)
 {
 	TRACE;
 	Object.String("Tag", [this](std::string &&Value) -> Serial::ReadErrorT 
@@ -360,27 +453,49 @@ Serial::ReadErrorT CompositeTypePartT::Deserialize(Serial::ReadObjectT &Object)
 		{ SpatiallyVertical = Value; return {}; });
 	Object.Bool("FocusDefault", [this](bool Value) -> Serial::ReadErrorT 
 		{ FocusDefault = Value; return {}; });
-	Object.String("DisplayPrefix", [this](std::string &&Value) -> Serial::ReadErrorT 
-		{ DisplayPrefix = std::move(Value); return {}; });
-	Object.String("DisplaySuffix", [this](std::string &&Value) -> Serial::ReadErrorT 
-		{ DisplaySuffix = std::move(Value); return {}; });
 	return {};
 }
 
-void CompositeTypePartT::Serialize(Serial::WriteObjectT &Object) const
+void CompositePartTypeT::Serialize(Serial::WriteObjectT &Object) const
 {
 	TRACE;
 	Object.String("Tag", Tag);
 	Object.Bool("SpatiallyVertical", SpatiallyVertical);
 	Object.Bool("FocusDefault", FocusDefault);
-	if (DisplayPrefix) Object.String("DisplayPrefix", *DisplayPrefix);
-	if (DisplaySuffix) Object.String("DisplaySuffix", *DisplaySuffix);
 }
+	
+Serial::ReadErrorT OperatorPartTypeT::Deserialize(Serial::ReadObjectT &Object)
+{
+	TRACE;
+	Object.String("Pattern", [this](std::string &&Value) -> Serial::ReadErrorT 
+	{ 
+		Pattern = std::move(Value); 
+		return {}; 
+	});
+	return {};
+}
+
+void OperatorPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
+{
+	TRACE;
+	Serial::WritePolymorphT Polymorph("Atom", std::move(Prepolymorph));
+	Serialize(Polymorph);
+}
+
+void OperatorPartTypeT::Serialize(Serial::WriteObjectT &Object) const 
+{
+	TRACE;
+	AtomTypeT::Serialize(Object);
+	Object.String("Pattern", Pattern);
+}
+
+NucleusT *OperatorPartTypeT::Generate(CoreT &Core)
+	{ Assert(false); return nullptr; }
 
 Serial::ReadErrorT AtomPartTypeT::Deserialize(Serial::ReadObjectT &Object) 
 {
 	TRACE;
-	auto Error = CompositeTypePartT::Deserialize(Object);
+	auto Error = CompositePartTypeT::Deserialize(Object);
 	if (Error) return Error;
 	Object.Bool("StartEmpty", [this](bool Value) -> Serial::ReadErrorT { StartEmpty = true; return {}; });
 	return {};
@@ -406,13 +521,11 @@ NucleusT *AtomPartTypeT::Generate(CoreT &Core)
 	return new AtomPartT(Core, *this);
 }
 
-AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Data(Core)
+AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), Data(Core)
 {
 	TRACE;
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
-	PrefixVisual.SetClass("affix-inner");
-	SuffixVisual.SetClass("affix-inner");
 	Data.Parent = this;
 	Data.Callback = [this, &Core](NucleusT *Nucleus) 
 	{ 
@@ -486,24 +599,14 @@ void AtomPartT::Refresh(void)
 	
 	if (!Data) return;
 	
-	if (TypeInfo.DisplayPrefix) 
-	{
-		PrefixVisual.Start();
-		PrefixVisual.Add(*TypeInfo.DisplayPrefix);
-	}
-	if (TypeInfo.DisplaySuffix) 
-	{
-		SuffixVisual.Start();
-		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
-	}
+	if (!IsPrecedent(Data, Data.Nucleus)) Visual.SetClass("flag-antiprecedent");
+	else Visual.UnsetClass("flag-antiprecedent");
 	
 	{
 		auto Protoatom = Data->As<SoloProtoatomT>();
 		if (Protoatom && Protoatom->IsEmpty() && !Protoatom->IsFocused()) return;
 	}
-	Visual.Add(PrefixVisual);
 	Visual.Add(Data->Visual);
-	Visual.Add(SuffixVisual);
 }
 
 void AtomPartT::FocusPrevious(void) { TRACE; Parent->FocusPrevious(); }
@@ -707,20 +810,8 @@ void AtomListPartT::Refresh(void)
 	Visual.Start();
 	for (auto &Atom : Data)
 	{
-		if (TypeInfo.DisplayPrefix) 
-		{
-			Atom->PrefixVisual.Start();
-			Atom->PrefixVisual.Add(*TypeInfo.DisplayPrefix);
-		}
-		if (TypeInfo.DisplaySuffix) 
-		{
-			Atom->SuffixVisual.Start();
-			Atom->SuffixVisual.Add(*TypeInfo.DisplaySuffix);
-		}
 		Atom->Visual.Start();
-		Atom->Visual.Add(Atom->PrefixVisual);
 		Atom->Visual.Add(Atom->Atom->Visual);
-		Atom->Visual.Add(Atom->SuffixVisual);
 		Visual.Add(Atom->Visual);
 	}
 	if (EffectivelyVertical)
@@ -732,9 +823,7 @@ void AtomListPartT::Add(size_t Position, NucleusT *Nucleus, bool ShouldFocus)
 {
 	TRACE;
 	Core.AddUndoReaction(make_unique<AddRemoveT>(*this, false, Position, nullptr));
-	Data.emplace(Data.begin() + Position, new ItemT{{Core.RootVisual.Root}, {Core.RootVisual.Root}, {Core.RootVisual.Root}, {Core}});
-	Data[Position]->PrefixVisual.SetClass("affix-inner");
-	Data[Position]->SuffixVisual.SetClass("affix-inner");
+	Data.emplace(Data.begin() + Position, new ItemT{{Core.RootVisual.Root}, {Core}});
 	Data[Position]->Atom.Parent = this;
 	Data[Position]->Atom.Callback = [this](NucleusT *Nucleus)
 	{
@@ -806,13 +895,11 @@ NucleusT *StringPartTypeT::Generate(CoreT &Core)
 	return new StringPartT(Core, *this);
 }
 
-StringPartT::StringPartT(CoreT &Core, StringPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Focused(FocusedT::Off), Position(0)
+StringPartT::StringPartT(CoreT &Core, StringPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), Focused(FocusedT::Off), Position(0)
 {
 	TRACE;
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
-	PrefixVisual.SetClass("affix-inner");
-	SuffixVisual.SetClass("affix-inner");
 }
 
 Serial::ReadErrorT StringPartT::Deserialize(Serial::ReadObjectT &Object)
@@ -1021,19 +1108,7 @@ void StringPartT::AssumeFocus(void)
 void StringPartT::Refresh(void) 
 {
 	TRACE;
-	if (TypeInfo.DisplayPrefix) 
-	{
-		PrefixVisual.Start();
-		PrefixVisual.Add(*TypeInfo.DisplayPrefix);
-	}
-	if (TypeInfo.DisplaySuffix) 
-	{
-		SuffixVisual.Start();
-		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
-	}
-	
 	Visual.Start();
-	Visual.Add(PrefixVisual);
 	if (Focused == FocusedT::Text)
 	{
 		Visual.Add(Data.substr(0, Position));
@@ -1041,7 +1116,6 @@ void StringPartT::Refresh(void)
 		Visual.Add(Data.substr(Position));
 	}
 	else Visual.Add(Data);
-	Visual.Add(SuffixVisual);
 }
 
 void StringPartT::Set(size_t Position, std::string const &Data)
@@ -1081,7 +1155,7 @@ void StringPartT::Set(size_t Position, std::string const &Data)
 Serial::ReadErrorT EnumPartTypeT::Deserialize(Serial::ReadObjectT &Object) 
 {
 	TRACE;
-	CompositeTypePartT::Deserialize(Object);
+	CompositePartTypeT::Deserialize(Object);
 	Object.Array("Values", [this](Serial::ReadArrayT &Array) -> Serial::ReadErrorT
 	{
 		Array.String([this](std::string &&Value) -> Serial::ReadErrorT 
@@ -1116,13 +1190,11 @@ NucleusT *EnumPartTypeT::Generate(CoreT &Core)
 	return new EnumPartT(Core, *this);
 }
 
-EnumPartT::EnumPartT(CoreT &Core, EnumPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), PrefixVisual(Core.RootVisual.Root), SuffixVisual(Core.RootVisual.Root), Index(0) 
+EnumPartT::EnumPartT(CoreT &Core, EnumPartTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), Index(0) 
 {
 	TRACE;
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
-	PrefixVisual.SetClass("affix-inner");
-	SuffixVisual.SetClass("affix-inner");
 }
 
 Serial::ReadErrorT EnumPartT::Deserialize(Serial::ReadObjectT &Object)
@@ -1215,19 +1287,8 @@ void EnumPartT::AssumeFocus(void)
 void EnumPartT::Refresh(void)
 {
 	TRACE; 
-	if (TypeInfo.DisplayPrefix) 
-	{
-		PrefixVisual.Start();
-		PrefixVisual.Add(*TypeInfo.DisplayPrefix);
-	}
-	if (TypeInfo.DisplaySuffix) 
-	{
-		SuffixVisual.Start();
-		SuffixVisual.Add(*TypeInfo.DisplaySuffix);
-	}
 	
 	Visual.Start();
-	Visual.Add(PrefixVisual);
 	if (Index >= TypeInfo.Values.size())
 	{
 		Assert(false);
@@ -1237,7 +1298,6 @@ void EnumPartT::Refresh(void)
 	{
 		Visual.Add(TypeInfo.Values[Index]);
 	}
-	Visual.Add(SuffixVisual);
 }
 	
 void CheckStringType(AtomTypeT *Type)
@@ -1245,8 +1305,9 @@ void CheckStringType(AtomTypeT *Type)
 	auto Composite = dynamic_cast<CompositeTypeT *>(Type);
 	Assert(Composite);
 	if (!(
-		(Composite->Parts.size() == 1) &&
-		(dynamic_cast<StringPartTypeT *>(Composite->Parts[0].get()))
+		(Composite->Parts.size() == 2) &&
+		(dynamic_cast<OperatorPartTypeT *>(Composite->Parts[0].get())) &&
+		(dynamic_cast<StringPartTypeT *>(Composite->Parts[1].get()))
 	)) throw ConstructionErrorT() << "String has unusable definition.";
 }
 
@@ -1260,9 +1321,10 @@ void CheckElementType(AtomTypeT *Type)
 	auto Composite = dynamic_cast<CompositeTypeT *>(Type);
 	Assert(Composite);
 	if (!(
-		(Composite->Parts.size() == 2) &&
+		(Composite->Parts.size() == 3) &&
 		(dynamic_cast<AtomPartTypeT *>(Composite->Parts[0].get())) &&
-		(dynamic_cast<AtomPartTypeT *>(Composite->Parts[1].get()))
+		(dynamic_cast<OperatorPartTypeT *>(Composite->Parts[1].get())) &&
+		(dynamic_cast<AtomPartTypeT *>(Composite->Parts[2].get()))
 	)) throw ConstructionErrorT() << "Element has unusable definition.";
 }
 
@@ -1274,6 +1336,23 @@ AtomPartT *GetElementLeftPart(NucleusT *Nucleus)
 AtomPartT *GetElementRightPart(NucleusT *Nucleus)
 {
 	return *Nucleus->As<CompositeT>()->Parts[1]->As<AtomPartT>();
+}
+
+bool IsPrecedent(AtomT &ParentAtom, NucleusT *Child)
+{
+	std::cout << "Precedent of " << ParentAtom->PartParent()->GetTypeInfo().Tag << " vs " << Child->GetTypeInfo().Tag << std::endl;
+	// Answers "If ChildType were in ParentAtom, would it be precedent compared to Parent containing ParentAtom?"
+	auto Parent = *ParentAtom->PartParent()->As<CompositeT>();
+	auto ParentSide = Parent->GetOperandSide(&ParentAtom);
+	Assert(ParentSide);
+	bool AreFacing = Child->As<CompositeT>()->GetOperand(
+		*ParentSide == OperatorDirectionT::Left ? 
+			OperatorDirectionT::Right : OperatorDirectionT::Left,
+		0);
+	if (!AreFacing) return true;
+	if (Child->GetTypeInfo().Precedence > Parent->GetTypeInfo().Precedence) return true;
+	if (Child->GetTypeInfo().Precedence < Parent->GetTypeInfo().Precedence) return false;
+	return Parent->TypeInfo.IsAssociative(*ParentSide);
 }
 
 }
