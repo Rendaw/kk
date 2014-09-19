@@ -47,6 +47,22 @@ void CompositeT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direc
 	FlagStatusChange();
 	Visual.SetClass("flag-focused");
 }
+
+void CompositeT::AlignFocus(NucleusT *Child)
+{
+	NucleusT::AlignFocus(Child);
+	size_t Index = 0;
+	for (auto &Part : Parts)
+	{
+		if (Part->Nucleus == Child)
+		{
+			Focused = PartFocusedT{Index};
+			return;
+		}
+		++Index;
+	}
+	Assert(false);
+}
 	
 void CompositeT::RegisterActions(void)
 {
@@ -668,6 +684,22 @@ void AtomListPartT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Di
 	Data[FocusIndex]->Atom->Focus(Level, Direction);
 }
 	
+void AtomListPartT::AlignFocus(NucleusT *Child)
+{
+	NucleusT::AlignFocus(Child);
+	size_t Index = 0;
+	for (auto &Atom : Data)
+	{
+		if (Atom->Atom.Nucleus == Child)
+		{
+			FocusIndex = Index;
+			return;
+		}
+		++Index;
+	}
+	Assert(false);
+}
+	
 void AtomListPartT::RegisterActions(void)
 {
 	TRACE;
@@ -1227,7 +1259,7 @@ void EnumPartT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direct
 	NucleusT::Focus(Level, Direction);
 	Visual.SetClass("flag-focused");
 }
-
+	
 void EnumPartT::RegisterActions(void)
 {
 	TRACE;

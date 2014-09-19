@@ -234,6 +234,7 @@ void AtomT::Set(std::unique_ptr<UndoLevelT> &Level, NucleusT *Replacement)
 	{
 		//std::cout << "Relocating atom " << Replacement << std::endl;
 		if (Replacement->Atom->Callback) Replacement->Atom->Callback(nullptr);
+		Level->Add(make_unique<SetT>(*Replacement->Atom, Replacement));
 		Replacement->Atom->Clear();
 	}
 	Assert(!Replacement->Atom);
@@ -355,7 +356,13 @@ AtomTypeT const &NucleusT::GetTypeInfo(void) const
 void NucleusT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) 
 {
 	TRACE;
+	if (Parent) Parent->AlignFocus(this);
 	Core.Focus(Level, this);
+}
+	
+void NucleusT::AlignFocus(NucleusT *Child)
+{
+	if (Parent) Parent->AlignFocus(this);
 }
 
 void NucleusT::Defocus(std::unique_ptr<UndoLevelT> &Level) {}

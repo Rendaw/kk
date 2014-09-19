@@ -32,6 +32,7 @@ struct CompositeT : NucleusT
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
+	void AlignFocus(NucleusT *Child) override;
 	void RegisterActions(void) override;
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
@@ -164,6 +165,7 @@ struct AtomListPartT : NucleusT
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
+	void AlignFocus(NucleusT *Child) override;
 	void RegisterActions(void) override;
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;

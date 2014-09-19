@@ -228,6 +228,7 @@ struct NucleusT
 	virtual void Serialize(Serial::WritePolymorphT &Polymorph) const;
 	virtual AtomTypeT const &GetTypeInfo(void) const;
 	virtual void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction);
+	virtual void AlignFocus(NucleusT *Child);
 	virtual void RegisterActions(void) = 0;
 	virtual void Defocus(std::unique_ptr<UndoLevelT> &Level);
 	virtual void AssumeFocus(std::unique_ptr<UndoLevelT> &Level); // If bool is false, optional must not be set
