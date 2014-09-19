@@ -25,22 +25,22 @@ struct CompositeT : NucleusT
 	
 	bool EffectivelyVertical;
 
-	std::vector<AtomT> Parts;
+	std::vector<std::unique_ptr<AtomT>> Parts;
 
 	CompositeT(CoreT &Core, CompositeTypeT &TypeInfo);
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
-	void Focus(FocusDirectionT Direction) override;
+	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
 	void RegisterActions(void) override;
-	void Defocus(void) override;
-	void AssumeFocus(void) override;
+	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
+	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void Refresh(void) override;
-	void FocusPrevious(void) override;
-	void FocusNext(void) override;
+	void FocusPrevious(std::unique_ptr<UndoLevelT> &Level) override;
+	void FocusNext(std::unique_ptr<UndoLevelT> &Level) override;
 	bool IsFocused(void) const override;
 	
-	bool FocusDefault(void);
+	bool FocusDefault(std::unique_ptr<UndoLevelT> &Level);
 
 	OptionalT<AtomT *> GetOperand(OperatorDirectionT Direction, size_t Offset);
 	OptionalT<NucleusT *> GetAnyOperand(OperatorDirectionT Direction, size_t Offset);
@@ -85,15 +85,23 @@ struct OperatorPartTypeT : CompositePartTypeT
 
 template <typename CompositeDerivateT> NucleusT *GenerateComposite(CompositeTypeT &Type, CoreT &Core)
 {
+	auto DiscardUndoLevel = make_unique<UndoLevelT>();
 	auto Out = new CompositeDerivateT(Core, Type);
 	for (auto &Part : Type.Parts) 
 	{
 		if (dynamic_cast<OperatorPartTypeT *>(Part.get())) continue;
-		Out->Parts.emplace_back(Core);
-		Out->Parts.back().Parent = Out;
-		Out->Parts.back().Set(Part->Generate(Core));
-		Out->Parts.back().Callback = [](NucleusT *) { Assert(false); }; // Parts can't be replaced
-		Out->Parts.back()->WatchStatus((uintptr_t)Out, [](NucleusT *Nucleus) { Nucleus->Parent->FlagStatusChange(); });
+		Out->Parts.push_back(make_unique<AtomT>(Core));
+		Out->Parts.back()->Parent = Out;
+		Out->Parts.back()->Set(DiscardUndoLevel, Part->Generate(Core));
+		auto &CapturePart = *Out->Parts.back().get();
+		Out->Parts.back()->Callback = [&CapturePart, Out, &Core](NucleusT *Replacement) 
+		{ 
+			// Parts can't be replaced, except during undo or redo
+			Assert(Core.UndoingOrRedoing);
+			if (CapturePart) CapturePart->IgnoreStatus((uintptr_t)Out);
+			if (Replacement) Replacement->WatchStatus((uintptr_t)Out, [](NucleusT *Nucleus) { Nucleus->Parent->FlagStatusChange(); });
+		}; 
+		(*Out->Parts.back())->WatchStatus((uintptr_t)Out, [](NucleusT *Nucleus) { Nucleus->Parent->FlagStatusChange(); });
 	}
 	return Out;
 }
@@ -120,13 +128,13 @@ struct AtomPartT : NucleusT
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
-	void Focus(FocusDirectionT Direction) override;
+	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
 	void RegisterActions(void) override;
-	void Defocus(void) override;
-	void AssumeFocus(void) override;
+	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
+	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void Refresh(void) override;
-	void FocusPrevious(void) override;
-	void FocusNext(void) override;
+	void FocusPrevious(std::unique_ptr<UndoLevelT> &Level) override;
+	void FocusNext(std::unique_ptr<UndoLevelT> &Level) override;
 };
 
 struct AtomListPartTypeT : CompositePartTypeT
@@ -155,23 +163,23 @@ struct AtomListPartT : NucleusT
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
-	void Focus(FocusDirectionT Direction) override;
+	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
 	void RegisterActions(void) override;
-	void Defocus(void) override;
-	void AssumeFocus(void) override;
+	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
+	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void Refresh(void) override;
-	void Add(size_t Position, NucleusT *Nucleus, bool ShouldFocus = false);
-	void Remove(size_t Position);
+	void Add(std::unique_ptr<UndoLevelT> &Level, size_t Position, NucleusT *Nucleus, bool ShouldFocus = false);
+	void Remove(std::unique_ptr<UndoLevelT> &Level, size_t Position);
 
-	void FocusPrevious(void) override;
-	void FocusNext(void) override;
+	void FocusPrevious(std::unique_ptr<UndoLevelT> &Level) override;
+	void FocusNext(std::unique_ptr<UndoLevelT> &Level) override;
 
 	private:
 		struct AddRemoveT : ReactionT
 		{
 			AddRemoveT(AtomListPartT &Base, bool Add, size_t Position, NucleusT *Nucleus);
 
-			void Apply(void);
+			void Apply(std::unique_ptr<UndoLevelT> &Level);
 
 			AtomListPartT &Base;
 			bool Add;
@@ -203,13 +211,13 @@ struct StringPartT : NucleusT
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
-	void Focus(FocusDirectionT Direction) override;
+	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
 	void RegisterActions(void) override;
-	void Defocus(void) override;
-	void AssumeFocus(void) override;
+	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
+	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void Refresh(void) override;
 	
-	void Set(size_t Position, std::string const &Text);
+	void Set(std::unique_ptr<UndoLevelT> &Level, size_t Position, std::string const &Text);
 };
 
 struct EnumPartTypeT : CompositePartTypeT
@@ -233,10 +241,10 @@ struct EnumPartT : NucleusT
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
-	void Focus(FocusDirectionT Direction) override;
+	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
 	void RegisterActions(void) override;
-	void Defocus(void) override;
-	void AssumeFocus(void) override;
+	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
+	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void Refresh(void) override;
 };
 

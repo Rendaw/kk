@@ -108,10 +108,11 @@ struct VisualT
 		std::unique_ptr<VisualT> TagVisual;
 };
 
+struct UndoLevelT;
 struct ReactionT
 {
 	virtual ~ReactionT(void);
-	virtual void Apply(void) = 0;
+	virtual void Apply(std::unique_ptr<UndoLevelT> &Level) = 0;
 	virtual bool Combine(std::unique_ptr<ReactionT> &Other);
 };
 
@@ -132,11 +133,14 @@ struct ActionT
 
 	ActionT(std::string const &Name);
 	virtual ~ActionT(void);
+	virtual void Apply(std::unique_ptr<UndoLevelT> &Level) = 0;
+};
 
-	friend struct CoreT;
-	protected:
-		// Core use only
-		virtual void Apply(void) = 0;
+struct FunctionActionT : ActionT
+{
+	std::function<void(std::unique_ptr<UndoLevelT> &Level)> Function;
+	FunctionActionT(std::string const &Name, std::function<void(std::unique_ptr<UndoLevelT> &Level)> const &Function);
+	void Apply(std::unique_ptr<UndoLevelT> &Level) override;
 };
 
 struct NucleusT;
@@ -162,8 +166,6 @@ struct HoldT
 
 struct AtomT
 {
-	AtomT(AtomT &&Other);
-	AtomT &operator =(AtomT &&Other);
 	AtomT(AtomT const &Other) = delete;
 	AtomT(CoreT &Core);
 	~AtomT(void);
@@ -171,7 +173,7 @@ struct AtomT
 	NucleusT const *operator ->(void) const;
 	operator bool(void) const;
 
-	void Set(NucleusT *Nucleus);
+	void Set(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus);
 	
 	typedef std::function<void(NucleusT *Nucleus)> AtomCallbackT;
 	CoreT &Core;
@@ -180,7 +182,6 @@ struct AtomT
 	NucleusT *Nucleus;
 
 	private:
-		void SetInternal(NucleusT *Nucleus);
 		void Clear(void);
 };
 
@@ -226,14 +227,14 @@ struct NucleusT
 	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const;
 	virtual void Serialize(Serial::WritePolymorphT &Polymorph) const;
 	virtual AtomTypeT const &GetTypeInfo(void) const;
-	virtual void Focus(FocusDirectionT Direction);
+	virtual void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction);
 	virtual void RegisterActions(void) = 0;
-	virtual void Defocus(void);
-	virtual void AssumeFocus(void); // If bool is false, optional must not be set
+	virtual void Defocus(std::unique_ptr<UndoLevelT> &Level);
+	virtual void AssumeFocus(std::unique_ptr<UndoLevelT> &Level); // If bool is false, optional must not be set
 	virtual void Refresh(void);
 
-	virtual void FocusPrevious(void);
-	virtual void FocusNext(void);
+	virtual void FocusPrevious(std::unique_ptr<UndoLevelT> &Level);
+	virtual void FocusNext(std::unique_ptr<UndoLevelT> &Level);
 	
 	virtual bool IsFocused(void) const;
 		
@@ -271,12 +272,22 @@ struct FocusT : ReactionT
 
 	friend struct CoreT;
 	protected:
-		void Apply(void);
+		void Apply(std::unique_ptr<UndoLevelT> &Level);
 
 	private:
 		CoreT &Core;
 		HoldT Target;
 		bool DoNothing;
+};
+
+struct UndoLevelT
+{
+	std::list<std::unique_ptr<ReactionT>> Reactions;
+
+	void Add(std::unique_ptr<ReactionT> Reaction);
+	void ApplyUndo(std::unique_ptr<UndoLevelT> &Level);
+	void ApplyRedo(std::unique_ptr<UndoLevelT> &Level);
+	bool Combine(std::unique_ptr<UndoLevelT> &Other);
 };
 
 struct CoreT
@@ -296,6 +307,9 @@ struct CoreT
 
 	VisualT CursorVisual;
 
+	bool UndoingOrRedoing; // Debugging aide
+
+	// External interface
 	std::list<std::shared_ptr<ActionT>> Actions;
 	std::function<void(void)> ResetActionsCallback;
 	std::function<void(std::shared_ptr<ActionT> Action)> RegisterActionCallback;
@@ -304,21 +318,21 @@ struct CoreT
 	~CoreT(void);
 	void Serialize(Filesystem::PathT const &Path);
 	void Deserialize(Filesystem::PathT const &Path);
-	Serial::ReadErrorT Deserialize(AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
+	
 	void HandleInput(std::shared_ptr<ActionT> Action);
-	OptionalT<AtomTypeT *> LookUpAtomType(std::string const &Text);
 	
 	bool HasChanges(void);
-	void Undo(void);
-	void Redo(void);
-
+	
 	void Focus(NucleusT *Nucleus);
+
+	// Self + atom use
+	Serial::ReadErrorT Deserialize(std::unique_ptr<UndoLevelT> &Level, AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
+	OptionalT<AtomTypeT *> LookUpAtomType(std::string const &Text);
+
+	void Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus);
 	void Refresh(void);
 
-	// Used by atoms (internal)
-	void AddUndoReaction(std::unique_ptr<ReactionT> Reaction);
-
-	void AssumeFocus(void);
+	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level);
 
 	void ResetActions(void);
 	void RegisterAction(std::shared_ptr<ActionT> Action);
@@ -326,18 +340,7 @@ struct CoreT
 	std::string Dump(void) const;
 
 	private:
-		struct UndoLevelT
-		{
-			std::list<std::unique_ptr<ReactionT>> Reactions;
-
-			void Add(std::unique_ptr<ReactionT> Reaction);
-			void ApplyUndo(void);
-			void ApplyRedo(void);
-			bool Combine(std::unique_ptr<UndoLevelT> &Other);
-		};
-
 		std::list<std::unique_ptr<UndoLevelT>> UndoQueue, RedoQueue;
-		std::unique_ptr<UndoLevelT> NewUndoLevel;
 };
 
 }

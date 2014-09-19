@@ -28,6 +28,8 @@ struct WebViewT : QWebView
 	CoreT *Core = nullptr;
 
 	std::map<std::string, std::list<std::string>> ActionKeys{
+		{"Undo", {"u", "Ctrl+z"}},
+		{"Redo", {"Shift+U", "Ctrl+Shift+z", "Ctrl+y", "Ctrl+r"}},
 		{"Enter", {"Return"}},
 		{"Exit", {"Escape"}},
 		{"Up", {"k", "Up"}},
@@ -134,7 +136,7 @@ struct WebViewT : QWebView
 		NucleusT *Found = reinterpret_cast<NucleusT *>(Result.toLongLong(&Converted));
 		if (!Converted) return;
 		Core->TextMode = false;
-		Found->Focus(FocusDirectionT::Direct);
+		Core->Focus(Found);
 		Core->Refresh();
 	}
 };

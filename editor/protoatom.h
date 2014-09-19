@@ -12,8 +12,8 @@ struct ProtoatomPartT : NucleusT
 	std::string Data;
 
 	using NucleusT::NucleusT;
-	virtual void HandleText(std::string const &Text) = 0;
-	virtual OptionalT<NucleusT *> Finish(OptionalT<AtomTypeT *> Type, std::string Text) = 0;
+	virtual void HandleText(std::unique_ptr<UndoLevelT> &Level, std::string const &Text) = 0;
+	virtual OptionalT<NucleusT *> Finish(std::unique_ptr<UndoLevelT> &Level, OptionalT<AtomTypeT *> Type, std::string Text) = 0;
 };
 
 struct ProtoatomT : CompositeT
@@ -33,7 +33,7 @@ struct WedgeProtoatomT : ProtoatomT
 {
 	using ProtoatomT::ProtoatomT;
 	ProtoatomPartT *GetProtoatomPart(void);
-	void SetLifted(NucleusT *Lifted);
+	void SetLifted(NucleusT *Lifted); // Construction only
 	AtomPartT *GetLiftedPart(void);
 };
 

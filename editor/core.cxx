@@ -181,22 +181,10 @@ ActionT::ActionT(std::string const &Name) : Name(Name) {}
 ActionT::ArgumentT::~ArgumentT(void) {}
 
 ActionT::~ActionT(void) {}
-
-AtomT::AtomT(AtomT &&Other) : Core(Other.Core), Callback(Other.Callback), Parent(Other.Parent), Nucleus(Other.Nucleus)
-{
-	if (Nucleus) Nucleus->Atom = this;
-	Other.Nucleus = nullptr;
-}
 	
-AtomT &AtomT::operator =(AtomT &&Other)
-{
-	AssertE(&Core, &Other.Core);
-	Callback = Other.Callback;
-	Parent = Other.Parent;
-	Nucleus = Other.Nucleus;
-	Other.Nucleus = nullptr;
-	return *this;
-}
+FunctionActionT::FunctionActionT(std::string const &Name, std::function<void(std::unique_ptr<UndoLevelT> &Level)> const &Function) : ActionT(Name), Function(Function) {}
+
+void FunctionActionT::Apply(std::unique_ptr<UndoLevelT> &Level) { Function(Level); }
 
 AtomT::AtomT(CoreT &Core) : Core(Core), Parent(nullptr), Nucleus(nullptr) {}
 
@@ -217,7 +205,7 @@ NucleusT const *AtomT::operator ->(void) const
 
 AtomT::operator bool(void) const { return Nucleus; }
 
-void AtomT::Set(NucleusT *Replacement)
+void AtomT::Set(std::unique_ptr<UndoLevelT> &Level, NucleusT *Replacement)
 {
 	TRACE;
 
@@ -228,13 +216,17 @@ void AtomT::Set(NucleusT *Replacement)
 
 		SetT(AtomT &Base, NucleusT *Replacement) : Base(Base), Replacement(Base.Core, Replacement) { }
 		
-		void Apply(void) { Base.Set(Replacement.Nucleus); }
+		void Apply(std::unique_ptr<UndoLevelT> &Level) { Base.Set(Level, Replacement.Nucleus); }
 	};
-	Core.AddUndoReaction(make_unique<SetT>(*this, Nucleus));
+	Level->Add(make_unique<SetT>(*this, Nucleus));
 	if (Callback) Callback(Replacement);
 	Clear();
-	Assert(Replacement);
-	if (!Replacement) return;
+	Assert(Core.UndoingOrRedoing || Replacement);
+	if (!Replacement) 
+	{
+		//std::cout << "Set result: " << Core.Dump() << std::endl;
+		return;
+	}
 	Nucleus = Replacement;
 	//std::cout << "Set " << this << " to " << Replacement << std::endl;
 	Replacement->Count += 1;
@@ -259,7 +251,7 @@ void AtomT::Clear(void)
 	Nucleus->Count -= 1;
 	if (Nucleus->Count == 0) Core.DeletionCandidates.insert(Nucleus);
 	Nucleus = nullptr;
-	std::cout << "Cleared " << this << std::endl;
+	//std::cout << "Cleared " << this << std::endl;
 }
 	
 HoldT::HoldT(CoreT &Core) : Core(Core), Nucleus(nullptr) {}
@@ -360,21 +352,21 @@ AtomTypeT const &NucleusT::GetTypeInfo(void) const
 	return Type;
 }
 
-void NucleusT::Focus(FocusDirectionT Direction) 
+void NucleusT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) 
 {
 	TRACE;
-	Core.Focus(this);
+	Core.Focus(Level, this);
 }
 
-void NucleusT::Defocus(void) {}
+void NucleusT::Defocus(std::unique_ptr<UndoLevelT> &Level) {}
 		
-void NucleusT::AssumeFocus(void) { }
+void NucleusT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level) { }
 
 void NucleusT::Refresh(void) { Assert(false); }
 
-void NucleusT::FocusPrevious(void) { TRACE; }
+void NucleusT::FocusPrevious(std::unique_ptr<UndoLevelT> &Level) { TRACE; }
 
-void NucleusT::FocusNext(void) { TRACE; }
+void NucleusT::FocusNext(std::unique_ptr<UndoLevelT> &Level) { TRACE; }
 	
 bool NucleusT::IsFocused(void) const { return Core.Focused.Nucleus == this; }
 
@@ -429,10 +421,42 @@ FocusT::FocusT(CoreT &Core, NucleusT *Nucleus, bool DoNothing) : Core(Core), Tar
 {
 }
 
-void FocusT::Apply(void)
+void FocusT::Apply(std::unique_ptr<UndoLevelT> &Level)
 {
-	Core.AddUndoReaction(make_unique<FocusT>(Core, Target.Nucleus, !DoNothing));
-	Target->Focus(FocusDirectionT::Direct);
+	Level->Add(make_unique<FocusT>(Core, Target.Nucleus, !DoNothing));
+	Target->Focus(Level, FocusDirectionT::Direct);
+}
+
+void UndoLevelT::Add(std::unique_ptr<ReactionT> Reaction)
+{
+	if (!Reactions.empty() && Reactions.back()->Combine(Reaction)) return;
+	Reactions.push_back(std::move(Reaction));
+}
+
+void UndoLevelT::ApplyUndo(std::unique_ptr<UndoLevelT> &Level)
+{
+	for (auto Reaction = Reactions.rbegin(); Reaction != Reactions.rend(); ++Reaction)
+		(*Reaction)->Apply(Level);
+	/*for (auto &Reaction : Reactions)
+		Reaction->Apply(Level);*/
+}
+
+void UndoLevelT::ApplyRedo(std::unique_ptr<UndoLevelT> &Level)
+{
+	for (auto Reaction = Reactions.rbegin(); Reaction != Reactions.rend(); ++Reaction)
+		(*Reaction)->Apply(Level);
+}
+
+bool UndoLevelT::Combine(std::unique_ptr<UndoLevelT> &Other)
+{
+	auto OtherGroup = dynamic_cast<UndoLevelT *>(Other.get());
+	if (!OtherGroup) return false;
+	return 
+	(
+		(Reactions.size() == 1) && 
+		(OtherGroup->Reactions.size() == 1) && 
+		Reactions.front()->Combine(OtherGroup->Reactions.front())
+	);
 }
 
 CoreT::CoreT(VisualT &RootVisual) : 
@@ -445,7 +469,8 @@ CoreT::CoreT(VisualT &RootVisual) :
 	AppendProtoatomType(nullptr), 
 	ElementType(nullptr), 
 	StringType(nullptr), 
-	CursorVisual(RootVisual.Root)
+	CursorVisual(RootVisual.Root),
+	UndoingOrRedoing(false)
 {
 	CursorVisual.SetClass("type-cursor");
 	CursorVisual.Add("|");
@@ -544,16 +569,16 @@ void CoreT::Deserialize(Filesystem::PathT const &Path)
 {
 	UndoQueue.clear();
 	RedoQueue.clear();
-	NewUndoLevel.reset(new UndoLevelT());
+	auto UndoLevel = make_unique<UndoLevelT>();
 	AtomT NewRoot(*this);
 	{
 		Serial::ReadT Read;
-		Read.Object([this, &NewRoot](Serial::ReadObjectT &Object) -> Serial::ReadErrorT
+		Read.Object([this, &NewRoot, &UndoLevel](Serial::ReadObjectT &Object) -> Serial::ReadErrorT
 		{
 			//return Deserialize(NewRoot, "Module", Object);
-			Object.Polymorph("Root", [this, &NewRoot](std::string &&Key, Serial::ReadObjectT &Object)
+			Object.Polymorph("Root", [this, &NewRoot, &UndoLevel](std::string &&Key, Serial::ReadObjectT &Object)
 			{
-				return Deserialize(NewRoot, std::move(Key), Object);
+				return Deserialize(UndoLevel, NewRoot, std::move(Key), Object);
 			});
 			return {};
 		});
@@ -561,20 +586,10 @@ void CoreT::Deserialize(Filesystem::PathT const &Path)
 		ParseError = Read.Parse(Path);
 		if (ParseError) throw ConstructionErrorT() << *ParseError;
 	}
-	Root.Set(NewRoot.Nucleus);
-	NewUndoLevel.reset(nullptr);
-	AssumeFocus();
+	Root.Set(UndoLevel, NewRoot.Nucleus);
+	AssumeFocus(UndoLevel);
 	Refresh();
 	Focused->RegisterActions();
-}
-
-Serial::ReadErrorT CoreT::Deserialize(AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object)
-{
-	std::unique_ptr<NucleusT> Nucleus;
-	auto Type = Types.find(TypeName);
-	if (Type == Types.end()) return (StringT() << "Unknown type \'" << TypeName << "\'").str();
-	Out.Set(Type->second->Generate(*this));
-	return Out->Deserialize(Object);
 }
 
 bool InHandleInput = false; // DEBUG
@@ -584,27 +599,26 @@ void CoreT::HandleInput(std::shared_ptr<ActionT> Action)
 	Assert(!InHandleInput);
 	InHandleInput = true;
 
-	Assert(!NewUndoLevel);
-	NewUndoLevel.reset(new UndoLevelT());
+	auto UndoLevel = make_unique<UndoLevelT>();
 
 	std::cout << "Action " << Action->Name << std::endl;
-	Action->Apply();
+	Action->Apply(UndoLevel);
 	
-	AssumeFocus();
+	AssumeFocus(UndoLevel);
 
 	ResetActions();
 
-	if (NewUndoLevel->Reactions.empty()) NewUndoLevel.reset(nullptr);
+	if (UndoLevel->Reactions.empty()) UndoLevel.reset(nullptr);
 	else
 	{
 		// Tree modification occurred
 		
 		if (!UndoQueue.empty())
 		{
-			auto CombineResult = UndoQueue.front()->Combine(NewUndoLevel);
-			if (CombineResult) NewUndoLevel.reset(nullptr);
+			auto CombineResult = UndoQueue.front()->Combine(UndoLevel);
+			if (CombineResult) UndoLevel.reset(nullptr);
 		}
-		if (NewUndoLevel) UndoQueue.push_front(std::move(NewUndoLevel));
+		if (UndoLevel) UndoQueue.push_front(std::move(UndoLevel));
 		RedoQueue.clear();
 	
 		for (auto &Candidate : DeletionCandidates)
@@ -615,12 +629,37 @@ void CoreT::HandleInput(std::shared_ptr<ActionT> Action)
 			}
 		DeletionCandidates.clear();
 	}
+	Assert(!UndoLevel);
 
 	Refresh();
 
 	Focused->RegisterActions();
 
 	InHandleInput = false;
+}
+
+bool CoreT::HasChanges(void)
+{
+	return !UndoQueue.empty() || !RedoQueue.empty();
+}
+	
+void CoreT::Focus(NucleusT *Nucleus)
+{
+	Assert(!InHandleInput);
+	auto Action = std::make_shared<FunctionActionT>("Direct select", [this, Nucleus](std::unique_ptr<UndoLevelT> &Level)
+	{
+		Nucleus->Focus(Level, FocusDirectionT::Direct);
+	});
+	HandleInput(Action);
+}
+
+Serial::ReadErrorT CoreT::Deserialize(std::unique_ptr<UndoLevelT> &Level, AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object)
+{
+	std::unique_ptr<NucleusT> Nucleus;
+	auto Type = Types.find(TypeName);
+	if (Type == Types.end()) return (StringT() << "Unknown type \'" << TypeName << "\'").str();
+	Out.Set(Level, Type->second->Generate(*this));
+	return Out->Deserialize(Object);
 }
 
 OptionalT<AtomTypeT *> CoreT::LookUpAtomType(std::string const &Text)
@@ -630,35 +669,10 @@ OptionalT<AtomTypeT *> CoreT::LookUpAtomType(std::string const &Text)
 	return &*Type->second;
 }
 
-bool CoreT::HasChanges(void)
-{
-	return !UndoQueue.empty() || !RedoQueue.empty();
-}
-
-void CoreT::Undo(void)
-{
-	if (UndoQueue.empty()) return;
-	NewUndoLevel.reset(new UndoLevelT());
-	UndoQueue.front()->ApplyUndo();
-	RedoQueue.push_front(std::move(NewUndoLevel));
-	Assert(!NewUndoLevel);
-	UndoQueue.pop_front();
-}
-
-void CoreT::Redo(void)
-{
-	if (RedoQueue.empty()) return;
-	NewUndoLevel.reset(new UndoLevelT());
-	RedoQueue.front()->ApplyRedo();
-	UndoQueue.push_front(std::move(NewUndoLevel));
-	Assert(!NewUndoLevel);
-	RedoQueue.pop_front();
-}
-	
-void CoreT::Focus(NucleusT *Nucleus)
+void CoreT::Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus)
 {
 	if (Focused.Nucleus == Nucleus) return;
-	if (Focused) Focused->Defocus();
+	if (Focused) Focused->Defocus(Level);
 	Focused = Nucleus;
 	std::cout << "FOCUSED " << Nucleus << std::endl;
 }
@@ -670,18 +684,12 @@ void CoreT::Refresh(void)
 	NeedRefresh.clear();
 }
 	
-void CoreT::AddUndoReaction(std::unique_ptr<ReactionT> Reaction)
-{
-	Assert(NewUndoLevel);
-	NewUndoLevel->Add(std::move(Reaction));
-}
-	
-void CoreT::AssumeFocus(void)
+void CoreT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level)
 {
 	if (Root) 
 	{
 		std::cout << "Assuming focus..." << std::endl;
-		Root->AssumeFocus();
+		Root->AssumeFocus(Level);
 		std::cout << "Assuming focus... DONE" << std::endl;
 	}
 }
@@ -691,6 +699,31 @@ void CoreT::ResetActions(void)
 	TRACE;
 	if (ResetActionsCallback) ResetActionsCallback();
 	Actions.clear();
+
+	// These are kind of hackish - since NewUndoLevel is shared state
+	// and these preempt the HandleInput usage to reverse/advance the stack
+	// TODO make the undo level an argument for all actionable function calls?
+	RegisterAction(make_unique<FunctionActionT>("Undo", [this](std::unique_ptr<UndoLevelT> &Level) 
+	{ 
+		UndoingOrRedoing = true;
+		if (UndoQueue.empty()) return;
+		auto UndoLevel = make_unique<UndoLevelT>();
+		UndoQueue.front()->ApplyUndo(UndoLevel);
+		RedoQueue.push_front(std::move(UndoLevel));
+		UndoQueue.pop_front();
+		UndoingOrRedoing = false;
+	}));
+
+	RegisterAction(make_unique<FunctionActionT>("Redo", [this](std::unique_ptr<UndoLevelT> &Level) 
+	{ 
+		UndoingOrRedoing = true;
+		if (RedoQueue.empty()) return;
+		auto UndoLevel = make_unique<UndoLevelT>();
+		RedoQueue.front()->ApplyRedo(UndoLevel);
+		UndoQueue.push_front(std::move(UndoLevel));
+		RedoQueue.pop_front();
+		UndoingOrRedoing = false;
+	}));
 }
 
 void CoreT::RegisterAction(std::shared_ptr<ActionT> Action)
@@ -709,36 +742,6 @@ std::string CoreT::Dump(void) const
 		Root->Serialize(WriteRoot.Polymorph("Root"));
 	}
 	return Writer.Dump();
-}
-
-void CoreT::UndoLevelT::Add(std::unique_ptr<ReactionT> Reaction)
-{
-	if (!Reactions.empty() && Reactions.back()->Combine(Reaction)) return;
-	Reactions.push_back(std::move(Reaction));
-}
-
-void CoreT::UndoLevelT::ApplyUndo(void)
-{
-	for (auto &Reaction : Reactions)
-		Reaction->Apply();
-}
-
-void CoreT::UndoLevelT::ApplyRedo(void)
-{
-	for (auto Reaction = Reactions.rbegin(); Reaction != Reactions.rend(); ++Reaction)
-		(*Reaction)->Apply();
-}
-
-bool CoreT::UndoLevelT::Combine(std::unique_ptr<UndoLevelT> &Other)
-{
-	auto OtherGroup = dynamic_cast<UndoLevelT *>(Other.get());
-	if (!OtherGroup) return false;
-	return 
-	(
-		(Reactions.size() == 1) && 
-		(OtherGroup->Reactions.size() == 1) && 
-		Reactions.front()->Combine(OtherGroup->Reactions.front())
-	);
 }
 		
 }
