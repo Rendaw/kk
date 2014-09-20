@@ -502,7 +502,6 @@ OptionalT<NucleusT *> TypedFinish(std::unique_ptr<UndoLevelT> &Level, CoreT &Cor
 	NucleusT *Carryover = nullptr;
 	{
 		auto CarryoverOperand = Finished->As<CompositeT>()->GetAnyOperand(OperatorDirectionT::Right, *CarryoverPlaces);
-		Assert(CarryoverOperand);
 		if (CarryoverOperand) Carryover = *CarryoverOperand;
 	}
 

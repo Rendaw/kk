@@ -191,9 +191,9 @@ void VisualT::Scroll(void)
 				"{" << ID << ".scrollIntoView(true); }"
 			"else"
 			"{" 
-				<< ID << ".scrollIntoView(false);"
-				"window.scrollBy(0, 30);" // Qt/Webkit issues
-				"console.log('hi');"
+				"window.scrollBy(0, Math.max(0, ElementBottom - window.innerHeight + 15));" // Qt/Webkit issues
+				//<< ID << ".scrollIntoView(false);"
+				//"window.scrollBy(0, 30);" // Qt/Webkit issues
 			"}"
 		"}"
 		"})();");
