@@ -14,6 +14,9 @@
 #include <QFileDialog>
 #include <QCheckBox>
 #include <QPushButton>
+#include <QClipboard>
+#include <QMimeData>
+#include <QByteArray>
 
 #include "core.h"
 #include "../shared/type.h"
@@ -30,13 +33,18 @@ struct WebViewT : QWebView
 	std::map<std::string, std::list<std::string>> ActionKeys{
 		{"Undo", {"u", "Ctrl+z"}},
 		{"Redo", {"Shift+U", "Ctrl+Shift+z", "Ctrl+y", "Ctrl+r"}},
+		{"Copy", {"y", "Ctrl+c"}},
+		//{"Cut", {"Ctrl+x"}},
+		{"Cut", {"x", "Ctrl+x"}},
+		{"Paste", {"p", "Ctrl+v"}},
 		{"Enter", {"Return"}},
 		{"Exit", {"Escape"}},
 		{"Up", {"k", "Up"}},
 		{"Down", {"j", "Down"}},
 		{"Left", {"h", "Left"}},
 		{"Right", {"l", "Right"}},
-		{"Delete", {"x", "Delete"}},
+		//{"Delete", {"x", "Delete"}},
+		{"Delete", {"Delete"}},
 		{"Backspace", {"Backspace"}},
 		{"Finish", {"Space"}},
 		{"Insert before", {"i"}},
@@ -337,6 +345,27 @@ int main(int argc, char **argv)
 			Dialog->setLayout(ConfigLayout);
 			Dialog->show();
 		});
+
+		// ----
+		// Other core setup
+		Core.CopyCallback = [&](std::string &&Text)
+		{
+			auto Data = make_unique<QMimeData>();
+			Data->setText(Text.c_str());
+			Data->setData("application/json", QByteArray(Text.c_str(), Text.size()));
+			QApplication::clipboard()->setMimeData(Data.release());
+			//QApplication::clipboard()->setText(Text.c_str());
+		};
+
+		Core.PasteCallback = [&](void) -> std::unique_ptr<std::stringstream>
+		{
+			auto Data = QApplication::clipboard()->mimeData()->data("application/json");
+			if (Data.isNull() || Data.isEmpty()) return {};
+			// TODO fix gcc + clang to support stream move constructor
+			auto Out = make_unique<std::stringstream>();
+			Out->write(Data.data(), Data.length());
+			return std::move(Out);
+		};
 
 		// ----
 		// Go time!

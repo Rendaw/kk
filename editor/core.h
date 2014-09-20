@@ -99,6 +99,9 @@ struct VisualT
 	void Set(std::string const &Text);
 	std::string Dump(void);
 
+	void Scroll(void);
+	void ScrollToTop(void);
+
 	QWebElement Root;
 	
 	private:
@@ -305,6 +308,7 @@ struct CoreT
 
 	std::set<NucleusT *> DeletionCandidates;
 	std::set<NucleusT *> NeedRefresh;
+	bool NeedScroll;
 
 	VisualT CursorVisual;
 
@@ -314,6 +318,8 @@ struct CoreT
 	std::list<std::shared_ptr<ActionT>> Actions;
 	std::function<void(void)> ResetActionsCallback;
 	std::function<void(std::shared_ptr<ActionT> Action)> RegisterActionCallback;
+	std::function<void(std::string &&Text)> CopyCallback;
+	std::function<std::unique_ptr<std::stringstream>(void)> PasteCallback;
 
 	CoreT(VisualT &RootVisual);
 	~CoreT(void);
@@ -329,6 +335,9 @@ struct CoreT
 	// Self + atom use
 	Serial::ReadErrorT Deserialize(std::unique_ptr<UndoLevelT> &Level, AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
 	OptionalT<AtomTypeT *> LookUpAtomType(std::string const &Text);
+
+	void Copy(NucleusT *Tree);
+	void Paste(std::unique_ptr<UndoLevelT> &UndoLevel, AtomT &Destination);
 
 	void Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus);
 	void Refresh(void);

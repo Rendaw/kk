@@ -127,10 +127,16 @@ void CompositeT::RegisterActions(void)
 	}
 	else if (Focused.Is<SelfFocusedT>())
 	{
+		Core.RegisterAction(std::make_shared<FunctionActionT>("Copy", [this](std::unique_ptr<UndoLevelT> &Level)
+		{
+			TRACE;
+			Core.Copy(this);
+		}));
+
 		struct DeleteT : ActionT
 		{
 			CompositeT &Base;
-			DeleteT(CompositeT &Base) : ActionT("Delete"), Base(Base) {}
+			DeleteT(CompositeT &Base, std::string const &Name = "Delete") : ActionT(Name), Base(Base) {}
 			void Apply(std::unique_ptr<UndoLevelT> &Level)
 			{
 				TRACE;
@@ -143,6 +149,18 @@ void CompositeT::RegisterActions(void)
 			}
 		};
 		Core.RegisterAction(std::make_shared<DeleteT>(*this));
+
+		struct CutT : DeleteT
+		{
+			CutT(CompositeT &Base) : DeleteT(Base, "Cut") {}
+			void Apply(std::unique_ptr<UndoLevelT> &Level)
+			{
+				TRACE;
+				Base.Core.Copy(&Base);
+				DeleteT::Apply(Level);
+			}
+		};
+		Core.RegisterAction(std::make_shared<CutT>(*this));
 
 		struct WedgeT : ActionT
 		{

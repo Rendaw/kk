@@ -80,7 +80,7 @@ uint64_t VisualIDCounter = 0;
 
 void EvaluateJS(QWebElement Root, std::string const &Text)
 {
-	//std::cout << "Evaluating js: " << Text << std::endl;
+	std::cout << "Evaluating js: " << Text << std::endl;
 	Root.evaluateJavaScript((Text + " null;").c_str());
 }
 
@@ -170,6 +170,39 @@ void VisualT::Set(std::string const &Text)
 std::string VisualT::Dump(void)
 {
 	return Root.toOuterXml().toUtf8().data();
+}
+
+void VisualT::Scroll(void)
+{
+	EvaluateJS(Root, ::StringT() << "(function() {"
+		"var ElementPosition = " << ID << ".getBoundingClientRect();"
+		"ElementTop = ElementPosition.top;"
+		"ElementBottom = ElementPosition.bottom;"
+		"ElementBottom -= 10;" // Qt/Webkit issues
+		//"console.log('etop ' + ElementTop + ', ebottom ' + ElementBottom + ', wheight ' + window.innerHeight);"
+		"if (ElementTop < 0)"
+		"{" 
+			<< ID << ".scrollIntoView(true);"
+			"window.scrollBy(0, -10);"
+		"}"
+		"else if (ElementBottom > window.innerHeight)"
+		"{" 
+			"if (ElementBottom - ElementTop >= window.innerHeight)"
+				"{" << ID << ".scrollIntoView(true); }"
+			"else"
+			"{" 
+				<< ID << ".scrollIntoView(false);"
+				"window.scrollBy(0, 30);" // Qt/Webkit issues
+				"console.log('hi');"
+			"}"
+		"}"
+		"})();");
+}
+
+void VisualT::ScrollToTop(void)
+{
+	EvaluateJS(Root, ::StringT()
+		<< ID << ".scrollIntoView(true);");
 }
 
 ReactionT::~ReactionT(void) {}
@@ -476,6 +509,7 @@ CoreT::CoreT(VisualT &RootVisual) :
 	AppendProtoatomType(nullptr), 
 	ElementType(nullptr), 
 	StringType(nullptr), 
+	NeedScroll(false),
 	CursorVisual(RootVisual.Root),
 	UndoingOrRedoing(false)
 {
@@ -569,7 +603,7 @@ void CoreT::Serialize(Filesystem::PathT const &Path)
 		auto WriteRoot = Writer.Object();
 		Root->Serialize(WriteRoot.Polymorph("Root"));
 	}
-	return Writer.Dump(Path);
+	Writer.Dump(Path);
 }
 
 void CoreT::Deserialize(Filesystem::PathT const &Path)
@@ -675,6 +709,52 @@ OptionalT<AtomTypeT *> CoreT::LookUpAtomType(std::string const &Text)
 	if (Type == TypeLookup.end()) return {};
 	return &*Type->second;
 }
+	
+void CoreT::Copy(NucleusT *Tree)
+{
+	// TODO unify this with Serialize - need stream abstraction
+	if (!CopyCallback) return;
+	if (!Assert(Root)) return; // TODO Error?
+	Serial::WriteT Writer;
+	{
+		auto WriteRoot = Writer.Object();
+		Tree->Serialize(WriteRoot.Polymorph("Root"));
+	}
+	CopyCallback(Writer.Dump());
+}
+
+void CoreT::Paste(std::unique_ptr<UndoLevelT> &UndoLevel, AtomT &Destination)
+{
+	// TODO unify this with deserialize... somehow. Need stream abstraction
+	if (!PasteCallback) return;
+	HoldT TempRoot2(*this); // Used to prevent clear reaction when setting destination
+	{
+		AtomT TempRoot(*this); // Used as buffer to abort if deserialization fails
+		Serial::ReadT Read;
+		Read.Object([this, &TempRoot, &UndoLevel](Serial::ReadObjectT &Object) -> Serial::ReadErrorT
+		{
+			Object.Polymorph("Root", [this, &TempRoot, &UndoLevel](std::string &&Key, Serial::ReadObjectT &Object)
+			{
+				auto DiscardUndo = make_unique<UndoLevelT>();
+				return Deserialize(DiscardUndo, TempRoot, std::move(Key), Object);
+			});
+			return {};
+		});
+		auto Text = PasteCallback();
+		if (Text)
+		{
+			auto ParseError = Read.Parse(*Text);
+			if (ParseError) 
+			{
+				std::cout << "Error pasting: " << *ParseError << std::endl;
+				return;
+			}
+		}
+		Assert(TempRoot.Nucleus);
+		TempRoot2.Set(TempRoot.Nucleus);
+	}
+	Destination.Set(UndoLevel, TempRoot2.Nucleus);
+}
 
 void CoreT::Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus)
 {
@@ -682,6 +762,7 @@ void CoreT::Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus)
 	if (Focused) Focused->Defocus(Level);
 	Focused = Nucleus;
 	std::cout << "FOCUSED " << Nucleus << std::endl;
+	NeedScroll = true;
 }
 	
 void CoreT::Refresh(void)
@@ -689,6 +770,11 @@ void CoreT::Refresh(void)
 	for (auto &Refreshable : NeedRefresh)
 		Refreshable->Refresh();
 	NeedRefresh.clear();
+	if (NeedScroll && Focused)
+	{
+		Focused->Visual.Scroll();
+		NeedScroll = false;
+	}
 }
 	
 void CoreT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level)

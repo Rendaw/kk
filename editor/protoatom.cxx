@@ -46,7 +46,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override
 	{
-		TRACE;
+		//TRACE;
 		Object.Bool("CouldBeIdentifier", [this](bool Value) -> Serial::ReadErrorT { CouldBeIdentifier = Value; return {}; });
 		Object.String("Data", [this](std::string &&Value) -> Serial::ReadErrorT { Data = std::move(Value); return {}; });
 		Object.UInt("Position", [this](uint64_t Value) -> Serial::ReadErrorT { Position = Value; return {}; }); // Apparently you can assign a uint64_t to a string, with no errors or warnings
@@ -55,7 +55,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override
 	{
-		TRACE;
+		//TRACE;
 		/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
 		Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
 		Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
