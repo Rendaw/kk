@@ -80,7 +80,7 @@ uint64_t VisualIDCounter = 0;
 
 void EvaluateJS(QWebElement Root, std::string const &Text)
 {
-	std::cout << "Evaluating js: " << Text << std::endl;
+	//std::cout << "Evaluating js: " << Text << std::endl;
 	Root.evaluateJavaScript((Text + " null;").c_str());
 }
 
@@ -501,8 +501,10 @@ bool UndoLevelT::Combine(std::unique_ptr<UndoLevelT> &Other)
 
 CoreT::CoreT(VisualT &RootVisual) : 
 	RootVisual(RootVisual), 
+	FrameVisual(RootVisual.Root),
 	Root(*this), 
 	Focused(*this), 
+	Framed(*this),
 	TextMode(true), 
 	SoloProtoatomType(nullptr), 
 	InsertProtoatomType(nullptr), 
@@ -510,10 +512,12 @@ CoreT::CoreT(VisualT &RootVisual) :
 	ElementType(nullptr), 
 	StringType(nullptr), 
 	NeedScroll(false),
+	RootRefresh(false),
 	CursorVisual(RootVisual.Root),
 	UndoingOrRedoing(false)
 {
-	CursorVisual.SetClass("type-cursor");
+	FrameVisual.SetClass("frame");
+	CursorVisual.SetClass("cursor");
 	CursorVisual.Add("|");
 	
 	Types.emplace("SoloProtoatom", make_unique<SoloProtoatomTypeT>());
@@ -581,12 +585,7 @@ CoreT::CoreT(VisualT &RootVisual) :
 	for (auto &Type : Types)
 		if (Type.second->Operator) TypeLookup[*Type.second->Operator] = Type.second.get();
 	
-	Root.Callback = [this](NucleusT *Nucleus)
-	{
-		this->RootVisual.Start();
-		Assert(Nucleus);
-		this->RootVisual.Add(Nucleus->Visual);
-	};
+	Root.Callback = [this](NucleusT *Nucleus) { RootRefresh = true; };
 	Refresh();
 }
 
@@ -710,6 +709,14 @@ OptionalT<AtomTypeT *> CoreT::LookUpAtomType(std::string const &Text)
 	return &*Type->second;
 }
 	
+void CoreT::Frame(NucleusT *Nucleus)
+{
+	if (Framed.Nucleus == Nucleus) return;
+	if (Framed && Framed->Parent) { Framed->Parent->FlagRefresh(); }
+	Framed = Nucleus;
+	RootRefresh = true;
+}
+	
 void CoreT::Copy(NucleusT *Tree)
 {
 	// TODO unify this with Serialize - need stream abstraction
@@ -758,15 +765,57 @@ void CoreT::Paste(std::unique_ptr<UndoLevelT> &UndoLevel, AtomT &Destination)
 
 void CoreT::Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus)
 {
+	Assert(Nucleus);
 	if (Focused.Nucleus == Nucleus) return;
 	if (Focused) Focused->Defocus(Level);
 	Focused = Nucleus;
 	std::cout << "FOCUSED " << Nucleus << std::endl;
 	NeedScroll = true;
+
+	if (Framed)
+	{
+		std::vector<NucleusT *> Ancestry;
+		OptionalT<NucleusT *> Unframe = Nucleus;
+		if (!Unframe->As<CompositeT>()) Unframe = Unframe->PartParent();
+		while (Unframe)
+		{
+			Ancestry.push_back(*Unframe);
+			std::cout << "Ancestor " << Unframe->GetTypeInfo().Tag << std::endl;
+			if (*Unframe == Framed.Nucleus) break;
+			Unframe = Unframe->PartParent();
+		}
+		if (Ancestry.back() == Framed.Nucleus)
+		{
+			if (Ancestry.size() > 5)
+			{
+				std::cout << "Ancestry > 5" << std::endl;
+				Frame(Ancestry[4]);
+			}
+		}
+		else
+		{
+			std::cout << "Ancestry no framed (" << Framed.Nucleus << ")" << std::endl;
+			if (Root.Nucleus == Nucleus) Frame(nullptr);
+			else Frame(Nucleus);
+		}
+	}
 }
 	
 void CoreT::Refresh(void)
 {
+	if (RootRefresh)
+	{
+		RootVisual.Start();
+		Assert(Root.Nucleus);
+		if (Framed && (Framed.Nucleus != Root.Nucleus))
+		{
+			FrameVisual.Start();
+			FrameVisual.Add(Framed->Visual);
+			RootVisual.Add(FrameVisual);
+		}
+		else RootVisual.Add(Root->Visual);
+		RootRefresh = false;
+	}
 	for (auto &Refreshable : NeedRefresh)
 		Refreshable->Refresh();
 	NeedRefresh.clear();
@@ -776,7 +825,7 @@ void CoreT::Refresh(void)
 		NeedScroll = false;
 	}
 }
-	
+
 void CoreT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level)
 {
 	if (Root) 
@@ -821,7 +870,6 @@ void CoreT::ResetActions(void)
 
 void CoreT::RegisterAction(std::shared_ptr<ActionT> Action)
 {
-	TRACE;
 	Actions.push_back(Action);
 	if (RegisterActionCallback) RegisterActionCallback(Action);
 }

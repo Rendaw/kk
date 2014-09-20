@@ -297,8 +297,10 @@ struct UndoLevelT
 struct CoreT
 {
 	VisualT &RootVisual;
+	VisualT FrameVisual;
 	AtomT Root;
 	HoldT Focused;
+	HoldT Framed;
 	
 	bool TextMode;
 	
@@ -309,6 +311,7 @@ struct CoreT
 	std::set<NucleusT *> DeletionCandidates;
 	std::set<NucleusT *> NeedRefresh;
 	bool NeedScroll;
+	bool RootRefresh;
 
 	VisualT CursorVisual;
 
@@ -336,6 +339,7 @@ struct CoreT
 	Serial::ReadErrorT Deserialize(std::unique_ptr<UndoLevelT> &Level, AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
 	OptionalT<AtomTypeT *> LookUpAtomType(std::string const &Text);
 
+	void Frame(NucleusT *Nucleus);
 	void Copy(NucleusT *Tree);
 	void Paste(std::unique_ptr<UndoLevelT> &UndoLevel, AtomT &Destination);
 

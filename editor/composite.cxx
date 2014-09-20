@@ -17,7 +17,7 @@ CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : NucleusT(Core), 
 
 Serial::ReadErrorT CompositeT::Deserialize(Serial::ReadObjectT &Object)
 {
-	TRACE;
+	//TRACE;
 	for (auto &Part : Parts) 
 	{
 		auto Error = (*Part)->Deserialize(Object);
@@ -112,18 +112,29 @@ void CompositeT::RegisterActions(void)
 			Core.RegisterAction(std::make_shared<FocusNextT>("Right", *this));
 		}
 
-		struct ExitT : ActionT
+		if (Core.Framed.Nucleus == this)
 		{
-			CompositeT &Base;
-			ExitT(CompositeT &Base) : ActionT("Exit"), Base(Base) {}
-			void Apply(std::unique_ptr<UndoLevelT> &Level)
+			Core.RegisterAction(std::make_shared<FunctionActionT>("Unframe and exit", [this](std::unique_ptr<UndoLevelT> &Level)
 			{
 				TRACE;
-				Base.Core.TextMode = false;
-				Base.Focus(Level, FocusDirectionT::Direct);
-			}
-		};
-		Core.RegisterAction(std::make_shared<ExitT>(*this));
+				Core.TextMode = false;
+				Focus(Level, FocusDirectionT::Direct);
+				Core.Frame(nullptr);
+			}));
+		}
+		
+		Core.RegisterAction(std::make_shared<FunctionActionT>("Unframe", [this](std::unique_ptr<UndoLevelT> &Level)
+		{
+			TRACE;
+			Core.Frame(nullptr);
+		}));
+
+		Core.RegisterAction(std::make_shared<FunctionActionT>("Exit", [this](std::unique_ptr<UndoLevelT> &Level)
+		{
+			TRACE;
+			Core.TextMode = false;
+			Focus(Level, FocusDirectionT::Direct);
+		}));
 	}
 	else if (Focused.Is<SelfFocusedT>())
 	{
@@ -197,17 +208,18 @@ void CompositeT::RegisterActions(void)
 		};
 		Core.RegisterAction(std::make_shared<ReplaceParentT>(*this));
 
-		struct EnterT : ActionT
+		Core.RegisterAction(std::make_shared<FunctionActionT>("Enter", [this](std::unique_ptr<UndoLevelT> &Level)
 		{
-			CompositeT &Base;
-			EnterT(CompositeT &Base) : ActionT("Enter"), Base(Base) {}
-			void Apply(std::unique_ptr<UndoLevelT> &Level)
-			{
-				TRACE;
-				Base.FocusDefault(Level);
-			}
-		};
-		Core.RegisterAction(std::make_shared<EnterT>(*this));
+			TRACE;
+			FocusDefault(Level);
+		}));
+
+		Core.RegisterAction(std::make_shared<FunctionActionT>("Frame", [this](std::unique_ptr<UndoLevelT> &Level)
+		{
+			TRACE;
+			FocusDefault(Level);
+			Core.Frame(this);
+		}));
 	}
 	else Assert(false);
 
@@ -617,6 +629,7 @@ void AtomPartT::Refresh(void)
 	Visual.Start();
 	
 	if (!Data) return;
+	if (Data.Nucleus == Core.Framed.Nucleus) return;
 	
 	if (!IsPrecedent(Data, Data.Nucleus)) Visual.SetClass("flag-antiprecedent");
 	else Visual.UnsetClass("flag-antiprecedent");
@@ -852,7 +865,10 @@ void AtomListPartT::Refresh(void)
 	{
 		Atom->Visual.Start();
 		if (Assert(Atom->Atom))
+		{
+			if (Atom->Atom.Nucleus == Core.Framed.Nucleus) return;
 			Atom->Visual.Add(Atom->Atom->Visual);
+		}
 		Visual.Add(Atom->Visual);
 	}
 	if (EffectivelyVertical)

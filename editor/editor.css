@@ -2,12 +2,25 @@
 
 body { font-size: 16px; font-family: monospace !important; white-space: pre !important; padding: 6px 4px; }
 
+div.frame 
+{
+	display: block;
+	margin-left: 40px;
+}
+
+div.frame:before 
+{
+	content: "...";
+	margin-left: -40px;
+	float: left;
+}
+
 div
 {
 	text-align: left;
 	display: inline-block; 
 	text-indent: 0;
-	transition: color 4s;
+	transition: color 4s position 500ms;
 }
 
 div.type
@@ -51,7 +64,7 @@ div.part.flag-antiprecedent:before { content: "("; }
 div.part.flag-antiprecedent:after { content: ")"; }
 
 /* Cursor */
-div.type-cursor
+div.cursor
 {
 	display: inline-block;
 	width: 1em;
@@ -117,9 +130,9 @@ div.type-Group:not(.new)
 	/*color: #bababa;*/
 }
 
+div.frame,
 div.type-Group > div.part-Statements.flag-vertical > div
 { 
-	/*margin-left: 64px;*/
 	padding-left: 64px;
 	text-indent: -64px;
 }
