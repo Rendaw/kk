@@ -46,8 +46,8 @@ struct WebViewT : QWebView
 		{"Down", {"j", "Down"}},
 		{"Left", {"h", "Left"}},
 		{"Right", {"l", "Right"}},
-		//{"Delete", {"x", "Delete"}},
-		{"Delete", {"Delete"}},
+		{"Delete", {"x", "Delete"}},
+		//{"Delete", {"Delete"}},
 		{"Backspace", {"Backspace"}},
 		{"Finish", {"Space"}},
 		{"Insert before", {"i"}},
@@ -71,7 +71,7 @@ struct WebViewT : QWebView
 		};
 		Core->RegisterActionCallback = [this](std::shared_ptr<ActionT> Action)
 		{
-			//std::cout << "Registering " << Action->Name << std::endl;
+			std::cout << "Registering " << Action->Name << std::endl;
 			if (Action->Arguments.empty())
 			{
 				auto FoundSequences = ActionKeys.find(Action->Name);

@@ -144,34 +144,34 @@ void CompositeT::RegisterActions(void)
 			Core.Copy(this);
 		}));
 
-		struct DeleteT : ActionT
+		auto Protoatom = this->As<SoloProtoatomT>();
+		if (!Protoatom || !Protoatom->IsEmpty())
 		{
-			CompositeT &Base;
-			DeleteT(CompositeT &Base, std::string const &Name = "Delete") : ActionT(Name), Base(Base) {}
-			void Apply(std::unique_ptr<UndoLevelT> &Level)
+			struct DeleteT : ActionT
 			{
-				TRACE;
-				auto Protoatom = Base.As<SoloProtoatomT>();
-				if (!Protoatom || !Protoatom->IsEmpty())
+				CompositeT &Base;
+				DeleteT(CompositeT &Base, std::string const &Name = "Delete") : ActionT(Name), Base(Base) {}
+				void Apply(std::unique_ptr<UndoLevelT> &Level)
 				{
+					TRACE;
 					if (Base.Atom) 
 						Base.Atom->Set(Level, Base.Core.SoloProtoatomType->Generate(Base.Core));
 				}
-			}
-		};
-		Core.RegisterAction(std::make_shared<DeleteT>(*this));
+			};
+			Core.RegisterAction(std::make_shared<DeleteT>(*this));
 
-		struct CutT : DeleteT
-		{
-			CutT(CompositeT &Base) : DeleteT(Base, "Cut") {}
-			void Apply(std::unique_ptr<UndoLevelT> &Level)
+			struct CutT : DeleteT
 			{
-				TRACE;
-				Base.Core.Copy(&Base);
-				DeleteT::Apply(Level);
-			}
-		};
-		Core.RegisterAction(std::make_shared<CutT>(*this));
+				CutT(CompositeT &Base) : DeleteT(Base, "Cut") {}
+				void Apply(std::unique_ptr<UndoLevelT> &Level)
+				{
+					TRACE;
+					Base.Core.Copy(&Base);
+					DeleteT::Apply(Level);
+				}
+			};
+			Core.RegisterAction(std::make_shared<CutT>(*this));
+		}
 
 		struct WedgeT : ActionT
 		{
@@ -827,21 +827,18 @@ void AtomListPartT::RegisterActions(void)
 		Core.RegisterAction(std::make_shared<NewStatementAfterT>(*this));
 	}
 
-	if (IsFocused())
+	struct DeleteT : ActionT
 	{
-		struct DeleteT : ActionT
+		AtomListPartT &Base;
+		DeleteT(AtomListPartT &Base) : ActionT("Delete"), Base(Base) {}
+		void Apply(std::unique_ptr<UndoLevelT> &Level)
 		{
-			AtomListPartT &Base;
-			DeleteT(AtomListPartT &Base) : ActionT("Delete"), Base(Base) {}
-			void Apply(std::unique_ptr<UndoLevelT> &Level)
-			{
-				TRACE;
-				if (Base.Data.size() > 1)
-					Base.Remove(Level, Base.FocusIndex);
-			}
-		};
-		Core.RegisterAction(std::make_shared<DeleteT>(*this));
-	}
+			TRACE;
+			if (Base.Data.size() > 1)
+				Base.Remove(Level, Base.FocusIndex);
+		}
+	};
+	Core.RegisterAction(std::make_shared<DeleteT>(*this));
 
 	Parent->RegisterActions();
 }
