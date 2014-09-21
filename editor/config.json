@@ -1,6 +1,7 @@
 {
 	"StartFramed": false,
 	"UnframeAtRoot": true,
+	"FrameDepth": 6,
 	"Types": [
 		{
 			"Tag": "utf8:Module",

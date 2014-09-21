@@ -790,13 +790,19 @@ void CoreT::Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus)
 		if (!Unframe->As<CompositeT>()) Unframe = Unframe->PartParent();
 		while (Unframe)
 		{
-			Ancestry.push_back(*Unframe);
-			std::cout << "Ancestor " << Unframe->GetTypeInfo().Tag << std::endl;
-			if (*Unframe == Framed.Nucleus) break;
+			auto Composite = Unframe->As<CompositeT>();
+			Assert(Composite);
+			bool HitFramed = *Unframe == Framed.Nucleus;
+			if (Composite->TypeInfo.Ellipsize || HitFramed)
+			{
+				Ancestry.push_back(*Unframe);
+				std::cout << "Ancestor " << Unframe->GetTypeInfo().Tag << std::endl;
+				if (HitFramed) break;
+			}
 			Unframe = Unframe->PartParent();
 		}
 		std::cout << "Ancestry size " << Ancestry.size() << std::endl;
-		if (Ancestry.back() == Framed.Nucleus)
+		if (!Ancestry.empty() && (Ancestry.back() == Framed.Nucleus))
 		{
 			if (Settings.FrameDepth && (Ancestry.size() > *Settings.FrameDepth))
 			{

@@ -66,15 +66,15 @@ void CompositeT::AlignFocus(NucleusT *Child)
 	
 void CompositeT::FrameDepthAdjusted(OptionalT<size_t> Depth)
 {
-	//if (Depth) std::cout << "FDA depth " << *Depth << std::endl;
+	if (Depth) std::cout << "FDA depth " << *Depth << std::endl;
 	if (Core.Settings.FrameDepth && TypeInfo.Ellipsize)
 	{
-		if (Ellipsized && (!Depth || (Depth && (*Depth < *Core.Settings.FrameDepth))))
+		if (Ellipsized && (!Depth || (Depth && (*Depth <= *Core.Settings.FrameDepth))))
 		{
 			Ellipsized = false;
 			FlagRefresh();
 		}
-		else if (!Ellipsized && Depth && (*Depth >= *Core.Settings.FrameDepth))
+		else if (!Ellipsized && Depth && (*Depth > *Core.Settings.FrameDepth))
 		{
 			Ellipsized = true;
 			FlagRefresh();
@@ -639,7 +639,7 @@ void AtomPartT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direct
 
 void AtomPartT::FrameDepthAdjusted(OptionalT<size_t> Depth)
 {
-	if (Depth) Data->FrameDepthAdjusted(*Depth + 1);
+	if (Depth) Data->FrameDepthAdjusted(PartParent()->As<CompositeT>()->TypeInfo.Ellipsize ? *Depth + 1 : *Depth);
 	else Data->FrameDepthAdjusted({});
 }
 	
@@ -769,7 +769,7 @@ void AtomListPartT::AlignFocus(NucleusT *Child)
 void AtomListPartT::FrameDepthAdjusted(OptionalT<size_t> Depth)
 {
 	for (auto &Atom : Data)
-		if (Depth) Atom->Atom->FrameDepthAdjusted(*Depth + 1);
+		if (Depth) Atom->Atom->FrameDepthAdjusted(PartParent()->As<CompositeT>()->TypeInfo.Ellipsize ? *Depth + 1 : *Depth);
 		else Atom->Atom->FrameDepthAdjusted({});
 }
 	
