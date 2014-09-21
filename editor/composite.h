@@ -24,6 +24,7 @@ struct CompositeT : NucleusT
 	VariantT<SelfFocusedT, PartFocusedT> Focused;
 	
 	bool EffectivelyVertical;
+	bool Ellipsized;
 
 	std::vector<std::unique_ptr<AtomT>> Parts;
 
@@ -33,6 +34,7 @@ struct CompositeT : NucleusT
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
 	void AlignFocus(NucleusT *Child) override;
+	void FrameDepthAdjusted(OptionalT<size_t> Depth) override;
 	void RegisterActions(void) override;
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
@@ -52,6 +54,8 @@ struct CompositePartTypeT;
 
 struct CompositeTypeT : AtomTypeT
 {
+	bool Ellipsize = false;
+
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object);
 	void Serialize(Serial::WriteObjectT &Object) const override;
 	NucleusT *Generate(CoreT &Core) override;
@@ -130,6 +134,7 @@ struct AtomPartT : NucleusT
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
+	void FrameDepthAdjusted(OptionalT<size_t> Depth) override;
 	void RegisterActions(void) override;
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
@@ -166,6 +171,7 @@ struct AtomListPartT : NucleusT
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
 	void AlignFocus(NucleusT *Child) override;
+	void FrameDepthAdjusted(OptionalT<size_t> Depth) override;
 	void RegisterActions(void) override;
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;

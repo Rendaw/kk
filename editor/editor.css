@@ -145,6 +145,11 @@ div.type-Group:after
 	margin-left: -64px;
 }
 
+div.type-Group.flag-ellipsized:before
+{
+	content: "{\A...\A";
+}
+
 /* Assignment */
 div.type-Assignment > div.operator
 {

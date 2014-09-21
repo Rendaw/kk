@@ -6,7 +6,7 @@
 namespace Core
 {
 
-CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), OperatorVisual(Core.RootVisual.Root), EffectivelyVertical(TypeInfo.SpatiallyVertical)
+CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), OperatorVisual(Core.RootVisual.Root), EffectivelyVertical(TypeInfo.SpatiallyVertical), Ellipsized(false)
 {
 	TRACE;
 	Visual.Tag().Add(TypeInfo.Tag);
@@ -62,6 +62,25 @@ void CompositeT::AlignFocus(NucleusT *Child)
 		++Index;
 	}
 	Assert(false);
+}
+	
+void CompositeT::FrameDepthAdjusted(OptionalT<size_t> Depth)
+{
+	if (Depth) std::cout << "FDA depth " << *Depth << std::endl;
+	if (TypeInfo.Ellipsize)
+	{
+		if (Ellipsized && (!Depth || (Depth && (*Depth < Core.Settings.FrameDepth))))
+		{
+			Ellipsized = false;
+			FlagRefresh();
+		}
+		else if (!Ellipsized && Depth && (*Depth >= Core.Settings.FrameDepth))
+		{
+			Ellipsized = true;
+			FlagRefresh();
+		}
+	}
+	if (!Ellipsized) for (auto &Part : Parts) (*Part)->FrameDepthAdjusted(Depth);
 }
 	
 void CompositeT::RegisterActions(void)
@@ -256,12 +275,20 @@ void CompositeT::Refresh(void)
  		Visual.SetClass("flag-vertical");
 	else Visual.UnsetClass("flag-vertical");
 	
-	size_t Index = 0;
-	for (auto &Part : Parts)
+	if (Ellipsized)
 	{
-		if (TypeInfo.Operator && (Index == TypeInfo.OperatorPosition)) Visual.Add(OperatorVisual);
-		Visual.Add((*Part)->Visual);
-		++Index;
+		Visual.SetClass("flag-ellipsized");
+	}
+	else
+	{
+		Visual.UnsetClass("flag-ellipsized");
+		size_t Index = 0;
+		for (auto &Part : Parts)
+		{
+			if (TypeInfo.Operator && (Index == TypeInfo.OperatorPosition)) Visual.Add(OperatorVisual);
+			Visual.Add((*Part)->Visual);
+			++Index;
+		}
 	}
 }
 
@@ -422,6 +449,8 @@ Serial::ReadErrorT CompositeTypeT::Deserialize(Serial::ReadObjectT &Object)
 		auto Error = AtomTypeT::Deserialize(Object);
 		if (Error) return Error;
 	}
+	Object.Bool("Ellipsize", [this](bool Value) -> Serial::ReadErrorT
+		{ Ellipsize = Value; return {}; });
 	Object.Array("Parts", [this](Serial::ReadArrayT &Array) -> Serial::ReadErrorT
 	{
 		Array.Polymorph([this](std::string &&Type, Serial::ReadObjectT &Object) -> Serial::ReadErrorT 
@@ -607,6 +636,12 @@ void AtomPartT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direct
 		}
 	}
 }
+
+void AtomPartT::FrameDepthAdjusted(OptionalT<size_t> Depth)
+{
+	if (Depth) Data->FrameDepthAdjusted(*Depth + 1);
+	else Data->FrameDepthAdjusted({});
+}
 	
 void AtomPartT::RegisterActions(void)
 {
@@ -729,6 +764,13 @@ void AtomListPartT::AlignFocus(NucleusT *Child)
 		++Index;
 	}
 	Assert(false);
+}
+
+void AtomListPartT::FrameDepthAdjusted(OptionalT<size_t> Depth)
+{
+	for (auto &Atom : Data)
+		if (Depth) Atom->Atom->FrameDepthAdjusted(*Depth + 1);
+		else Atom->Atom->FrameDepthAdjusted({});
 }
 	
 void AtomListPartT::RegisterActions(void)

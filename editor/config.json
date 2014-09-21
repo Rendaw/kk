@@ -1,4 +1,7 @@
 {
+	"StartFramed": false,
+	"UnframeAtRoot": true,
+	"FrameDepth": 6,
 	"Types": [
 		{
 			"Tag": "utf8:Module",
@@ -24,6 +27,7 @@
 			"SpatiallyVertical": true,
 			"Precedence": 0,
 			"LeftAssociative": false,
+			"Ellipsize": true,
 			"Parts": [
 				["utf8:Operator", {
 					"Pattern": "utf8:{"

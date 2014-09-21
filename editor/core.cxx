@@ -397,6 +397,8 @@ void NucleusT::AlignFocus(NucleusT *Child)
 {
 	if (Parent) Parent->AlignFocus(this);
 }
+	
+void NucleusT::FrameDepthAdjusted(OptionalT<size_t> Depth) { }
 
 void NucleusT::Defocus(std::unique_ptr<UndoLevelT> &Level) {}
 		
@@ -549,6 +551,12 @@ CoreT::CoreT(VisualT &RootVisual) :
 				});
 				return {};
 			});
+			Object.UInt("FrameDepth", [this](uint64_t Value) -> Serial::ReadErrorT 
+				{ Settings.FrameDepth = Value; return {}; });
+			Object.Bool("UnframeAtRoot", [this](bool Value) -> Serial::ReadErrorT 
+				{ Settings.UnframeAtRoot = Value; return {}; });
+			Object.Bool("StartFramed", [this](bool Value) -> Serial::ReadErrorT 
+				{ Settings.StartFramed = Value; return {}; });
 			return {};
 		});
 		auto Error = Read.Parse(Filesystem::PathT::Here()->Enter("config.json"));
@@ -627,6 +635,7 @@ void CoreT::Deserialize(Filesystem::PathT const &Path)
 		if (ParseError) throw ConstructionErrorT() << *ParseError;
 	}
 	Root.Set(UndoLevel, NewRoot.Nucleus);
+	if (Settings.StartFramed) Frame(Root.Nucleus);
 	AssumeFocus(UndoLevel);
 	Refresh();
 	Focused->RegisterActions();
@@ -714,6 +723,8 @@ void CoreT::Frame(NucleusT *Nucleus)
 	if (Framed.Nucleus == Nucleus) return;
 	if (Framed && Framed->Parent) { Framed->Parent->FlagRefresh(); }
 	Framed = Nucleus;
+	if (Framed) Framed->FrameDepthAdjusted((size_t)1);
+	else Root->FrameDepthAdjusted({});
 	RootRefresh = true;
 }
 	
@@ -784,18 +795,19 @@ void CoreT::Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus)
 			if (*Unframe == Framed.Nucleus) break;
 			Unframe = Unframe->PartParent();
 		}
+		std::cout << "Ancestry size " << Ancestry.size() << std::endl;
 		if (Ancestry.back() == Framed.Nucleus)
 		{
-			if (Ancestry.size() > 5)
+			if (Ancestry.size() > Settings.FrameDepth)
 			{
-				std::cout << "Ancestry > 5" << std::endl;
-				Frame(Ancestry[4]);
+				std::cout << "Ancestry > " << Settings.FrameDepth << std::endl;
+				Frame(Ancestry[Settings.FrameDepth - 1]);
 			}
 		}
 		else
 		{
 			std::cout << "Ancestry no framed (" << Framed.Nucleus << ")" << std::endl;
-			if (Root.Nucleus == Nucleus) Frame(nullptr);
+			if (Settings.UnframeAtRoot && (Root.Nucleus == Nucleus)) Frame(nullptr);
 			else Frame(Nucleus);
 		}
 	}

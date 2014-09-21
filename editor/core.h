@@ -232,6 +232,7 @@ struct NucleusT
 	virtual AtomTypeT const &GetTypeInfo(void) const;
 	virtual void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction);
 	virtual void AlignFocus(NucleusT *Child);
+	virtual void FrameDepthAdjusted(OptionalT<size_t> Depth);
 	virtual void RegisterActions(void) = 0;
 	virtual void Defocus(std::unique_ptr<UndoLevelT> &Level);
 	virtual void AssumeFocus(std::unique_ptr<UndoLevelT> &Level); // If bool is false, optional must not be set
@@ -316,6 +317,13 @@ struct CoreT
 	VisualT CursorVisual;
 
 	bool UndoingOrRedoing; // Debugging aide
+
+	struct 
+	{
+		size_t FrameDepth = 8;
+		bool UnframeAtRoot = true;
+		bool StartFramed = false;
+	} Settings;
 
 	// External interface
 	std::list<std::shared_ptr<ActionT>> Actions;
