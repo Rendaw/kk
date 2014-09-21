@@ -798,10 +798,10 @@ void CoreT::Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus)
 		std::cout << "Ancestry size " << Ancestry.size() << std::endl;
 		if (Ancestry.back() == Framed.Nucleus)
 		{
-			if (Ancestry.size() > Settings.FrameDepth)
+			if (Settings.FrameDepth && (Ancestry.size() > *Settings.FrameDepth))
 			{
-				std::cout << "Ancestry > " << Settings.FrameDepth << std::endl;
-				Frame(Ancestry[Settings.FrameDepth - 1]);
+				std::cout << "Ancestry > " << *Settings.FrameDepth << std::endl;
+				Frame(Ancestry[*Settings.FrameDepth - 1]);
 			}
 		}
 		else

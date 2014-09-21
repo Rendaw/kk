@@ -320,9 +320,9 @@ struct CoreT
 
 	struct 
 	{
-		size_t FrameDepth = 8;
 		bool UnframeAtRoot = true;
 		bool StartFramed = false;
+		OptionalT<size_t> FrameDepth;
 	} Settings;
 
 	// External interface

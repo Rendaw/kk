@@ -66,15 +66,15 @@ void CompositeT::AlignFocus(NucleusT *Child)
 	
 void CompositeT::FrameDepthAdjusted(OptionalT<size_t> Depth)
 {
-	if (Depth) std::cout << "FDA depth " << *Depth << std::endl;
-	if (TypeInfo.Ellipsize)
+	//if (Depth) std::cout << "FDA depth " << *Depth << std::endl;
+	if (Core.Settings.FrameDepth && TypeInfo.Ellipsize)
 	{
-		if (Ellipsized && (!Depth || (Depth && (*Depth < Core.Settings.FrameDepth))))
+		if (Ellipsized && (!Depth || (Depth && (*Depth < *Core.Settings.FrameDepth))))
 		{
 			Ellipsized = false;
 			FlagRefresh();
 		}
-		else if (!Ellipsized && Depth && (*Depth >= Core.Settings.FrameDepth))
+		else if (!Ellipsized && Depth && (*Depth >= *Core.Settings.FrameDepth))
 		{
 			Ellipsized = true;
 			FlagRefresh();
