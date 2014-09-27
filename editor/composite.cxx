@@ -192,6 +192,13 @@ void CompositeT::RegisterActions(void)
 			Core.RegisterAction(std::make_shared<CutT>(*this));
 		}
 
+		Assert(Atom);
+		Core.RegisterAction(std::make_shared<FunctionActionT>("Paste", [this](std::unique_ptr<UndoLevelT> &Level)
+		{
+			TRACE;
+			Core.Paste(Level, *Atom);
+		}));
+
 		struct WedgeT : ActionT
 		{
 			CompositeT &Base;
