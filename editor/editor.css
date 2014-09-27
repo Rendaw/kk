@@ -20,13 +20,14 @@ div
 	text-align: left;
 	display: inline-block; 
 	text-indent: 0;
-	transition: color 4s position 500ms;
+	transition: color 4s, position 500ms, font 4s, transform 500ms;
 }
 
 div.type
 {
 	display: inline;
 	color: #bababa;
+	border-color: #bababa;
 }
 
 div.part
@@ -83,6 +84,60 @@ div.new
 	color: black;
 }
 
+/* Comments */
+div.type-CommentHeader > div.operator,
+div.type-CommentHeader:after,
+div.type-CommentSubHeader > div.operator,
+div.type-CommentSubHeader:after,
+div.type-CommentSubSubHeader > div.operator,
+div.type-CommentSubSubHeader:after,
+div.type-CommentSubSubSubHeader > div.operator,
+div.type-CommentSubSubSubHeader:after,
+div.type-CommentParagraph > div.operator,
+div.type-CommentParagraph:after,
+div.type-CommentCode > div.operator,
+div.type-CommentCode:after
+{
+	display: none;
+}
+
+div.type-CommentHeader,
+div.type-CommentSubHeader,
+div.type-CommentSubSubHeader,
+div.type-CommentSubSubSubHeader,
+div.type-CommentParagraph,
+div.type-CommentCode
+{
+	font-family: sans-serif;
+	display: inline-block;
+	width: 100%;
+}
+
+div.type-CommentHeader
+{
+	font-size: 1.3em;
+	font-weight: bold;
+	border-bottom: 1px solid;
+	margin-bottom: 12px;
+}
+
+div.type-CommentSubHeader
+{
+	font-size: 1.2em;
+	font-weight: bold;
+	margin-bottom: 6px;
+}
+
+div.type-CommentSubSubHeader
+{
+	font-size: 1.1em;
+}
+
+div.type-CommentSubSubSubHeader
+{
+	font-size: 1.05em;
+}
+
 /* String */
 div.type-String > div.part-Data:after
 {
@@ -137,7 +192,9 @@ div.type-Group > div.part-Statements.flag-vertical > div
 	text-indent: -64px;
 }
 
-div.type-Group > div.part-Statements > div:after { content: ";"; }
+div.type-Group > div.part-Statements > div > div:after { content: ";"; }
+
+div.type-Group > div.part-Statements > div > div.type-Group:after { content: "};"; }
 
 div.type-Group:after
 {

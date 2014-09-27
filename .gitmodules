@@ -1,3 +1,12 @@
 [submodule "tupsupport"]
 	path = tupsupport
 	url = ../ren-tupsupport
+[submodule "ren-cxx-basics"]
+	path = ren-cxx-basics
+	url = ../ren-cxx-basics
+[submodule "ren-cxx-filesystem"]
+	path = ren-cxx-filesystem
+	url = ../ren-cxx-filesystem
+[submodule "ren-cxx-serialjson"]
+	path = ren-cxx-serialjson
+	url = ../ren-cxx-serialjson

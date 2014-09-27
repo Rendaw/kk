@@ -34,7 +34,6 @@
 				}],
 				["utf8:AtomList", {
 					"Tag": "utf8:Statements",
-					"DisplaySuffix": "utf8:;",
 					"FocusDefault": true,
 					"SpatiallyVertical": true
 				}]
@@ -69,8 +68,6 @@
 				}],
 				["utf8:String", {
 					"Tag": "utf8:Data",
-					"DisplayPrefix": "utf8:'",
-					"DisplaySuffix": "utf8:'",
 					"FocusDefault": true
 				}]
 			]
@@ -103,6 +100,93 @@
 				}],
 				["utf8:Atom", {
 					"Tag": "utf8:Signature",
+					"FocusDefault": true
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:CommentHeader",
+			"ReplaceImmediately": true,
+			"Parts": [
+				["utf8:Operator", {
+					"Pattern": "utf8:#h"
+				}],
+				["utf8:String", {
+					"Tag": "utf8:Data",
+					"FocusDefault": true,
+					"TableOfContents": true,
+					"TableOfContentsLevel": 0
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:CommentSubHeader",
+			"ReplaceImmediately": true,
+			"Parts": [
+				["utf8:Operator", {
+					"Pattern": "utf8:#sh"
+				}],
+				["utf8:String", {
+					"Tag": "utf8:Data",
+					"FocusDefault": true,
+					"TableOfContents": true,
+					"TableOfContentsLevel": 1
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:CommentSubSubHeader",
+			"ReplaceImmediately": true,
+			"Parts": [
+				["utf8:Operator", {
+					"Pattern": "utf8:#ssh"
+				}],
+				["utf8:String", {
+					"Tag": "utf8:Data",
+					"FocusDefault": true,
+					"TableOfContents": true,
+					"TableOfContentsLevel": 2
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:CommentSubSubSubHeader",
+			"ReplaceImmediately": true,
+			"Parts": [
+				["utf8:Operator", {
+					"Pattern": "utf8:#sssh"
+				}],
+				["utf8:String", {
+					"Tag": "utf8:Data",
+					"FocusDefault": true,
+					"TableOfContents": true,
+					"TableOfContentsLevel": 3
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:CommentParagraph",
+			"ReplaceImmediately": true,
+			"Parts": [
+				["utf8:Operator", {
+					"Pattern": "utf8:#p"
+				}],
+				["utf8:String", {
+					"Tag": "utf8:Data",
+					"FocusDefault": true,
+					"TableOfContents": false
+				}]
+			]
+		},
+		{
+			"Tag": "utf8:CommentCode",
+			"ReplaceImmediately": true,
+			"Parts": [
+				["utf8:Operator", {
+					"Pattern": "utf8:#x"
+				}],
+				["utf8:Atom", {
+					"Tag": "utf8:Data",
 					"FocusDefault": true
 				}]
 			]

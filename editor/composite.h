@@ -38,6 +38,7 @@ struct CompositeT : NucleusT
 	void RegisterActions(void) override;
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
+	void LocationChanged(void) override;
 	void Refresh(void) override;
 	void FocusPrevious(std::unique_ptr<UndoLevelT> &Level) override;
 	void FocusNext(std::unique_ptr<UndoLevelT> &Level) override;
@@ -90,13 +91,15 @@ struct OperatorPartTypeT : CompositePartTypeT
 
 template <typename CompositeDerivateT> NucleusT *GenerateComposite(CompositeTypeT &Type, CoreT &Core)
 {
-	auto DiscardUndoLevel = make_unique<UndoLevelT>();
+	auto DiscardUndoLevel = std::make_unique<UndoLevelT>();
 	auto Out = new CompositeDerivateT(Core, Type);
+	size_t Order = 0;
 	for (auto &Part : Type.Parts) 
 	{
 		if (dynamic_cast<OperatorPartTypeT *>(Part.get())) continue;
-		Out->Parts.push_back(make_unique<AtomT>(Core));
+		Out->Parts.push_back(std::make_unique<AtomT>(Core));
 		Out->Parts.back()->Parent = Out;
+		Out->Parts.back()->Order = Order++;
 		Out->Parts.back()->Set(DiscardUndoLevel, Part->Generate(Core));
 		auto &CapturePart = *Out->Parts.back().get();
 		Out->Parts.back()->Callback = [&CapturePart, Out, &Core](NucleusT *Replacement) 
@@ -138,6 +141,7 @@ struct AtomPartT : NucleusT
 	void RegisterActions(void) override;
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
+	void LocationChanged(void) override;
 	void Refresh(void) override;
 	void FocusPrevious(std::unique_ptr<UndoLevelT> &Level) override;
 	void FocusNext(std::unique_ptr<UndoLevelT> &Level) override;
@@ -175,6 +179,7 @@ struct AtomListPartT : NucleusT
 	void RegisterActions(void) override;
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
+	void LocationChanged(void) override;
 	void Refresh(void) override;
 	void Add(std::unique_ptr<UndoLevelT> &Level, size_t Position, NucleusT *Nucleus, bool ShouldFocus = false);
 	void Remove(std::unique_ptr<UndoLevelT> &Level, size_t Position);
@@ -198,7 +203,11 @@ struct AtomListPartT : NucleusT
 
 struct StringPartTypeT : CompositePartTypeT
 {
+	bool TableOfContents = false;
+	uint64_t TableOfContentsLevel = 0;
+
 	using CompositePartTypeT::CompositePartTypeT;
+	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const override;
 	using CompositePartTypeT::Serialize; // Is this funny?
 	NucleusT *Generate(CoreT &Core) override;
@@ -215,6 +224,8 @@ struct StringPartT : NucleusT
 	size_t Position;
 	std::string Data;
 
+	std::unique_ptr<TOCVisualT> TOC;
+
 	StringPartT(CoreT &Core, StringPartTypeT &TypeInfo);
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
@@ -223,6 +234,7 @@ struct StringPartT : NucleusT
 	void RegisterActions(void) override;
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
+	void LocationChanged(void) override;
 	void Refresh(void) override;
 	
 	void Set(std::unique_ptr<UndoLevelT> &Level, size_t Position, std::string const &Text);

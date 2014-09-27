@@ -258,6 +258,12 @@ void CompositeT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level)
 	if (Focused && Focused.Is<PartFocusedT>()) (*Parts[Focused.Get<PartFocusedT>()])->AssumeFocus(Level);
 	else Focus(Level, FocusDirectionT::Direct);
 }
+	
+void CompositeT::LocationChanged(void)
+{
+	TRACE;
+	for (auto &Part : Parts) (*Part)->LocationChanged();
+}
 
 void CompositeT::Refresh(void)
 {
@@ -536,7 +542,7 @@ Serial::ReadErrorT OperatorPartTypeT::Deserialize(Serial::ReadObjectT &Object)
 void OperatorPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
 {
 	//TRACE;
-	Serial::WritePolymorphT Polymorph("Atom", std::move(Prepolymorph));
+	Serial::WritePolymorphT Polymorph("Operator", std::move(Prepolymorph));
 	Serialize(Polymorph);
 }
 
@@ -591,7 +597,7 @@ AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), Typ
 		if (Nucleus) Nucleus->WatchStatus((uintptr_t)this, [](NucleusT *Changed) { Changed->Parent->FlagRefresh(); });
 		FlagRefresh(); 
 	};
-	auto DiscardLevel = make_unique<UndoLevelT>();
+	auto DiscardLevel = std::make_unique<UndoLevelT>();
 	if (!TypeInfo.StartEmpty)
 		Data.Set(DiscardLevel, Core.SoloProtoatomType->Generate(Core));
 }
@@ -601,7 +607,7 @@ Serial::ReadErrorT AtomPartT::Deserialize(Serial::ReadObjectT &Object)
 	TRACE;
 	Object.Polymorph(TypeInfo.Tag, [this](std::string &&Type, Serial::ReadObjectT &Object) -> Serial::ReadErrorT
 	{
-		auto DiscardLevel = make_unique<UndoLevelT>();
+		auto DiscardLevel = std::make_unique<UndoLevelT>();
 		return Core.Deserialize(DiscardLevel, Data, Type, Object);
 	});
 	return {};
@@ -657,6 +663,12 @@ void AtomPartT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level)
 	if (Data) Data->AssumeFocus(Level); 
 	else Parent->FocusNext(Level); 
 }
+	
+void AtomPartT::LocationChanged(void)
+{
+	TRACE;
+	if (Data) Data->LocationChanged();
+}
 
 void AtomPartT::Refresh(void) 
 {
@@ -698,7 +710,7 @@ AtomListPartT::AtomListPartT(CoreT &Core, AtomListPartTypeT &TypeInfo) : Nucleus
 	TRACE;
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
-	auto DiscardUndo = make_unique<UndoLevelT>();
+	auto DiscardUndo = std::make_unique<UndoLevelT>();
 	Add(DiscardUndo, 0, Core.SoloProtoatomType->Generate(Core));
 }
 
@@ -711,7 +723,7 @@ Serial::ReadErrorT AtomListPartT::Deserialize(Serial::ReadObjectT &Object)
 		Data.clear();
 		Array.Polymorph([this](std::string &&Type, Serial::ReadObjectT &Object) -> Serial::ReadErrorT
 		{
-			auto DiscardLevel = make_unique<UndoLevelT>();
+			auto DiscardLevel = std::make_unique<UndoLevelT>();
 			Add(DiscardLevel, Data.size(), nullptr, false);
 			return Core.Deserialize(DiscardLevel, Data.back()->Atom, Type, Object);
 		});
@@ -896,6 +908,12 @@ void AtomListPartT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level)
 		Data[FocusIndex]->Atom->AssumeFocus(Level);
 }
 
+void AtomListPartT::LocationChanged(void)
+{
+	TRACE;
+	for (auto &Atom : Data) if (Assert(Atom->Atom)) Atom->Atom->LocationChanged();
+}
+
 void AtomListPartT::Refresh(void) 
 {
 	TRACE;
@@ -918,8 +936,16 @@ void AtomListPartT::Refresh(void)
 void AtomListPartT::Add(std::unique_ptr<UndoLevelT> &Level, size_t Position, NucleusT *Nucleus, bool ShouldFocus)
 {
 	TRACE;
-	Level->Add(make_unique<AddRemoveT>(*this, false, Position, nullptr));
+	Level->Add(std::make_unique<AddRemoveT>(*this, false, Position, nullptr));
 	Data.emplace(Data.begin() + Position, new ItemT{{Core.RootVisual.Root}, {Core}});
+	//for (auto After = Data.size() - 1;Position; After < Data.size(); ++After) 
+	int After = Data.size() - 1;
+	while (true)
+	{
+		Data[After]->Atom.SetOrder(After);
+		if (After == Position) break;
+		--After;
+	}
 	Data[Position]->Atom.Parent = this;
 	Data[Position]->Atom.Callback = [this](NucleusT *Nucleus)
 	{
@@ -940,9 +966,11 @@ void AtomListPartT::Add(std::unique_ptr<UndoLevelT> &Level, size_t Position, Nuc
 void AtomListPartT::Remove(std::unique_ptr<UndoLevelT> &Level, size_t Position)
 {
 	TRACE;
-	Level->Add(make_unique<AddRemoveT>(*this, true, Position, Data[Position]->Atom.Nucleus));
+	Level->Add(std::make_unique<AddRemoveT>(*this, true, Position, Data[Position]->Atom.Nucleus));
 	Assert(Position < Data.size());
 	Data.erase(Data.begin() + Position);
+	for (auto After = Position; After < Data.size(); ++After) 
+		Data[After]->Atom.SetOrder(After);
 	FlagRefresh();
 }
 
@@ -976,6 +1004,14 @@ void AtomListPartT::FocusNext(std::unique_ptr<UndoLevelT> &Level)
 		Data[FocusIndex]->Atom->Focus(Level, Core.TextMode ? FocusDirectionT::FromBehind : FocusDirectionT::Direct);
 	}
 }
+	
+Serial::ReadErrorT StringPartTypeT::Deserialize(Serial::ReadObjectT &Object)
+{
+	CompositePartTypeT::Deserialize(Object);
+	Object.Bool("TableOfContents", [this](bool Value) -> Serial::ReadErrorT { TableOfContents = Value; return {}; });
+	Object.UInt("TableOfContentsLevel", [this](uint64_t Value) -> Serial::ReadErrorT { TableOfContentsLevel = Value; return {}; });
+	return {};
+}
 
 void StringPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
 {
@@ -995,6 +1031,7 @@ StringPartT::StringPartT(CoreT &Core, StringPartTypeT &TypeInfo) : NucleusT(Core
 	TRACE;
 	Visual.SetClass("part");
 	Visual.SetClass(StringT() << "part-" << TypeInfo.Tag);
+	TOC = Core.CreateTOCVisual(this);
 }
 
 Serial::ReadErrorT StringPartT::Deserialize(Serial::ReadObjectT &Object)
@@ -1213,6 +1250,21 @@ void StringPartT::Refresh(void)
 	}
 	else Visual.Add(Data);
 }
+	
+void StringPartT::LocationChanged(void)
+{
+	TRACE;
+	if (TypeInfo.TableOfContents)
+	{
+		auto Path = GetGlobalOrder();
+		if (Path) 
+		{
+			Path->pop_back();
+			TOC->SetLocation({{std::move(*Path), TypeInfo.TableOfContentsLevel}});
+		}
+		else TOC->SetLocation({});
+	}
+}
 
 void StringPartT::Set(std::unique_ptr<UndoLevelT> &Level, size_t Position, std::string const &Data)
 {
@@ -1242,10 +1294,11 @@ void StringPartT::Set(std::unique_ptr<UndoLevelT> &Level, size_t Position, std::
 		}
 	};
 
-	Level->Add(make_unique<SetT>(*this, this->Position, this->Data));
+	Level->Add(std::make_unique<SetT>(*this, this->Position, this->Data));
 	this->Data = Data;
 	this->Position = Position;
 	FlagRefresh();
+	if (TOC) TOC->SetText(this->Data);
 }
 
 Serial::ReadErrorT EnumPartTypeT::Deserialize(Serial::ReadObjectT &Object) 
@@ -1356,7 +1409,7 @@ void EnumPartT::RegisterActions(void)
 				void Apply(std::unique_ptr<UndoLevelT> &Level)
 				{
 					TRACE;
-					Level->Add(make_unique<SetT>(Base, Base.Index));
+					Level->Add(std::make_unique<SetT>(Base, Base.Index));
 					Base.Index = Index;
 					Base.FlagRefresh();
 				}

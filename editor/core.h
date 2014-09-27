@@ -9,62 +9,11 @@
 #include <regex>
 #include <QWebElement>
 
-#include "../shared/type.h"
-#include "../shared/serial.h"
+#include "../ren-cxx-basics/type.h"
+#include "../ren-cxx-serialjson/serial.h"
 
 namespace Core
 {
-
-struct PathTypesT
-{
-	typedef std::string FieldT;
-	typedef size_t IndexT;
-};
-
-struct PathElementT : VariantT<PathTypesT::FieldT, PathTypesT::IndexT>
-{
-	size_t Count;
-	PathElementT *Parent;
-
-	template <typename ValueT> PathElementT(ValueT const &Value, PathElementT *Parent = nullptr) : VariantT<PathTypesT::FieldT, PathTypesT::IndexT>(Value), Count(0), Parent(Parent)
-	{
-		if (Parent) Parent->Count += 1;	
-	}
-	
-	~PathElementT(void);
-
-	std::ostream &StandardStream(std::ostream &Stream);
-};
-
-struct PathT : PathTypesT
-{
-	using PathTypesT::FieldT;
-	using PathTypesT::IndexT;
-
-	PathT(void);
-	PathT(PathT const &Other);
-	PathT(PathT &&Other);
-	PathT(PathElementT *Element);
-	~PathT(void);
-	PathT &operator =(PathT const &Other);
-	PathT &operator =(PathT &&Other);
-	PathT &operator =(PathElementT *Element);
-
-	PathT Field(std::string const &Name);
-	PathT Index(size_t Value);
-
-	operator bool(void) const;
-	PathElementT *operator ->(void) const;
-
-	private:
-		PathElementT *Element;
-};
-
-inline std::ostream &operator <<(std::ostream &Stream, PathT const &Path)
-{
-	if (Path) return Path->StandardStream(Stream);
-	else return Stream << "[/]";
-}
 
 struct CoreT;
 
@@ -109,6 +58,23 @@ struct VisualT
 		std::string IDName(void);
 	
 		std::unique_ptr<VisualT> TagVisual;
+};
+		
+struct TOCLocationT
+{
+	std::list<size_t> Orders;
+	size_t Level;
+
+	bool operator <(TOCLocationT const &Other) const;
+	bool Contains(TOCLocationT const &Other) const;
+	std::string Dump(void *Pointer) const;
+};
+
+struct TOCVisualT
+{
+	virtual ~TOCVisualT(void);
+	virtual void SetText(std::string const &NewText) = 0;
+	virtual void SetLocation(OptionalT<TOCLocationT> &&Location) = 0;
 };
 
 struct UndoLevelT;
@@ -177,11 +143,14 @@ struct AtomT
 	operator bool(void) const;
 
 	void Set(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus);
+
+	void SetOrder(size_t Ordering);
 	
 	typedef std::function<void(NucleusT *Nucleus)> AtomCallbackT;
 	CoreT &Core;
 	AtomCallbackT Callback;
 	NucleusT *Parent;
+	size_t Order;
 	NucleusT *Nucleus;
 
 	private:
@@ -208,7 +177,7 @@ struct NucleusT
 	AtomT *Atom;
 
 	std::map<uintptr_t, std::function<void(NucleusT *Changed)>> StatusWatchers;
-	
+
 	NucleusT(CoreT &Core);
 	virtual ~NucleusT(void);
 
@@ -235,7 +204,8 @@ struct NucleusT
 	virtual void FrameDepthAdjusted(OptionalT<size_t> Depth);
 	virtual void RegisterActions(void) = 0;
 	virtual void Defocus(std::unique_ptr<UndoLevelT> &Level);
-	virtual void AssumeFocus(std::unique_ptr<UndoLevelT> &Level); // If bool is false, optional must not be set
+	virtual void AssumeFocus(std::unique_ptr<UndoLevelT> &Level);
+	virtual void LocationChanged(void);
 	virtual void Refresh(void);
 
 	virtual void FocusPrevious(std::unique_ptr<UndoLevelT> &Level);
@@ -248,6 +218,8 @@ struct NucleusT
 	void FlagStatusChange(void);
 	void WatchStatus(uintptr_t ID, std::function<void(NucleusT *Changed)> Callback);
 	void IgnoreStatus(uintptr_t ID);
+
+	OptionalT<std::list<size_t>> GetGlobalOrder(void) const;
 };
 
 struct AtomTypeT
@@ -327,13 +299,19 @@ struct CoreT
 
 	// External interface
 	std::list<std::shared_ptr<ActionT>> Actions;
+
 	std::function<void(void)> ResetActionsCallback;
 	std::function<void(std::shared_ptr<ActionT> Action)> RegisterActionCallback;
 	std::function<void(std::string &&Text)> CopyCallback;
 	std::function<std::unique_ptr<std::stringstream>(void)> PasteCallback;
+	std::function<std::unique_ptr<TOCVisualT>(NucleusT *Owner)> CreateTOCVisual;
+	std::function<void(void)> FocusChangedCallback;
+	std::function<void(void)> HandleInputFinishedCallback;
 
 	CoreT(VisualT &RootVisual);
 	~CoreT(void);
+	Serial::ReadErrorT Configure(Serial::ReadObjectT &Object);
+	Serial::ReadErrorT ConfigureFinished(void);
 	void Serialize(Filesystem::PathT const &Path);
 	void Deserialize(Filesystem::PathT const &Path);
 	
@@ -346,6 +324,7 @@ struct CoreT
 	// Self + atom use
 	Serial::ReadErrorT Deserialize(std::unique_ptr<UndoLevelT> &Level, AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
 	OptionalT<AtomTypeT *> LookUpAtomType(std::string const &Text);
+	bool CouldBeAtomType(std::string const &Text);
 
 	void Frame(NucleusT *Nucleus);
 	void Copy(NucleusT *Tree);
@@ -358,6 +337,7 @@ struct CoreT
 
 	void ResetActions(void);
 	void RegisterAction(std::shared_ptr<ActionT> Action);
+	void RegisterActions(void);
 
 	std::string Dump(void) const;
 

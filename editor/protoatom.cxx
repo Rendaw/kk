@@ -118,7 +118,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 					Base.Finish(Level, {}, Base.Data);
 				}
 			};
-			Core.RegisterAction(make_unique<FinishT>(*this));
+			Core.RegisterAction(std::make_unique<FinishT>(*this));
 
 			struct TextT : ActionT
 			{
@@ -136,7 +136,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 					Base.HandleText(Level, Argument.Data);
 				}
 			};
-			Core.RegisterAction(make_unique<TextT>(*this));
+			Core.RegisterAction(std::make_unique<TextT>(*this));
 
 			struct FocusPreviousT : ActionT
 			{
@@ -156,7 +156,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 					}
 				}
 			};
-			Core.RegisterAction(make_unique<FocusPreviousT>(*this));
+			Core.RegisterAction(std::make_unique<FocusPreviousT>(*this));
 
 			struct FocusNextT : ActionT
 			{
@@ -176,7 +176,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 					}
 				}
 			};
-			Core.RegisterAction(make_unique<FocusNextT>(*this));
+			Core.RegisterAction(std::make_unique<FocusNextT>(*this));
 
 			struct BackspaceT : ActionT
 			{
@@ -192,7 +192,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 					Base.Set(Level, NewPosition, NewData);
 				}
 			};
-			Core.RegisterAction(make_unique<BackspaceT>(*this));
+			Core.RegisterAction(std::make_unique<BackspaceT>(*this));
 
 			struct DeleteT : ActionT
 			{
@@ -207,7 +207,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 					Base.Set(Level, Base.Position, NewData);
 				}
 			};
-			Core.RegisterAction(make_unique<DeleteT>(*this));
+			Core.RegisterAction(std::make_unique<DeleteT>(*this));
 
 			if (Parent->As<CompositeT>()->Parts.size() > 1)
 			{
@@ -222,7 +222,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 						Base.Focus(Level, FocusDirectionT::Direct);
 					}
 				};
-				Core.RegisterAction(make_unique<ExitT>(*this));
+				Core.RegisterAction(std::make_unique<ExitT>(*this));
 			}
 		}
 		else if (Focused == FocusedT::On)
@@ -237,7 +237,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 					Base.Set(Level, 0, "");
 				}
 			};
-			Core.RegisterAction(make_unique<DeleteT>(*this));
+			Core.RegisterAction(std::make_unique<DeleteT>(*this));
 
 			struct EnterT : ActionT
 			{
@@ -250,7 +250,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 					Base.Focus(Level, FocusDirectionT::Direct);
 				}
 			};
-			Core.RegisterAction(make_unique<EnterT>(*this));
+			Core.RegisterAction(std::make_unique<EnterT>(*this));
 		}
 		Parent->RegisterActions();
 	}
@@ -307,7 +307,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 			}
 		};
 
-		Level->Add(make_unique<SetT>(*this, Position, Data));
+		Level->Add(std::make_unique<SetT>(*this, Position, Data));
 		Data = NewData;
 		Position = NewPosition;
 		if (Data.empty()) CouldBeIdentifier.Unset();
@@ -321,8 +321,17 @@ struct BaseProtoatomPartT : ProtoatomPartT
 		// TODO this should handle arbitrary length text strings
 
 		auto NewCouldBeIdentifier = IdentifierClass(Text);
+
+		auto NewData = Data;
+		NewData.insert(Position, Text);
+		auto NewPosition = Position + 1;
 		
-		if (!CouldBeIdentifier || (*CouldBeIdentifier == NewCouldBeIdentifier))
+		if (!CouldBeIdentifier || 
+			(NewPosition < NewData.size()) ||
+			( // NewPosition == NewData.size()
+				(*CouldBeIdentifier == NewCouldBeIdentifier) || 
+				Core.CouldBeAtomType(NewData)
+			))
 		{
 			Assert(Text.length() == 1);
 			auto NewData = Data;
@@ -379,7 +388,7 @@ struct WedgeProtoatomPartT : BaseProtoatomPartT
 				auto Lifted = Parent->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Nucleus;
 				if (Lifted)
 				{
-					Level->Add(make_unique<FocusT>(Core, this));
+					Level->Add(std::make_unique<FocusT>(Core, this));
 					PartParent()->Atom->Set(Level, Lifted);
 				}
 			}
@@ -434,7 +443,7 @@ struct SoloProtoatomPartT : BaseProtoatomPartT
 				return {};
 			}
 
-			auto DiscardUndoLevel = make_unique<UndoLevelT>();
+			auto DiscardUndoLevel = std::make_unique<UndoLevelT>();
 
 			auto String = Core.StringType->Generate(Core);
 			GetStringPart(String)->Set(DiscardUndoLevel, 0, Text);
@@ -478,7 +487,7 @@ std::pair<AtomT *, NucleusT *> FindPrecedencePlacement(AtomT *ChildAtom, Nucleus
 
 OptionalT<NucleusT *> TypedFinish(std::unique_ptr<UndoLevelT> &Level, CoreT &Core, bool Bubble, bool Insert, AtomTypeT &Type, AtomT *ParentAtom, OptionalT<NucleusT *> Set)
 {
-	auto DiscardUndoLevel = make_unique<UndoLevelT>();
+	auto DiscardUndoLevel = std::make_unique<UndoLevelT>();
 
 	OptionalT<size_t> CarryoverPlaces;
 	OptionalT<OperatorDirectionT> Direction; 
@@ -551,7 +560,7 @@ SoloProtoatomTypeT::SoloProtoatomTypeT(void)
 {
 	TRACE;
 	Tag = "SoloProtoatom";
-	auto ProtoatomPart = make_unique<ProtoatomPartTypeT<SoloProtoatomPartT>>(*this);
+	auto ProtoatomPart = std::make_unique<ProtoatomPartTypeT<SoloProtoatomPartT>>(*this);
 	ProtoatomPart->FocusDefault = true;
 	Parts.push_back(std::move(ProtoatomPart));
 }
@@ -565,7 +574,7 @@ InsertProtoatomTypeT::InsertProtoatomTypeT(void)
 	Tag = "InsertProtoatom";
 	Precedence = 800;
 	LeftAssociative = false;
-	auto ProtoatomPart = make_unique<ProtoatomPartTypeT<WedgeProtoatomPartT>>(*this);
+	auto ProtoatomPart = std::make_unique<ProtoatomPartTypeT<WedgeProtoatomPartT>>(*this);
 	ProtoatomPart->FocusDefault = true;
 	Parts.push_back(std::move(ProtoatomPart));
 	auto AtomPart = new AtomPartTypeT(*this);
@@ -587,7 +596,7 @@ AppendProtoatomTypeT::AppendProtoatomTypeT(void)
 	AtomPart->StartEmpty = true;
 	AtomPart->Tag = "Lifted";
 	Parts.push_back(std::unique_ptr<CompositePartTypeT>(AtomPart));
-	auto ProtoatomPart = make_unique<ProtoatomPartTypeT<WedgeProtoatomPartT>>(*this);
+	auto ProtoatomPart = std::make_unique<ProtoatomPartTypeT<WedgeProtoatomPartT>>(*this);
 	ProtoatomPart->FocusDefault = true;
 	Parts.push_back(std::move(ProtoatomPart));
 }
@@ -612,7 +621,7 @@ ProtoatomPartT *WedgeProtoatomT::GetProtoatomPart(void)
 
 void WedgeProtoatomT::SetLifted(NucleusT *Lifted)
 {
-	auto DiscardUndoLevel = make_unique<UndoLevelT>();
+	auto DiscardUndoLevel = std::make_unique<UndoLevelT>();
 	(*(dynamic_cast<InsertProtoatomTypeT *>(&TypeInfo) ? Parts[1] : Parts[0]))->As<AtomPartT>()->Data.Set(DiscardUndoLevel, Lifted);
 }
 
