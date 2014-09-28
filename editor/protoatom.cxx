@@ -57,7 +57,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 	{
 		//TRACE;
 		/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
-		Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
+		Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus());
 		Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
 		if (CouldBeIdentifier) Polymorph.Bool("CouldBeIdentifier", *CouldBeIdentifier);
 		Polymorph.String("Data", Data);
@@ -70,7 +70,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 	{
 		TRACE;
 
-		if ((Focused == FocusedT::Off) && (Parent->As<CompositeT>()->Parts.size() == 1)) 
+		if ((Focused == FocusedT::Off) && (Parent()->As<CompositeT>()->Parts.size() == 1)) 
 			Core.TextMode = true;
 
 		if (Core.TextMode)
@@ -147,7 +147,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 					TRACE;
 					if (Base.Position == 0) 
 					{
-						Base.Parent->FocusPrevious(Level);
+						Base.Parent()->FocusPrevious(Level);
 					}
 					else
 					{
@@ -167,7 +167,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 					TRACE;
 					if (Base.Position == Base.Data.size()) 
 					{
-						Base.Parent->FocusNext(Level);
+						Base.Parent()->FocusNext(Level);
 					}
 					else
 					{
@@ -209,7 +209,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 			};
 			Core.RegisterAction(std::make_unique<DeleteT>(*this));
 
-			if (Parent->As<CompositeT>()->Parts.size() > 1)
+			if (Parent()->As<CompositeT>()->Parts.size() > 1)
 			{
 				struct ExitT : ActionT
 				{
@@ -252,7 +252,7 @@ struct BaseProtoatomPartT : ProtoatomPartT
 			};
 			Core.RegisterAction(std::make_unique<EnterT>(*this));
 		}
-		Parent->RegisterActions();
+		Parent()->RegisterActions();
 	}
 
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override
@@ -383,13 +383,13 @@ struct WedgeProtoatomPartT : BaseProtoatomPartT
 		if (Data.empty())
 		{
 			auto RealParent = PartParent();
-			if (RealParent && RealParent->Atom)
+			if (RealParent && RealParent->Atom())
 			{
-				auto Lifted = Parent->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Nucleus;
+				auto Lifted = Parent()->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Nucleus();
 				if (Lifted)
 				{
 					Level->Add(std::make_unique<FocusT>(Core, this));
-					PartParent()->Atom->Set(Level, Lifted);
+					PartParent()->Atom()->Set(Level, Lifted);
 				}
 			}
 		}
@@ -399,7 +399,7 @@ struct WedgeProtoatomPartT : BaseProtoatomPartT
 	OptionalT<NucleusT *> Finish(std::unique_ptr<UndoLevelT> &Level, OptionalT<AtomTypeT *> Type, std::string Text) override
 	{
 		TRACE;
-		Assert(Parent->Atom);
+		Assert(Parent()->Atom());
 		Type = Type ? Type : Core.LookUpAtomType(Data);
 
 		if (!Type) return {};
@@ -410,8 +410,8 @@ struct WedgeProtoatomPartT : BaseProtoatomPartT
 			Bubble, 
 			(bool)dynamic_cast<InsertProtoatomTypeT const *>(&PartParent()->GetTypeInfo()), 
 			**Type, 
-			PartParent()->Atom, 
-			PartParent()->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Nucleus);
+			PartParent()->Atom(), 
+			PartParent()->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Nucleus());
 	}
 };
 
@@ -422,7 +422,7 @@ struct SoloProtoatomPartT : BaseProtoatomPartT
 	OptionalT<NucleusT *> Finish(std::unique_ptr<UndoLevelT> &Level, OptionalT<AtomTypeT *> Type, std::string Text) override
 	{
 		TRACE;
-		Assert(Parent->Atom);
+		Assert(Parent()->Atom());
 		Type = Type ? Type : Core.LookUpAtomType(Data);
 		if (Type)
 		{
@@ -432,7 +432,7 @@ struct SoloProtoatomPartT : BaseProtoatomPartT
 				false, 
 				false, 
 				**Type, 
-				PartParent()->Atom, 
+				PartParent()->Atom(), 
 				{});
 		}
 		else
@@ -463,7 +463,7 @@ struct SoloProtoatomPartT : BaseProtoatomPartT
 				Protoatom->As<WedgeProtoatomT>()->SetLifted(Element);
 			}
 
-			PartParent()->Atom->Set(Level, Protoatom);
+			PartParent()->Atom()->Set(Level, Protoatom);
 
 			std::cout << Core.Dump() << std::endl; // DEBUG
 			std::cout << "Standard no-type finish." << std::endl;
@@ -478,8 +478,8 @@ std::pair<AtomT *, NucleusT *> FindPrecedencePlacement(AtomT *ChildAtom, Nucleus
 	std::cout << "Finding of placement of " << (*ChildAtom)->PartParent()->GetTypeInfo().Tag << " vs " << Replacement->GetTypeInfo().Tag << std::endl;
 	while ((*ChildAtom)->PartParent() && !IsPrecedent(*ChildAtom, Replacement))
 	{
-		ChildAtom = (*ChildAtom)->PartParent()->Atom;
-		Child = ChildAtom->Nucleus;
+		ChildAtom = (*ChildAtom)->PartParent()->Atom();
+		Child = ChildAtom->Nucleus();
 		std::cout << "not precedent, moving up: " << (*ChildAtom)->PartParent()->GetTypeInfo().Tag << std::endl;
 	}
 	return {ChildAtom, Child};
@@ -531,7 +531,7 @@ OptionalT<NucleusT *> TypedFinish(std::unique_ptr<UndoLevelT> &Level, CoreT &Cor
 
 		if (Bubble)
 		{
-			auto Placement = FindPrecedencePlacement(WedgeBottom, WedgeTop, Finished.Nucleus);
+			auto Placement = FindPrecedencePlacement(WedgeBottom, WedgeTop, Finished.Nucleus());
 			WedgeBottom = Placement.first;
 			WedgeTop = Placement.second;
 		}
@@ -542,13 +542,13 @@ OptionalT<NucleusT *> TypedFinish(std::unique_ptr<UndoLevelT> &Level, CoreT &Cor
 
 	if (Carryover)
 	{
-		WedgeBottom->Set(Level, Finished.Nucleus);
+		WedgeBottom->Set(Level, Finished.Nucleus());
 	}
 	else
 	{
 		Carryover = Core.AppendProtoatomType->Generate(Core);
 		Carryover->As<ProtoatomT>()->GetProtoatomPart()->As<WedgeProtoatomPartT>()->Bubble = true;
-		Carryover->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Set(DiscardUndoLevel, Finished.Nucleus);
+		Carryover->As<WedgeProtoatomT>()->GetLiftedPart()->Data.Set(DiscardUndoLevel, Finished.Nucleus());
 		WedgeBottom->Set(Level, Carryover);
 	}
 

@@ -17,38 +17,51 @@ struct CompositeTypeT;
 struct CompositeT : NucleusT
 {
 	CompositeTypeT &TypeInfo;
-	VisualT OperatorVisual;
-
-	struct SelfFocusedT {};
-	typedef size_t PartFocusedT;
-	VariantT<SelfFocusedT, PartFocusedT> Focused;
-	
-	bool EffectivelyVertical;
-	bool Ellipsized;
 
 	std::vector<std::unique_ptr<AtomT>> Parts;
 
+	// Global use
 	CompositeT(CoreT &Core, CompositeTypeT &TypeInfo);
+
+	AtomTypeT const &GetTypeInfo(void) const override;
+
+	size_t Depth(void) const;
+
+	// Core use
 	Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) override;
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
-	AtomTypeT const &GetTypeInfo(void) const override;
-	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
-	void AlignFocus(NucleusT *Child) override;
-	void FrameDepthAdjusted(OptionalT<size_t> Depth) override;
 	void RegisterActions(void) override;
-	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
-	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
-	void LocationChanged(void) override;
-	void Refresh(void) override;
+
+	// Tree use
+	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
 	void FocusPrevious(std::unique_ptr<UndoLevelT> &Level) override;
 	void FocusNext(std::unique_ptr<UndoLevelT> &Level) override;
+	void AlignFocus(NucleusT *Child) override;
+	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
 	bool IsFocused(void) const override;
-	
-	bool FocusDefault(std::unique_ptr<UndoLevelT> &Level);
 
+	bool FocusDefault(std::unique_ptr<UndoLevelT> &Level);
+	
 	OptionalT<AtomT *> GetOperand(OperatorDirectionT Direction, size_t Offset);
 	OptionalT<NucleusT *> GetAnyOperand(OperatorDirectionT Direction, size_t Offset);
 	OptionalT<OperatorDirectionT> GetOperandSide(AtomT *Operand);
+
+	// Callbacks (1 specific user)
+	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
+	void LocationChanged(void) override;
+	void ViewChanged(bool Framed, size_t Depth) override;
+	void Refresh(void) override;
+
+	private:
+		VisualT OperatorVisual;
+
+		struct SelfFocusedT {};
+		typedef size_t PartFocusedT;
+		VariantT<SelfFocusedT, PartFocusedT> Focused;
+		
+		bool EffectivelyVertical;
+		bool Ellipsized;
+		size_t Depth_;
 };
 
 struct CompositePartTypeT;
@@ -99,7 +112,7 @@ template <typename CompositeDerivateT> NucleusT *GenerateComposite(CompositeType
 		if (dynamic_cast<OperatorPartTypeT *>(Part.get())) continue;
 		Out->Parts.push_back(std::make_unique<AtomT>(Core));
 		Out->Parts.back()->Parent = Out;
-		Out->Parts.back()->Order = Order++;
+		Out->Parts.back()->SetOrder(Order++);
 		Out->Parts.back()->Set(DiscardUndoLevel, Part->Generate(Core));
 		auto &CapturePart = *Out->Parts.back().get();
 		Out->Parts.back()->Callback = [&CapturePart, Out, &Core](NucleusT *Replacement) 
@@ -107,9 +120,9 @@ template <typename CompositeDerivateT> NucleusT *GenerateComposite(CompositeType
 			// Parts can't be replaced, except during undo or redo
 			Assert(Core.UndoingOrRedoing);
 			if (CapturePart) CapturePart->IgnoreStatus((uintptr_t)Out);
-			if (Replacement) Replacement->WatchStatus((uintptr_t)Out, [](NucleusT *Nucleus) { Nucleus->Parent->FlagStatusChange(); });
+			if (Replacement) Replacement->WatchStatus((uintptr_t)Out, [](NucleusT *Nucleus) { Nucleus->Parent()->FlagStatusChange(); });
 		}; 
-		(*Out->Parts.back())->WatchStatus((uintptr_t)Out, [](NucleusT *Nucleus) { Nucleus->Parent->FlagStatusChange(); });
+		(*Out->Parts.back())->WatchStatus((uintptr_t)Out, [](NucleusT *Nucleus) { Nucleus->Parent()->FlagStatusChange(); });
 	}
 	return Out;
 }
@@ -137,7 +150,7 @@ struct AtomPartT : NucleusT
 	void Serialize(Serial::WritePolymorphT &Polymorph) const override;
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
-	void FrameDepthAdjusted(OptionalT<size_t> Depth) override;
+	void ViewChanged(bool Framed, size_t Depth) override;
 	void RegisterActions(void) override;
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;
@@ -175,7 +188,7 @@ struct AtomListPartT : NucleusT
 	AtomTypeT const &GetTypeInfo(void) const override;
 	void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) override;
 	void AlignFocus(NucleusT *Child) override;
-	void FrameDepthAdjusted(OptionalT<size_t> Depth) override;
+	void ViewChanged(bool Framed, size_t Depth) override;
 	void RegisterActions(void) override;
 	void Defocus(std::unique_ptr<UndoLevelT> &Level) override;
 	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level) override;

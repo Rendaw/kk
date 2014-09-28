@@ -170,17 +170,19 @@ bool TOCLocationT::Contains(TOCLocationT const &Other) const
 		++ThisOrders;
 		++OtherOrders;
 	}
-	AssertNE(*ThisOrders, *OtherOrders);
+	/*AssertNE(*ThisOrders, *OtherOrders);
 	if (*OtherOrders < *ThisOrders) return false;
-	if (Level >= Other.Level) return false;
-	return true;
+	*/
+	AssertGT(*OtherOrders, *ThisOrders);
+	if (Other.Orders.size() > Orders.size()) return true;
+	return Other.Level > Level;
 }
 	
 std::string TOCLocationT::Dump(void *Pointer) const
 {
 	std::stringstream Out;
 	for (auto &Ord : Orders) Out << Ord << " ";
-	Out << "(" << Level << ") " << Pointer << std::endl;
+	Out << "(" << Level << ") " << Pointer;
 	return Out.str();
 }
 	
@@ -200,29 +202,75 @@ FunctionActionT::FunctionActionT(std::string const &Name, std::function<void(std
 
 void FunctionActionT::Apply(std::unique_ptr<UndoLevelT> &Level) { Function(Level); }
 
-AtomT::AtomT(CoreT &Core) : Core(Core), Parent(nullptr), Order(0), Nucleus(nullptr) {}
+HoldT::HoldT(CoreT &Core) : Core(Core), Nucleus_(nullptr) {}
+
+HoldT::HoldT(CoreT &Core, NucleusT *Nucleus) : Core(Core), Nucleus_(nullptr)
+{
+	Set(Nucleus);
+}
+
+HoldT::HoldT(HoldT const &Other) : Core(Other.Core), Nucleus_(nullptr)
+{
+	Set(Other.Nucleus_);
+}
+
+HoldT::~HoldT(void) 
+{ 
+	Clear(); 
+}
+
+HoldT &HoldT::operator =(NucleusT *Nucleus)
+{
+	Clear();
+	Set(Nucleus);
+	return *this;
+}
+
+HoldT &HoldT::operator =(HoldT &&Hold)
+{
+	Clear();
+	Nucleus_ = Hold.Nucleus_;
+	Hold.Nucleus_ = nullptr;
+	return *this;
+}
+
+void HoldT::Set(NucleusT *Nucleus)
+{
+	if (!Nucleus) return;
+	Nucleus_ = Nucleus;
+	Nucleus_->Count += 1;
+}
+
+void HoldT::Clear(void)
+{
+	if (!Nucleus_) return;
+	Nucleus_->Count -= 1;
+	if (Nucleus_->Count == 0)
+		Core.DeletionCandidates.insert(Nucleus_);
+	Nucleus_ = nullptr;
+}
+
+HoldT::operator bool(void) const { return Nucleus_; }
+
+NucleusT *HoldT::operator ->(void) 
+{ 
+	return Nucleus_; 
+}
+
+NucleusT const *HoldT::operator ->(void) const
+{ 
+	return Nucleus_; 
+}
+	
+NucleusT *HoldT::Nucleus(void) { return Nucleus_; }
+
+NucleusT const *HoldT::Nucleus(void) const { return Nucleus_; }
+
+AtomT::AtomT(CoreT &Core) : Core(Core), Parent(nullptr), Order_(0), Nucleus_(nullptr) {}
 
 AtomT::~AtomT(void) 
 {
 	Clear();
-}
-
-NucleusT *AtomT::operator ->(void) 
-{ 
-	return Nucleus; 
-}
-
-NucleusT const *AtomT::operator ->(void) const
-{ 
-	return Nucleus; 
-}
-
-AtomT::operator bool(void) const { return Nucleus; }
-
-void AtomT::SetOrder(size_t Order)
-{
-	this->Order = Order;
-	if (Nucleus) Nucleus->LocationChanged();
 }
 
 void AtomT::Set(std::unique_ptr<UndoLevelT> &Level, NucleusT *Replacement)
@@ -236,13 +284,13 @@ void AtomT::Set(std::unique_ptr<UndoLevelT> &Level, NucleusT *Replacement)
 
 		SetT(AtomT &Base, NucleusT *Replacement) : Base(Base), Replacement(Base.Core, Replacement) { }
 		
-		void Apply(std::unique_ptr<UndoLevelT> &Level) { Base.Set(Level, Replacement.Nucleus); }
+		void Apply(std::unique_ptr<UndoLevelT> &Level) { Base.Set(Level, Replacement.Nucleus()); }
 	};
-	Level->Add(std::make_unique<SetT>(*this, Nucleus));
+	Level->Add(std::make_unique<SetT>(*this, Nucleus_));
 
 	if (Callback) Callback(Replacement);
 
-	auto Original = Nucleus;
+	auto Original = Nucleus_;
 	Clear();
 	if (Original) Original->LocationChanged();
 
@@ -250,117 +298,88 @@ void AtomT::Set(std::unique_ptr<UndoLevelT> &Level, NucleusT *Replacement)
 	if (!Replacement) 
 	{
 		//std::cout << "Set result: " << Core.Dump() << std::endl;
-		return;
+		return; // ^ Already cleared above
 	}
 
 	// Assign
-	Nucleus = Replacement;
+	Nucleus_ = Replacement;
 	//std::cout << "Set " << this << " to " << Replacement << std::endl;
 
-	Replacement->Count += 1;
+	Nucleus_->Count += 1;
 
-	if (Replacement->Atom)
+	if (Nucleus_->Atom_)
 	{
-		//std::cout << "Relocating atom " << Replacement << std::endl;
-		if (Replacement->Atom->Callback) Replacement->Atom->Callback(nullptr);
-		Level->Add(std::make_unique<SetT>(*Replacement->Atom, Replacement));
-		Replacement->Atom->Clear();
+		//std::cout << "Relocating atom " << Nucleus_ << std::endl;
+		if (Nucleus_->Atom_->Callback) Nucleus_->Atom_->Callback(nullptr);
+		Level->Add(std::make_unique<SetT>(*Nucleus_->Atom_, Nucleus_));
+		Nucleus_->Atom_->Clear();
 	}
-	Assert(!Replacement->Atom);
-	Replacement->Atom = this;
+	Assert(!Nucleus_->Atom_);
+	Nucleus_->Atom_ = this;
 
-	Replacement->Parent = Parent;
+	Nucleus_->Parent_ = Parent;
 
-	Replacement->LocationChanged();
+	Nucleus_->LocationChanged();
+	if (Parent) 
+	{
+		auto Composite = Parent->As<CompositeT>();
+		if (!Composite)
+			if (auto RealParent = Parent->PartParent())
+				Composite = RealParent->As<CompositeT>();
+		if (Composite)
+			Nucleus_->ViewChanged(Core.IsFramed(), Composite->TypeInfo.Ellipsize ? Composite->Depth() + 1 : Composite->Depth());
+	}
 
 	//std::cout << "Set result: " << Core.Dump() << std::endl;
 }
 	
+AtomT::operator bool(void) const { return Nucleus_; }
+
+NucleusT *AtomT::operator ->(void) 
+{ 
+	return Nucleus_; 
+}
+
+NucleusT const *AtomT::operator ->(void) const
+{ 
+	return Nucleus_; 
+}
+	
+NucleusT *AtomT::Nucleus(void) { return Nucleus_; }
+
+NucleusT const *AtomT::Nucleus(void) const { return Nucleus_; }
+
+size_t AtomT::Order(void) const { return Order_; }
+
+void AtomT::SetOrder(size_t Order)
+{
+	Order_ = Order;
+	if (Nucleus_) Nucleus_->LocationChanged();
+}
+
 void AtomT::Clear(void)
 {
-	if (!Nucleus) return;
-	AssertE(Nucleus->Atom, this);
-	Nucleus->Parent = nullptr;
-	Nucleus->Atom = nullptr;
-	Nucleus->Count -= 1;
-	if (Nucleus->Count == 0) Core.DeletionCandidates.insert(Nucleus);
-	Nucleus = nullptr;
+	if (!Nucleus_) return;
+	AssertE(Nucleus_->Atom_, this);
+	Nucleus_->Parent_ = nullptr;
+	Nucleus_->Atom_ = nullptr;
+	Nucleus_->Count -= 1;
+	if (Nucleus_->Count == 0) Core.DeletionCandidates.insert(Nucleus_);
+	Nucleus_ = nullptr;
 	//std::cout << "Cleared " << this << std::endl;
 }
 	
-HoldT::HoldT(CoreT &Core) : Core(Core), Nucleus(nullptr) {}
+NucleusReduction1T::NucleusReduction1T(CoreT &Core) : Parent_(Core), Atom_(nullptr) { }
 
-HoldT::HoldT(CoreT &Core, NucleusT *Nucleus) : Core(Core), Nucleus(nullptr)
-{
-	Set(Nucleus);
-}
+NucleusT *NucleusReduction1T::Parent(void) { return Parent_.Nucleus(); }
 
-HoldT::HoldT(HoldT const &Other) : Core(Other.Core), Nucleus(nullptr)
-{
-	Set(Other.Nucleus);
-}
+NucleusT const *NucleusReduction1T::Parent(void) const { return Parent_.Nucleus(); }
 
-HoldT::~HoldT(void) 
-{ 
-	Clear(); 
-}
+AtomT *NucleusReduction1T::Atom(void) { return Atom_; }
 
-NucleusT *HoldT::operator ->(void) 
-{ 
-	return Nucleus; 
-}
-
-NucleusT const *HoldT::operator ->(void) const
-{ 
-	return Nucleus; 
-}
-
-HoldT &HoldT::operator =(NucleusT *Nucleus)
-{
-	Clear();
-	Set(Nucleus);
-	return *this;
-}
-
-HoldT &HoldT::operator =(HoldT &&Hold)
-{
-	Clear();
-	Nucleus = Hold.Nucleus;
-	Hold.Nucleus = nullptr;
-	return *this;
-}
-
-void HoldT::Set(NucleusT *Nucleus)
-{
-	if (!Nucleus) return;
-	this->Nucleus = Nucleus;
-	Nucleus->Count += 1;
-}
-
-void HoldT::Clear(void)
-{
-	if (!Nucleus) return;
-	Nucleus->Count -= 1;
-	if (Nucleus->Count == 0)
-		Core.DeletionCandidates.insert(Nucleus);
-	Nucleus = nullptr;
-}
-
-HoldT::operator bool(void) const { return Nucleus; }
-
-OptionalT<NucleusT *> NucleusT::PartParent(void)
-{
-	if (!Parent) return {};
-	auto Test = Parent.Nucleus;
-	while (!Test->template As<CompositeT>()) // Since everything is a Composite now, this is an okay test.  Maybe add a PartParent ref to AtomT?
-	{
-		if (!Test->Parent) return {};
-		Test = Test->Parent.Nucleus;
-	}
-	return Test;
-}
-
-NucleusT::NucleusT(CoreT &Core) : Core(Core), Parent(Core), Visual(Core.RootVisual.Root), Atom(nullptr) 
+AtomT const *NucleusReduction1T::Atom(void) const { return Atom_; }
+	
+NucleusT::NucleusT(CoreT &Core) : NucleusReduction1T(Core), Core(Core), Visual(Core.RootVisual.Root)
 {
 	Visual.SetFocusTarget(this);
 	Core.NeedRefresh.insert(this);	
@@ -368,62 +387,72 @@ NucleusT::NucleusT(CoreT &Core) : Core(Core), Parent(Core), Visual(Core.RootVisu
 
 NucleusT::~NucleusT(void) {}
 
-void NucleusT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
+OptionalT<NucleusT *> NucleusT::PartParent(void)
 {
-	//Serialize(Serial::WritePolymorphT(GetTypeInfo().Tag, std::move(Prepolymorph)));
-	auto Polymorph = Serial::WritePolymorphT(GetTypeInfo().Tag, std::move(Prepolymorph));
-	/*Polymorph.String("this", ::StringT() << this);
-	Polymorph.String("parent", ::StringT() << Parent.Nucleus);
-	Polymorph.String("atom", ::StringT() << Atom);*/
-	Serialize(Polymorph);
+	if (!Parent()) return {};
+	auto Test = Parent();
+	while (!Test->template As<CompositeT>()) // Since everything is a Composite now, this is an okay test.  Maybe add a PartParent ref to AtomT?
+	{
+		if (!Test->Parent()) return {};
+		Test = Test->Parent();
+	}
+	return Test;
 }
-		
-void NucleusT::Serialize(Serial::WritePolymorphT &WritePolymorph) const {}
 
+OptionalT<std::list<size_t>> NucleusT::GetGlobalOrder(void) const
+{
+	std::list<size_t> Path;
+	NucleusT const *At = this;
+	while (At->Atom())
+	{
+		Path.push_front(At->Atom()->Order());
+		if (!At->Parent()) break;
+		At = At->Parent();
+	}
+
+	if (At->Atom() != &Core.Root) return {};
+	return Path;
+}
+	
 AtomTypeT const &NucleusT::GetTypeInfo(void) const
 {
 	static AtomTypeT Type;
 	return Type;
 }
 
+void NucleusT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
+{
+	//Serialize(Serial::WritePolymorphT(GetTypeInfo().Tag, std::move(Prepolymorph)));
+	auto Polymorph = Serial::WritePolymorphT(GetTypeInfo().Tag, std::move(Prepolymorph));
+	/*Polymorph.String("this", ::StringT() << this);
+	Polymorph.String("parent", ::StringT() << Parent.Nucleus());
+	Polymorph.String("atom", ::StringT() << Atom);*/
+	Serialize(Polymorph);
+}
+		
+void NucleusT::Serialize(Serial::WritePolymorphT &WritePolymorph) const {}
+
 void NucleusT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) 
 {
 	TRACE;
-	if (Parent) Parent->AlignFocus(this);
-	Core.Focus(Level, this);
+	if (Parent()) Parent()->AlignFocus(this);
+	((CoreReduction2T &)Core).Focus(Level, this);
 }
 	
-void NucleusT::AlignFocus(NucleusT *Child)
-{
-	if (Parent) Parent->AlignFocus(this);
-}
-	
-void NucleusT::FrameDepthAdjusted(OptionalT<size_t> Depth) { }
-
-void NucleusT::Defocus(std::unique_ptr<UndoLevelT> &Level) {}
-		
-void NucleusT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level) { }
-
-void NucleusT::LocationChanged(void) {}
-
-void NucleusT::Refresh(void) { Assert(false); }
-
 void NucleusT::FocusPrevious(std::unique_ptr<UndoLevelT> &Level) { TRACE; }
 
 void NucleusT::FocusNext(std::unique_ptr<UndoLevelT> &Level) { TRACE; }
 	
-bool NucleusT::IsFocused(void) const { return Core.Focused.Nucleus == this; }
-
-void NucleusT::FlagRefresh(void) 
+void NucleusT::AlignFocus(NucleusT *Child)
 {
-	Core.NeedRefresh.insert(this);
+	if (Parent()) Parent()->AlignFocus(this);
 }
 	
-void NucleusT::FlagStatusChange(void)
-{
-	for (auto &Watcher : StatusWatchers)
-		Watcher.second(this);
-}
+void NucleusT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level) { }
+
+bool NucleusT::IsFocused(void) const { return Core.Focused() == this; }
+	
+bool NucleusT::IsFramed(void) const { return Core.Framed.Nucleus() == this; }
 
 void NucleusT::WatchStatus(uintptr_t ID, std::function<void(NucleusT *Changed)> Callback)
 {
@@ -438,21 +467,25 @@ void NucleusT::IgnoreStatus(uintptr_t ID)
 		StatusWatchers.erase(Found);
 }
 	
-OptionalT<std::list<size_t>> NucleusT::GetGlobalOrder(void) const
-{
-	std::list<size_t> Path;
-	NucleusT const *At = this;
-	while (At->Atom)
-	{
-		Path.push_front(At->Atom->Order);
-		if (!At->Parent.Nucleus) break;
-		At = At->Parent.Nucleus;
-	}
+void NucleusT::Defocus(std::unique_ptr<UndoLevelT> &Level) {}
+		
+void NucleusT::LocationChanged(void) {}
 
-	if (At->Atom != &Core.Root) return {};
-	return Path;
+void NucleusT::ViewChanged(bool Framed, size_t Depth) { }
+
+void NucleusT::Refresh(void) { Assert(false); }
+
+void NucleusT::FlagRefresh(void) 
+{
+	Core.NeedRefresh.insert(this);
 }
 	
+void NucleusT::FlagStatusChange(void)
+{
+	for (auto &Watcher : StatusWatchers)
+		Watcher.second(this);
+}
+
 AtomTypeT::~AtomTypeT(void) {}
 
 Serial::ReadErrorT AtomTypeT::Deserialize(Serial::ReadObjectT &Object)
@@ -482,7 +515,7 @@ FocusT::FocusT(CoreT &Core, NucleusT *Nucleus, bool DoNothing) : Core(Core), Tar
 
 void FocusT::Apply(std::unique_ptr<UndoLevelT> &Level)
 {
-	Level->Add(std::make_unique<FocusT>(Core, Target.Nucleus, !DoNothing));
+	Level->Add(std::make_unique<FocusT>(Core, Target.Nucleus(), !DoNothing));
 	Target->Focus(Level, FocusDirectionT::Direct);
 }
 
@@ -517,27 +550,190 @@ bool UndoLevelT::Combine(std::unique_ptr<UndoLevelT> &Other)
 		Reactions.front()->Combine(OtherGroup->Reactions.front())
 	);
 }
-
-CoreT::CoreT(VisualT &RootVisual) : 
+	
+CoreBaseT::CoreBaseT(CoreT &Core, VisualT &RootVisual) : 
+	TextMode(true),
+	This(Core),
+	Root(Core), 
+	Focused_(Core),
 	RootVisual(RootVisual), 
-	FrameVisual(RootVisual.Root),
-	Root(*this), 
-	Focused(*this), 
-	Framed(*this),
-	TextMode(true), 
+	RootRefresh(false),
+	NeedScroll(false)
+{
+}
+
+#define COREVINIT CoreBaseT((CoreT &)(*(CoreT *)nullptr), (VisualT &)(*(VisualT *)nullptr))
+
+CoreBaseT::SettingsT const &CoreBaseT::Settings(void) const { return Settings_; }
+	
+NucleusT *CoreBaseT::Focused(void) { return Focused_.Nucleus(); }
+
+NucleusT const *CoreBaseT::Focused(void) const { return Focused_.Nucleus(); }
+
+Serial::ReadErrorT CoreBaseT::Deserialize(std::unique_ptr<UndoLevelT> &Level, AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object)
+{
+	std::unique_ptr<NucleusT> Nucleus;
+	auto Type = Types.find(TypeName);
+	if (Type == Types.end()) return (StringT() << "Unknown type \'" << TypeName << "\'").str();
+	Out.Set(Level, Type->second->Generate(This));
+	return Out->Deserialize(Object);
+}
+
+CoreReduction1T::CoreReduction1T(void) : 
+	COREVINIT, 
+	CursorVisual(RootVisual.Root),
 	SoloProtoatomType(nullptr), 
 	InsertProtoatomType(nullptr), 
 	AppendProtoatomType(nullptr), 
 	ElementType(nullptr), 
-	StringType(nullptr), 
-	NeedScroll(false),
-	RootRefresh(false),
-	CursorVisual(RootVisual.Root),
-	UndoingOrRedoing(false)
+	StringType(nullptr)
 {
-	FrameVisual.SetClass("frame");
 	CursorVisual.SetClass("cursor");
 	CursorVisual.Add("|");
+}
+
+CoreReduction2_1T::CoreReduction2_1T(CoreT &Core) : COREVINIT, Framed(Core) {}
+
+CoreReduction2T::CoreReduction2T(CoreT &Core) : COREVINIT, CoreReduction2_1T(Core) {}
+
+bool CoreReduction2T::IsFramed(void) const { return Framed; }
+
+void CoreReduction2T::Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus)
+{
+	Assert(Nucleus);
+	if (Focused_.Nucleus() == Nucleus) return;
+	if (Focused_) Focused_->Defocus(Level);
+	Focused_ = Nucleus;
+	std::cout << "FOCUSED " << Nucleus << std::endl;
+	NeedScroll = true;
+
+	if (Framed)
+	{
+		std::vector<NucleusT *> Ancestry;
+		OptionalT<NucleusT *> Unframe = Nucleus;
+		if (!Unframe->As<CompositeT>()) Unframe = Unframe->PartParent();
+		while (Unframe)
+		{
+			auto Composite = Unframe->As<CompositeT>();
+			Assert(Composite);
+			bool HitFramed = *Unframe == Framed.Nucleus();
+			if (Composite->TypeInfo.Ellipsize || HitFramed)
+			{
+				Ancestry.push_back(*Unframe);
+				std::cout << "Ancestor " << Unframe->GetTypeInfo().Tag << std::endl;
+				if (HitFramed) break;
+			}
+			Unframe = Unframe->PartParent();
+		}
+		std::cout << "Ancestry size " << Ancestry.size() << std::endl;
+		if (!Ancestry.empty() && (Ancestry.back() == Framed.Nucleus()))
+		{
+			if (Settings_.FrameDepth && (Ancestry.size() > *Settings_.FrameDepth))
+			{
+				std::cout << "Ancestry > " << *Settings_.FrameDepth << std::endl;
+				Frame(Ancestry[*Settings_.FrameDepth - 1]);
+			}
+		}
+		else
+		{
+			std::cout << "Ancestry no framed (" << Framed.Nucleus() << ")" << std::endl;
+			if (Settings_.UnframeAtRoot && (Root.Nucleus() == Nucleus)) Frame(nullptr);
+			else Frame(Nucleus);
+		}
+	}
+
+	if (FocusChangedCallback) FocusChangedCallback();
+}
+	
+void CoreReduction2T::Frame(NucleusT *Nucleus)
+{
+	if (Framed.Nucleus() == Nucleus) return;
+	if (Framed && Framed->Parent()) { Framed->Parent()->FlagRefresh(); }
+	Framed = Nucleus;
+	if (Framed) Framed->ViewChanged(true, 1);
+	else Root->ViewChanged(false, 1);
+	RootRefresh = true;
+}
+	
+void CoreReduction2T::Copy(NucleusT *Tree)
+{
+	// TODO unify this with Serialize - need stream abstraction
+	if (!CopyCallback) return;
+	if (!Assert(Root)) return; // TODO Error?
+	Serial::WriteT Writer;
+	{
+		auto WriteRoot = Writer.Object();
+		Tree->Serialize(WriteRoot.Polymorph("Root"));
+	}
+	CopyCallback(Writer.Dump());
+}
+
+void CoreReduction2T::Paste(std::unique_ptr<UndoLevelT> &UndoLevel, AtomT &Destination)
+{
+	// TODO unify this with deserialize... somehow. Need stream abstraction
+	if (!PasteCallback) return;
+	HoldT TempRoot2(This); // Used to prevent clear reaction when setting destination
+	{
+		AtomT TempRoot(This); // Used as buffer to abort if deserialization fails
+		Serial::ReadT Read;
+		Read.Object([this, &TempRoot, &UndoLevel](Serial::ReadObjectT &Object) -> Serial::ReadErrorT
+		{
+			Object.Polymorph("Root", [this, &TempRoot, &UndoLevel](std::string &&Key, Serial::ReadObjectT &Object)
+			{
+				auto DiscardUndo = std::make_unique<UndoLevelT>();
+				return Deserialize(DiscardUndo, TempRoot, std::move(Key), Object);
+			});
+			return {};
+		});
+		auto Text = PasteCallback();
+		if (Text)
+		{
+			auto ParseError = Read.Parse(*Text);
+			if (ParseError) 
+			{
+				std::cout << "Error pasting: " << *ParseError << std::endl;
+				return;
+			}
+		}
+		Assert(TempRoot.Nucleus());
+		TempRoot2.Set(TempRoot.Nucleus());
+	}
+	Destination.Set(UndoLevel, TempRoot2.Nucleus());
+}
+
+CoreReduction3T::CoreReduction3T(void) : COREVINIT {}
+
+CoreReduction4_1T::CoreReduction4_1T(void) : COREVINIT {}
+
+CoreReduction4T::CoreReduction4T(void) : COREVINIT {}
+
+OptionalT<AtomTypeT *> CoreReduction4T::LookUpAtomType(std::string const &Text)
+{
+	auto Type = TypeLookup.find(Text);
+	if (Type == TypeLookup.end()) return {};
+	return &*Type->second;
+}
+	
+bool CoreReduction4T::CouldBeAtomType(std::string const &Text)
+{
+	auto Type = TypeLookup.lower_bound(Text);
+	if (Type == TypeLookup.end()) return false;
+	if (Type->first.length() < Text.length()) return false;
+	return Type->first.substr(0, Text.length()) == Text;
+}
+
+CoreReduction5T::CoreReduction5T(void) : 
+	COREVINIT, 
+	UndoingOrRedoing(false)
+{
+}
+	
+CoreT::CoreT(VisualT &RootVisual) : 
+	CoreBaseT(*this, RootVisual),
+	CoreReduction2T(*this), 
+	FrameVisual(RootVisual.Root)
+{
+	FrameVisual.SetClass("frame");
 	
 	Types.emplace("SoloProtoatom", std::make_unique<SoloProtoatomTypeT>());
 	SoloProtoatomType = Types["SoloProtoatom"].get();
@@ -586,11 +782,11 @@ Serial::ReadErrorT CoreT::Configure(Serial::ReadObjectT &Object)
 		return {};
 	});
 	Object.UInt("FrameDepth", [this](uint64_t Value) -> Serial::ReadErrorT 
-		{ Settings.FrameDepth = Value; return {}; });
+		{ Settings_.FrameDepth = Value; return {}; });
 	Object.Bool("UnframeAtRoot", [this](bool Value) -> Serial::ReadErrorT 
-		{ Settings.UnframeAtRoot = Value; return {}; });
+		{ Settings_.UnframeAtRoot = Value; return {}; });
 	Object.Bool("StartFramed", [this](bool Value) -> Serial::ReadErrorT 
-		{ Settings.StartFramed = Value; return {}; });
+		{ Settings_.StartFramed = Value; return {}; });
 	return {};
 }
 
@@ -640,7 +836,7 @@ void CoreT::Deserialize(Filesystem::PathT const &Path)
 			//return Deserialize(NewRoot, "Module", Object);
 			Object.Polymorph("Root", [this, &NewRoot, &UndoLevel](std::string &&Key, Serial::ReadObjectT &Object)
 			{
-				return Deserialize(UndoLevel, NewRoot, std::move(Key), Object);
+				return CoreReduction1T::Deserialize(UndoLevel, NewRoot, std::move(Key), Object);
 			});
 			return {};
 		});
@@ -648,11 +844,11 @@ void CoreT::Deserialize(Filesystem::PathT const &Path)
 		ParseError = Read.Parse(Path);
 		if (ParseError) throw ConstructionErrorT() << *ParseError;
 	}
-	Root.Set(UndoLevel, NewRoot.Nucleus);
-	if (Settings.StartFramed) Frame(Root.Nucleus);
+	Root.Set(UndoLevel, NewRoot.Nucleus());
+	if (Settings_.StartFramed) Frame(Root.Nucleus());
 	AssumeFocus(UndoLevel);
 	Refresh();
-	Focused->RegisterActions();
+	Focused_->RegisterActions();
 	RegisterActions();
 }
 
@@ -697,7 +893,7 @@ void CoreT::HandleInput(std::shared_ptr<ActionT> Action)
 
 	Refresh();
 
-	Focused->RegisterActions();
+	Focused_->RegisterActions();
 	RegisterActions();
 	
 	if (HandleInputFinishedCallback)
@@ -714,147 +910,20 @@ bool CoreT::HasChanges(void)
 void CoreT::Focus(NucleusT *Nucleus)
 {
 	Assert(!InHandleInput);
-	auto Action = std::make_shared<FunctionActionT>("Direct select", [this, Nucleus](std::unique_ptr<UndoLevelT> &Level)
+	auto Action = std::make_shared<FunctionActionT>("", [this, Nucleus](std::unique_ptr<UndoLevelT> &Level)
 	{
 		Nucleus->Focus(Level, FocusDirectionT::Direct);
 	});
 	HandleInput(Action);
 }
 
-Serial::ReadErrorT CoreT::Deserialize(std::unique_ptr<UndoLevelT> &Level, AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object)
-{
-	std::unique_ptr<NucleusT> Nucleus;
-	auto Type = Types.find(TypeName);
-	if (Type == Types.end()) return (StringT() << "Unknown type \'" << TypeName << "\'").str();
-	Out.Set(Level, Type->second->Generate(*this));
-	return Out->Deserialize(Object);
-}
-
-OptionalT<AtomTypeT *> CoreT::LookUpAtomType(std::string const &Text)
-{
-	auto Type = TypeLookup.find(Text);
-	if (Type == TypeLookup.end()) return {};
-	return &*Type->second;
-}
-	
-bool CoreT::CouldBeAtomType(std::string const &Text)
-{
-	auto Type = TypeLookup.lower_bound(Text);
-	if (Type == TypeLookup.end()) return false;
-	if (Type->first.length() < Text.length()) return false;
-	return Type->first.substr(0, Text.length()) == Text;
-}
-	
-void CoreT::Frame(NucleusT *Nucleus)
-{
-	if (Framed.Nucleus == Nucleus) return;
-	if (Framed && Framed->Parent) { Framed->Parent->FlagRefresh(); }
-	Framed = Nucleus;
-	if (Framed) Framed->FrameDepthAdjusted((size_t)1);
-	else Root->FrameDepthAdjusted({});
-	RootRefresh = true;
-}
-	
-void CoreT::Copy(NucleusT *Tree)
-{
-	// TODO unify this with Serialize - need stream abstraction
-	if (!CopyCallback) return;
-	if (!Assert(Root)) return; // TODO Error?
-	Serial::WriteT Writer;
-	{
-		auto WriteRoot = Writer.Object();
-		Tree->Serialize(WriteRoot.Polymorph("Root"));
-	}
-	CopyCallback(Writer.Dump());
-}
-
-void CoreT::Paste(std::unique_ptr<UndoLevelT> &UndoLevel, AtomT &Destination)
-{
-	// TODO unify this with deserialize... somehow. Need stream abstraction
-	if (!PasteCallback) return;
-	HoldT TempRoot2(*this); // Used to prevent clear reaction when setting destination
-	{
-		AtomT TempRoot(*this); // Used as buffer to abort if deserialization fails
-		Serial::ReadT Read;
-		Read.Object([this, &TempRoot, &UndoLevel](Serial::ReadObjectT &Object) -> Serial::ReadErrorT
-		{
-			Object.Polymorph("Root", [this, &TempRoot, &UndoLevel](std::string &&Key, Serial::ReadObjectT &Object)
-			{
-				auto DiscardUndo = std::make_unique<UndoLevelT>();
-				return Deserialize(DiscardUndo, TempRoot, std::move(Key), Object);
-			});
-			return {};
-		});
-		auto Text = PasteCallback();
-		if (Text)
-		{
-			auto ParseError = Read.Parse(*Text);
-			if (ParseError) 
-			{
-				std::cout << "Error pasting: " << *ParseError << std::endl;
-				return;
-			}
-		}
-		Assert(TempRoot.Nucleus);
-		TempRoot2.Set(TempRoot.Nucleus);
-	}
-	Destination.Set(UndoLevel, TempRoot2.Nucleus);
-}
-
-void CoreT::Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus)
-{
-	Assert(Nucleus);
-	if (Focused.Nucleus == Nucleus) return;
-	if (Focused) Focused->Defocus(Level);
-	Focused = Nucleus;
-	std::cout << "FOCUSED " << Nucleus << std::endl;
-	NeedScroll = true;
-
-	if (Framed)
-	{
-		std::vector<NucleusT *> Ancestry;
-		OptionalT<NucleusT *> Unframe = Nucleus;
-		if (!Unframe->As<CompositeT>()) Unframe = Unframe->PartParent();
-		while (Unframe)
-		{
-			auto Composite = Unframe->As<CompositeT>();
-			Assert(Composite);
-			bool HitFramed = *Unframe == Framed.Nucleus;
-			if (Composite->TypeInfo.Ellipsize || HitFramed)
-			{
-				Ancestry.push_back(*Unframe);
-				std::cout << "Ancestor " << Unframe->GetTypeInfo().Tag << std::endl;
-				if (HitFramed) break;
-			}
-			Unframe = Unframe->PartParent();
-		}
-		std::cout << "Ancestry size " << Ancestry.size() << std::endl;
-		if (!Ancestry.empty() && (Ancestry.back() == Framed.Nucleus))
-		{
-			if (Settings.FrameDepth && (Ancestry.size() > *Settings.FrameDepth))
-			{
-				std::cout << "Ancestry > " << *Settings.FrameDepth << std::endl;
-				Frame(Ancestry[*Settings.FrameDepth - 1]);
-			}
-		}
-		else
-		{
-			std::cout << "Ancestry no framed (" << Framed.Nucleus << ")" << std::endl;
-			if (Settings.UnframeAtRoot && (Root.Nucleus == Nucleus)) Frame(nullptr);
-			else Frame(Nucleus);
-		}
-	}
-
-	if (FocusChangedCallback) FocusChangedCallback();
-}
-	
 void CoreT::Refresh(void)
 {
 	if (RootRefresh)
 	{
 		RootVisual.Start();
-		Assert(Root.Nucleus);
-		if (Framed && (Framed.Nucleus != Root.Nucleus))
+		Assert(Root.Nucleus());
+		if (Framed && (Framed.Nucleus() != Root.Nucleus()))
 		{
 			FrameVisual.Start();
 			FrameVisual.Add(Framed->Visual);
@@ -866,9 +935,9 @@ void CoreT::Refresh(void)
 	for (auto &Refreshable : NeedRefresh)
 		Refreshable->Refresh();
 	NeedRefresh.clear();
-	if (NeedScroll && Focused)
+	if (NeedScroll && Focused_)
 	{
-		Focused->Visual.Scroll();
+		Focused_->Visual.Scroll();
 		NeedScroll = false;
 	}
 }

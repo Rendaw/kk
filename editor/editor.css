@@ -111,9 +111,11 @@ div.type-CommentCode
 	font-family: sans-serif;
 	display: inline-block;
 	width: 100%;
+	font-size: 1em;
 }
 
-div.type-CommentHeader
+div.depth-1.type-CommentHeader,
+div.depth-2.type-CommentHeader
 {
 	font-size: 1.3em;
 	font-weight: bold;
@@ -121,19 +123,28 @@ div.type-CommentHeader
 	margin-bottom: 12px;
 }
 
-div.type-CommentSubHeader
+div.depth-1.type-CommentSubHeader,
+div.depth-2.type-CommentSubHeader,
+div.depth-3.type-CommentHeader
 {
 	font-size: 1.2em;
 	font-weight: bold;
 	margin-bottom: 6px;
 }
 
-div.type-CommentSubSubHeader
+div.depth-1.type-CommentSubSubHeader,
+div.depth-2.type-CommentSubSubHeader,
+div.depth-3.type-CommentSubHeader,
+div.depth-4.type-CommentHeader
 {
 	font-size: 1.1em;
 }
 
-div.type-CommentSubSubSubHeader
+div.depth-1.type-CommentSubSubSubHeader,
+div.depth-2.type-CommentSubSubSubHeader,
+div.depth-3.type-CommentSubSubHeader,
+div.depth-4.type-CommentSubHeader,
+div.depth-5.type-CommentHeader
 {
 	font-size: 1.05em;
 }

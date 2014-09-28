@@ -116,45 +116,58 @@ struct NucleusT;
 
 struct HoldT
 {
+	CoreT &Core;
+
 	HoldT(CoreT &Core);
 	HoldT(CoreT &Core, NucleusT *Nucleus);
 	HoldT(HoldT const &Other);
 	~HoldT(void);
-	NucleusT *operator ->(void);
-	NucleusT const *operator ->(void) const;
+	
 	HoldT &operator =(NucleusT *Nucleus);
 	HoldT &operator =(HoldT &&Hold);
 	void Set(NucleusT *Nucleus);
 	void Clear(void);
 	
 	operator bool(void) const;
+
+	NucleusT *operator ->(void);
+	NucleusT const *operator ->(void) const;
+	NucleusT *Nucleus(void);
+	NucleusT const *Nucleus(void) const;
 	
-	CoreT &Core;
-	NucleusT *Nucleus;
+	private:
+		NucleusT *Nucleus_;
 };
 
 struct AtomT
 {
+	CoreT &Core;
+
+	typedef std::function<void(NucleusT *Nucleus)> AtomCallbackT;
+	AtomCallbackT Callback;
+	NucleusT *Parent;
+
 	AtomT(AtomT const &Other) = delete;
 	AtomT(CoreT &Core);
 	~AtomT(void);
-	NucleusT *operator ->(void);
-	NucleusT const *operator ->(void) const;
-	operator bool(void) const;
-
+	
 	void Set(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus);
 
+	operator bool(void) const;
+
+	NucleusT *operator ->(void);
+	NucleusT const *operator ->(void) const;
+	NucleusT *Nucleus(void);
+	NucleusT const *Nucleus(void) const;
+
+	size_t Order(void) const;
 	void SetOrder(size_t Ordering);
 	
-	typedef std::function<void(NucleusT *Nucleus)> AtomCallbackT;
-	CoreT &Core;
-	AtomCallbackT Callback;
-	NucleusT *Parent;
-	size_t Order;
-	NucleusT *Nucleus;
-
 	private:
 		void Clear(void);
+
+		size_t Order_;
+		NucleusT *Nucleus_;
 };
 
 enum struct FocusDirectionT
@@ -166,20 +179,34 @@ enum struct FocusDirectionT
 
 struct AtomTypeT;
 
-struct NucleusT
+struct NucleusReduction1T
+{
+	NucleusReduction1T(CoreT &Core);
+
+	NucleusT *Parent(void);
+	NucleusT const *Parent(void) const;
+	AtomT *Atom(void);
+	AtomT const *Atom(void) const;
+
+	private:
+		friend struct AtomT;
+		friend struct HoldT;
+		friend struct CoreT;
+		HoldT Parent_;
+		size_t Count = 0;
+		AtomT *Atom_;
+};
+
+struct NucleusT : NucleusReduction1T
 {
 	CoreT &Core;
-	HoldT Parent;
-	OptionalT<NucleusT *> PartParent(void);
 	VisualT Visual;
-
-	size_t Count = 0;
-	AtomT *Atom;
-
-	std::map<uintptr_t, std::function<void(NucleusT *Changed)>> StatusWatchers;
 
 	NucleusT(CoreT &Core);
 	virtual ~NucleusT(void);
+
+	// Global use
+	OptionalT<NucleusT *> PartParent(void);
 
 	template <typename AsT> OptionalT<AsT *> As(void) 
 	{ 
@@ -195,31 +222,39 @@ struct NucleusT
 		return {}; 
 	}
 	
+	OptionalT<std::list<size_t>> GetGlobalOrder(void) const;
+	virtual AtomTypeT const &GetTypeInfo(void) const;
+	
+	// Core use
 	virtual Serial::ReadErrorT Deserialize(Serial::ReadObjectT &Object) = 0;
 	void Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const;
 	virtual void Serialize(Serial::WritePolymorphT &Polymorph) const;
-	virtual AtomTypeT const &GetTypeInfo(void) const;
-	virtual void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction);
-	virtual void AlignFocus(NucleusT *Child);
-	virtual void FrameDepthAdjusted(OptionalT<size_t> Depth);
 	virtual void RegisterActions(void) = 0;
-	virtual void Defocus(std::unique_ptr<UndoLevelT> &Level);
-	virtual void AssumeFocus(std::unique_ptr<UndoLevelT> &Level);
-	virtual void LocationChanged(void);
-	virtual void Refresh(void);
 
+	// Tree use
+	virtual void Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction);
 	virtual void FocusPrevious(std::unique_ptr<UndoLevelT> &Level);
 	virtual void FocusNext(std::unique_ptr<UndoLevelT> &Level);
-	
+	virtual void AlignFocus(NucleusT *Child);
+	virtual void AssumeFocus(std::unique_ptr<UndoLevelT> &Level);
 	virtual bool IsFocused(void) const;
+	virtual bool IsFramed(void) const;
 		
-	void FlagRefresh(void);
-
-	void FlagStatusChange(void);
 	void WatchStatus(uintptr_t ID, std::function<void(NucleusT *Changed)> Callback);
 	void IgnoreStatus(uintptr_t ID);
+	
+	// Callbacks (1 specific user)
+	virtual void Defocus(std::unique_ptr<UndoLevelT> &Level);
+	virtual void LocationChanged(void);
+	virtual void ViewChanged(bool Framed, size_t Depth);
+	virtual void Refresh(void);
 
-	OptionalT<std::list<size_t>> GetGlobalOrder(void) const;
+	// Self use
+	void FlagRefresh(void);
+	void FlagStatusChange(void);
+	
+	private:
+		std::map<uintptr_t, std::function<void(NucleusT *Changed)>> StatusWatchers;
 };
 
 struct AtomTypeT
@@ -267,47 +302,144 @@ struct UndoLevelT
 	bool Combine(std::unique_ptr<UndoLevelT> &Other);
 };
 
-struct CoreT
+struct CoreBaseT
 {
-	VisualT &RootVisual;
-	VisualT FrameVisual;
-	AtomT Root;
-	HoldT Focused;
-	HoldT Framed;
-	
-	bool TextMode;
-	
-	std::map<std::string, std::unique_ptr<AtomTypeT>> Types;
-	AtomTypeT *SoloProtoatomType, *InsertProtoatomType, *AppendProtoatomType, *ElementType, *StringType;
-	std::map<std::string, AtomTypeT *> TypeLookup;
-
-	std::set<NucleusT *> DeletionCandidates;
-	std::set<NucleusT *> NeedRefresh;
-	bool NeedScroll;
-	bool RootRefresh;
-
-	VisualT CursorVisual;
-
-	bool UndoingOrRedoing; // Debugging aide
-
-	struct 
+	CoreBaseT(CoreT &Core, VisualT &RootVisual);
+		
+	struct SettingsT
 	{
 		bool UnframeAtRoot = true;
 		bool StartFramed = false;
 		OptionalT<size_t> FrameDepth;
-	} Settings;
+	};
+	SettingsT const &Settings(void) const;
 
-	// External interface
-	std::list<std::shared_ptr<ActionT>> Actions;
+	NucleusT *Focused(void);
+	NucleusT const *Focused(void) const;
 
-	std::function<void(void)> ResetActionsCallback;
-	std::function<void(std::shared_ptr<ActionT> Action)> RegisterActionCallback;
+	bool TextMode;
+
+	protected:
+		CoreT &This; // Hack
+
+		AtomT Root;
+		HoldT Focused_;
+		VisualT &RootVisual;
+		bool RootRefresh;
+		bool NeedScroll;
+		
+		SettingsT Settings_;
+
+		std::map<std::string, std::unique_ptr<AtomTypeT>> Types;
+		
+		Serial::ReadErrorT Deserialize(std::unique_ptr<UndoLevelT> &Level, AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
+};
+
+struct CoreReduction1T : virtual CoreBaseT
+{
+	CoreReduction1T(void);
+
+	std::function<std::unique_ptr<TOCVisualT>(NucleusT *Owner)> CreateTOCVisual;
+
+	friend struct CoreT;
+	friend struct NucleusT;
+	friend struct CompositeT;
+	friend struct AtomPartT;
+	friend struct AtomListPartT;
+	friend struct StringPartT;
+	friend struct EnumPartT;
+	friend struct ProtoatomPartT;
+	friend struct BaseProtoatomPartT;
+	friend struct SoloProtoatomPartT;
+	friend struct WedgeProtoatomPartT;
+	friend OptionalT<NucleusT *> TypedFinish(std::unique_ptr<UndoLevelT> &Level, CoreT &Core, bool Bubble, bool Insert, AtomTypeT &Type, AtomT *ParentAtom, OptionalT<NucleusT *> Set);
+	private:
+		VisualT CursorVisual;
+		AtomTypeT *SoloProtoatomType, *InsertProtoatomType, *AppendProtoatomType, *ElementType, *StringType;
+};
+
+struct CoreReduction2_1T : virtual CoreBaseT
+{
+	CoreReduction2_1T(CoreT &Core);
+
+	friend struct CoreReduction2T;
+	friend struct NucleusT;
+	friend struct CoreT;
+	private:
+		HoldT Framed;
+};
+
+struct CoreReduction2T : CoreReduction2_1T, virtual CoreReduction1T
+{
+	CoreReduction2T(CoreT &Core);
+
+	std::function<void(void)> FocusChangedCallback;
 	std::function<void(std::string &&Text)> CopyCallback;
 	std::function<std::unique_ptr<std::stringstream>(void)> PasteCallback;
-	std::function<std::unique_ptr<TOCVisualT>(NucleusT *Owner)> CreateTOCVisual;
-	std::function<void(void)> FocusChangedCallback;
-	std::function<void(void)> HandleInputFinishedCallback;
 
+	bool IsFramed(void) const;
+
+	friend struct CoreT;
+	friend struct NucleusT;
+	friend struct CompositeT;
+	private:
+		std::set<NucleusT *> NeedRefresh;
+
+		void Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus);
+		void Frame(NucleusT *Nucleus);
+		void Copy(NucleusT *Tree);
+		void Paste(std::unique_ptr<UndoLevelT> &UndoLevel, AtomT &Destination);
+};
+
+struct CoreReduction3T : virtual CoreBaseT
+{
+	CoreReduction3T(void);
+
+	friend struct CoreT;
+	friend struct AtomT;
+	friend struct HoldT;
+	private:
+		std::set<NucleusT *> DeletionCandidates;
+};
+
+struct CoreReduction4_1T : virtual CoreBaseT
+{
+	CoreReduction4_1T(void);
+
+	friend struct CoreT;
+	friend struct CoreReduction4T;
+	private:
+		std::map<std::string, AtomTypeT *> TypeLookup;
+};
+
+struct CoreReduction4T : CoreReduction4_1T
+{
+	CoreReduction4T(void);
+
+	friend struct CoreT;
+	friend struct ProtoatomPartT;
+	friend struct BaseProtoatomPartT;
+	friend struct SoloProtoatomPartT;
+	friend struct WedgeProtoatomPartT;
+	private:
+		OptionalT<AtomTypeT *> LookUpAtomType(std::string const &Text);
+		bool CouldBeAtomType(std::string const &Text);
+};
+
+struct CoreReduction5T : virtual CoreBaseT
+{
+	CoreReduction5T(void);
+
+	friend struct CoreT;
+	friend struct AtomT;
+	friend struct CompositeT;
+	private:
+		bool UndoingOrRedoing; // Debugging aid
+};
+
+struct CoreT : virtual CoreReduction1T, CoreReduction2T, CoreReduction3T, CoreReduction4T, CoreReduction5T
+{
+	// External use only
 	CoreT(VisualT &RootVisual);
 	~CoreT(void);
 	Serial::ReadErrorT Configure(Serial::ReadObjectT &Object);
@@ -321,28 +453,26 @@ struct CoreT
 	
 	void Focus(NucleusT *Nucleus);
 
-	// Self + atom use
-	Serial::ReadErrorT Deserialize(std::unique_ptr<UndoLevelT> &Level, AtomT &Out, std::string const &TypeName, Serial::ReadObjectT &Object);
-	OptionalT<AtomTypeT *> LookUpAtomType(std::string const &Text);
-	bool CouldBeAtomType(std::string const &Text);
+	std::function<void(void)> ResetActionsCallback;
+	std::function<void(std::shared_ptr<ActionT> Action)> RegisterActionCallback;
+	std::function<void(void)> HandleInputFinishedCallback;
 
-	void Frame(NucleusT *Nucleus);
-	void Copy(NucleusT *Tree);
-	void Paste(std::unique_ptr<UndoLevelT> &UndoLevel, AtomT &Destination);
-
-	void Focus(std::unique_ptr<UndoLevelT> &Level, NucleusT *Nucleus);
-	void Refresh(void);
-
-	void AssumeFocus(std::unique_ptr<UndoLevelT> &Level);
-
-	void ResetActions(void);
+	// Anyone's use
 	void RegisterAction(std::shared_ptr<ActionT> Action);
-	void RegisterActions(void);
 
 	std::string Dump(void) const;
 
 	private:
+		VisualT FrameVisual;
+		
+		std::list<std::shared_ptr<ActionT>> Actions;
+
 		std::list<std::unique_ptr<UndoLevelT>> UndoQueue, RedoQueue;
+	
+		void AssumeFocus(std::unique_ptr<UndoLevelT> &Level);
+		void Refresh(void);
+		void ResetActions(void);
+		void RegisterActions(void);
 };
 
 }

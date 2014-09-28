@@ -151,7 +151,6 @@ struct WebViewT : QWebView
 		if (!Converted) return;
 		Core->TextMode = false;
 		Core->Focus(Found);
-		Core->Refresh();
 	}
 };
 
@@ -162,6 +161,29 @@ struct WebPageT : QWebPage
 
 	void javaScriptConsoleMessage(const QString &Message, int LineNumber, const QString &SourceID)
 		{ std::cout << "[LOG] " << SourceID.toUtf8().data() << ":" << LineNumber << " " << Message.toUtf8().data() << std::endl; }
+};
+
+bool ConfirmDiscard(CoreT &Core, QWidget *Window)
+{
+	if (!Core.HasChanges()) return true;
+	return QMessageBox::question
+	(
+		Window,
+		"Discard Changes", 
+		"Are you sure you wish to discard all changes to the current document?",
+		QMessageBox::Yes | QMessageBox::No,
+		QMessageBox::No
+	) == QMessageBox::Yes;
+};
+
+struct WindowT : QWidget
+{
+	CoreT *Core = nullptr;
+	void closeEvent(QCloseEvent *Event) override
+	{
+		if (ConfirmDiscard(*Core, this)) Event->accept();
+		else Event->ignore();
+	}
 };
 
 int main(int argc, char **argv)
@@ -183,7 +205,7 @@ int main(int argc, char **argv)
 		// ----
 		// Window
 		QApplication QTContext(argc, argv);
-		auto Window = new QWidget();
+		auto Window = new WindowT();
 		Window->setWindowTitle("KK Editor QT");
 		auto WindowLayout = new QBoxLayout(QBoxLayout::TopToBottom);
 		WindowLayout->setMargin(0);
@@ -219,11 +241,9 @@ int main(int argc, char **argv)
 				return *Left->Location < *Right->Location; 
 			}
 
-			//std::set<TOCVisualT *, decltype(&Less)> &TOCEntries;
 			std::map<TOCLocationT, TOCVisualT *> &TOCEntries;
 			std::unique_ptr<QTreeWidgetItem> QTItem;
 
-			//TOCVisualT(QTreeWidget &TOC, bool &NeedsRestructure, NucleusT *Owner, std::set<TOCVisualT *, decltype(&Less)> &TOCEntries, std::unique_ptr<QTreeWidgetItem> &&QTItem) : TOC(TOC), NeedsRestructure(NeedsRestructure), Owner(Owner), TOCEntries(TOCEntries), QTItem(std::move(QTItem)) 
 			TOCVisualT(QTreeWidget &TOC, bool &NeedsRestructure, NucleusT *Owner, std::map<TOCLocationT, TOCVisualT *> &TOCEntries, std::unique_ptr<QTreeWidgetItem> &&QTItem) : TOC(TOC), NeedsRestructure(NeedsRestructure), Owner(Owner), TOCEntries(TOCEntries), QTItem(std::move(QTItem)) 
 			{ 
 				this->QTItem->setData(0, Qt::UserRole, QVariant::fromValue((void *)this));
@@ -247,7 +267,6 @@ int main(int argc, char **argv)
 			}
 		};
 
-		//std::set<TOCVisualT *, decltype(&TOCVisualT::Less)> TOCEntries(TOCVisualT::Less); // For destruction after core
 		std::map<TOCLocationT, TOCVisualT *> TOCEntries; // For destruction after core
 		bool TOCNeedsRestructure = false;
 		bool TOCNeedsReselect = false;
@@ -256,7 +275,6 @@ int main(int argc, char **argv)
 		TOCPanel->header()->close();
 		TOCPanel->setFocusPolicy(Qt::NoFocus);
 		TOCPanel->setSelectionMode(QAbstractItemView::SingleSelection);
-		//TOCPanel->setSelectionMode(QAbstractItemView::MultiSelection);
 		PanelSplitter->addWidget(TOCPanel);
 
 		// ----
@@ -283,6 +301,7 @@ int main(int argc, char **argv)
 
 		CoreT Core(BodyVisual);
 		WebView->SetCore(&Core);
+		Window->Core = &Core;
 
 		// ----
 		// Load config
@@ -318,6 +337,7 @@ int main(int argc, char **argv)
 		// Toolbar buttons
 		auto TOCButton = new QAction("Table of Contents", Window);
 		TOCButton->setCheckable(true);
+		TOCButton->setChecked(true);
 		Toolbar->addAction(TOCButton);
 		Toolbar->addSeparator();
 		auto Space1 = new QWidget();
@@ -348,7 +368,6 @@ int main(int argc, char **argv)
 			if (Current == Previous) return;
 			if (!Current) return;
 			Core.Focus(static_cast<TOCVisualT *>(Current->data(0, Qt::UserRole).value<void *>())->Owner);
-			Core.Refresh();
 		});
 
 		auto NameFixed = [&](void)
@@ -387,18 +406,6 @@ int main(int argc, char **argv)
 		QObject::connect(SaveAsButton, &QAction::triggered, [&](bool) { Save(true, false); });
 		QObject::connect(RenameButton, &QAction::triggered, [&](bool) { Save(true, true); });
 		QObject::connect(BackupButton, &QAction::triggered, [&](bool) { Save(false, true); });
-
-		auto ConfirmDiscard = [&](void)
-		{
-			if (!Core.HasChanges()) return true;
-			return QMessageBox::question
-			(
-				Window,
-				"Discard Changes", 
-				"Are you sure you wish to discard all changes to the current document?"
-			) == QMessageBox::Yes;
-		};
-		(void)ConfirmDiscard; // TODO Check on close if changes
 
 		// ----
 		// Other core setup
@@ -467,7 +474,7 @@ int main(int argc, char **argv)
 			}
 			if (TOCNeedsReselect)
 			{
-				auto Compare = TOCLocationT{*Core.Focused->GetGlobalOrder(), 0};
+				auto Compare = TOCLocationT{*Core.Focused()->GetGlobalOrder(), 0};
 				TOCPanel->blockSignals(true);
 				auto Found = TOCEntries.lower_bound(Compare);
 				[&](void)

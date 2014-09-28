@@ -6,7 +6,13 @@
 namespace Core
 {
 
-CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : NucleusT(Core), TypeInfo(TypeInfo), OperatorVisual(Core.RootVisual.Root), EffectivelyVertical(TypeInfo.SpatiallyVertical), Ellipsized(false)
+CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : 
+	NucleusT(Core), 
+	TypeInfo(TypeInfo),
+	OperatorVisual(Core.RootVisual.Root),
+	EffectivelyVertical(TypeInfo.SpatiallyVertical),
+	Ellipsized(false),
+	Depth_(1)
 {
 	TRACE;
 	Visual.Tag().Add(TypeInfo.Tag);
@@ -14,6 +20,13 @@ CompositeT::CompositeT(CoreT &Core, CompositeTypeT &TypeInfo) : NucleusT(Core), 
 	Visual.SetClass(StringT() << "type-" << TypeInfo.Tag);
 	OperatorVisual.SetClass("operator");
 }
+
+AtomTypeT const &CompositeT::GetTypeInfo(void) const
+{
+	return TypeInfo;
+}
+
+size_t CompositeT::Depth(void) const { return Depth_; }
 
 Serial::ReadErrorT CompositeT::Deserialize(Serial::ReadObjectT &Object)
 {
@@ -33,56 +46,6 @@ void CompositeT::Serialize(Serial::WritePolymorphT &Polymorph) const
 		(*Part)->Serialize(Polymorph);
 }
 
-AtomTypeT const &CompositeT::GetTypeInfo(void) const
-{
-	return TypeInfo;
-}
-
-void CompositeT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction)
-{
-	TRACE;
-	if (Core.TextMode && FocusDefault(Level)) return;
-	Focused = SelfFocusedT{};
-	NucleusT::Focus(Level, Direction);
-	FlagStatusChange();
-	Visual.SetClass("flag-focused");
-}
-
-void CompositeT::AlignFocus(NucleusT *Child)
-{
-	NucleusT::AlignFocus(Child);
-	size_t Index = 0;
-	for (auto &Part : Parts)
-	{
-		if (Part->Nucleus == Child)
-		{
-			Focused = PartFocusedT{Index};
-			return;
-		}
-		++Index;
-	}
-	Assert(false);
-}
-	
-void CompositeT::FrameDepthAdjusted(OptionalT<size_t> Depth)
-{
-	if (Depth) std::cout << "FDA depth " << *Depth << std::endl;
-	if (Core.Settings.FrameDepth && TypeInfo.Ellipsize)
-	{
-		if (Ellipsized && (!Depth || (Depth && (*Depth <= *Core.Settings.FrameDepth))))
-		{
-			Ellipsized = false;
-			FlagRefresh();
-		}
-		else if (!Ellipsized && Depth && (*Depth > *Core.Settings.FrameDepth))
-		{
-			Ellipsized = true;
-			FlagRefresh();
-		}
-	}
-	if (!Ellipsized) for (auto &Part : Parts) (*Part)->FrameDepthAdjusted(Depth);
-}
-	
 void CompositeT::RegisterActions(void)
 {
 	TRACE;
@@ -131,7 +94,7 @@ void CompositeT::RegisterActions(void)
 			Core.RegisterAction(std::make_shared<FocusNextT>("Right", *this));
 		}
 
-		if (Core.Framed.Nucleus == this)
+		if (IsFramed())
 		{
 			Core.RegisterAction(std::make_shared<FunctionActionT>("Unframe and exit", [this](std::unique_ptr<UndoLevelT> &Level)
 			{
@@ -173,8 +136,8 @@ void CompositeT::RegisterActions(void)
 				void Apply(std::unique_ptr<UndoLevelT> &Level)
 				{
 					TRACE;
-					if (Base.Atom) 
-						Base.Atom->Set(Level, Base.Core.SoloProtoatomType->Generate(Base.Core));
+					if (Base.Atom()) 
+						Base.Atom()->Set(Level, Base.Core.SoloProtoatomType->Generate(Base.Core));
 				}
 			};
 			Core.RegisterAction(std::make_shared<DeleteT>(*this));
@@ -192,11 +155,11 @@ void CompositeT::RegisterActions(void)
 			Core.RegisterAction(std::make_shared<CutT>(*this));
 		}
 
-		Assert(Atom);
+		Assert(Atom());
 		Core.RegisterAction(std::make_shared<FunctionActionT>("Paste", [this](std::unique_ptr<UndoLevelT> &Level)
 		{
 			TRACE;
-			Core.Paste(Level, *Atom);
+			Core.Paste(Level, *Atom());
 		}));
 
 		struct WedgeT : ActionT
@@ -207,11 +170,11 @@ void CompositeT::RegisterActions(void)
 			void Apply(std::unique_ptr<UndoLevelT> &Level)
 			{
 				TRACE;
-				if (Base.Atom)
+				if (Base.Atom())
 				{
 					Base.Core.TextMode = true;
 					auto Replacement = (Before ? Base.Core.InsertProtoatomType : Base.Core.AppendProtoatomType)->Generate(Base.Core);
-					auto BaseAtom = Base.Atom;
+					auto BaseAtom = Base.Atom();
 					Replacement->As<WedgeProtoatomT>()->SetLifted(&Base);
 					BaseAtom->Set(Level, Replacement);
 				}
@@ -228,8 +191,8 @@ void CompositeT::RegisterActions(void)
 			{
 				TRACE;
 				auto Replacee = Base.PartParent();
-				if (Replacee && Replacee->Atom)
-					Replacee->Atom->Set(Level, &Base);
+				if (Replacee && Replacee->Atom())
+					Replacee->Atom()->Set(Level, &Base);
 			}
 		};
 		Core.RegisterAction(std::make_shared<ReplaceParentT>(*this));
@@ -249,60 +212,17 @@ void CompositeT::RegisterActions(void)
 	}
 	else Assert(false);
 
-	if (Parent) Parent->RegisterActions();
+	if (Parent()) Parent()->RegisterActions();
 }
 
-void CompositeT::Defocus(std::unique_ptr<UndoLevelT> &Level)
+void CompositeT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction)
 {
 	TRACE;
-	Visual.UnsetClass("flag-focused");
+	if (Core.TextMode && FocusDefault(Level)) return;
+	Focused = SelfFocusedT{};
+	NucleusT::Focus(Level, Direction);
 	FlagStatusChange();
-}
-
-void CompositeT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level)
-{
-	TRACE;
-	if (Focused && Focused.Is<PartFocusedT>()) (*Parts[Focused.Get<PartFocusedT>()])->AssumeFocus(Level);
-	else Focus(Level, FocusDirectionT::Direct);
-}
-	
-void CompositeT::LocationChanged(void)
-{
-	TRACE;
-	for (auto &Part : Parts) (*Part)->LocationChanged();
-}
-
-void CompositeT::Refresh(void)
-{
-	TRACE;
-
-	if (TypeInfo.Operator)
-	{
-		OperatorVisual.Start();
-		OperatorVisual.Add(*TypeInfo.Operator);
-	}
-	
-	Visual.Start();
-	
-	if (EffectivelyVertical)
- 		Visual.SetClass("flag-vertical");
-	else Visual.UnsetClass("flag-vertical");
-	
-	if (Ellipsized)
-	{
-		Visual.SetClass("flag-ellipsized");
-	}
-	else
-	{
-		Visual.UnsetClass("flag-ellipsized");
-		size_t Index = 0;
-		for (auto &Part : Parts)
-		{
-			if (TypeInfo.Operator && (Index == TypeInfo.OperatorPosition)) Visual.Add(OperatorVisual);
-			Visual.Add((*Part)->Visual);
-			++Index;
-		}
-	}
+	Visual.SetClass("flag-focused");
 }
 
 void CompositeT::FocusPrevious(std::unique_ptr<UndoLevelT> &Level)
@@ -310,7 +230,7 @@ void CompositeT::FocusPrevious(std::unique_ptr<UndoLevelT> &Level)
 	TRACE;
 	Assert(Focused.Is<PartFocusedT>());
 	auto &Index = Focused.Get<PartFocusedT>();
-	if (Index == 0) { if (Parent) Parent->FocusPrevious(Level); }
+	if (Index == 0) { if (Parent()) Parent()->FocusPrevious(Level); }
 	else 
 	{
 		Index -= 1;
@@ -325,13 +245,36 @@ void CompositeT::FocusNext(std::unique_ptr<UndoLevelT> &Level)
 	auto &Index = Focused.Get<PartFocusedT>();
 	if (Index + 1 == Parts.size()) 
 	{ 
-		if (Parent) Parent->FocusNext(Level); 
+		if (Parent()) Parent()->FocusNext(Level); 
 	}
 	else 
 	{
 		Index += 1;
 		(*Parts[Index])->Focus(Level, FocusDirectionT::FromBehind);
 	}
+}
+	
+void CompositeT::AlignFocus(NucleusT *Child)
+{
+	NucleusT::AlignFocus(Child);
+	size_t Index = 0;
+	for (auto &Part : Parts)
+	{
+		if (Part->Nucleus() == Child)
+		{
+			Focused = PartFocusedT{Index};
+			return;
+		}
+		++Index;
+	}
+	Assert(false);
+}
+	
+void CompositeT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level)
+{
+	TRACE;
+	if (Focused && Focused.Is<PartFocusedT>()) (*Parts[Focused.Get<PartFocusedT>()])->AssumeFocus(Level);
+	else Focus(Level, FocusDirectionT::Direct);
 }
 	
 bool CompositeT::IsFocused(void) const
@@ -413,20 +356,20 @@ OptionalT<NucleusT *> CompositeT::GetAnyOperand(OperatorDirectionT Direction, si
 
 		if (auto AtomPart = Part->As<AtomPartT>())
 		{
-			if (Position == Offset) return AtomPart->Data.Nucleus;
+			if (Position == Offset) return AtomPart->Data.Nucleus();
 			++Position;
 		}
 		else if (auto AtomListPart = Part->As<AtomListPartT>())
 		{
 			for (auto &Part : AtomListPart->Data)
 			{
-				if (Position == Offset) return Part->Atom.Nucleus;
+				if (Position == Offset) return Part->Atom.Nucleus();
 				++Position;
 			}
 		}
 		else
 		{
-			if (Position == Offset) return Part.Nucleus;
+			if (Position == Offset) return Part.Nucleus();
 			++Position;
 		}
 	}
@@ -453,6 +396,74 @@ OptionalT<OperatorDirectionT> CompositeT::GetOperandSide(AtomT *Operand)
 		}
 	}
 	return {};
+}
+
+void CompositeT::Defocus(std::unique_ptr<UndoLevelT> &Level)
+{
+	TRACE;
+	Visual.UnsetClass("flag-focused");
+	FlagStatusChange();
+}
+
+void CompositeT::LocationChanged(void)
+{
+	TRACE;
+	for (auto &Part : Parts) (*Part)->LocationChanged();
+}
+
+void CompositeT::ViewChanged(bool Framed, size_t Depth)
+{
+	Visual.UnsetClass(::StringT() << "depth-" << Depth_);
+	Depth_ = Depth;
+	Visual.SetClass(::StringT() << "depth-" << Depth_);
+	if (Framed) std::cout << "FDA depth " << Depth << std::endl;
+	if (Core.Settings().FrameDepth && TypeInfo.Ellipsize)
+	{
+		if (Ellipsized && (!Framed || (Framed && (Depth <= *Core.Settings().FrameDepth))))
+		{
+			Ellipsized = false;
+			FlagRefresh();
+		}
+		else if (!Ellipsized && Framed && (Depth > *Core.Settings().FrameDepth))
+		{
+			Ellipsized = true;
+			FlagRefresh();
+		}
+	}
+	if (!Ellipsized) for (auto &Part : Parts) (*Part)->ViewChanged(Framed, Depth);
+}
+	
+void CompositeT::Refresh(void)
+{
+	TRACE;
+
+	if (TypeInfo.Operator)
+	{
+		OperatorVisual.Start();
+		OperatorVisual.Add(*TypeInfo.Operator);
+	}
+	
+	Visual.Start();
+	
+	if (EffectivelyVertical)
+ 		Visual.SetClass("flag-vertical");
+	else Visual.UnsetClass("flag-vertical");
+	
+	if (Ellipsized)
+	{
+		Visual.SetClass("flag-ellipsized");
+	}
+	else
+	{
+		Visual.UnsetClass("flag-ellipsized");
+		size_t Index = 0;
+		for (auto &Part : Parts)
+		{
+			if (TypeInfo.Operator && (Index == TypeInfo.OperatorPosition)) Visual.Add(OperatorVisual);
+			Visual.Add((*Part)->Visual);
+			++Index;
+		}
+	}
 }
 
 Serial::ReadErrorT CompositeTypeT::Deserialize(Serial::ReadObjectT &Object)
@@ -601,7 +612,7 @@ AtomPartT::AtomPartT(CoreT &Core, AtomPartTypeT &TypeInfo) : NucleusT(Core), Typ
 	Data.Callback = [this, &Core](NucleusT *Nucleus) 
 	{ 
 		if (Data) Data->IgnoreStatus((uintptr_t)this);
-		if (Nucleus) Nucleus->WatchStatus((uintptr_t)this, [](NucleusT *Changed) { Changed->Parent->FlagRefresh(); });
+		if (Nucleus) Nucleus->WatchStatus((uintptr_t)this, [](NucleusT *Changed) { Changed->Parent()->FlagRefresh(); });
 		FlagRefresh(); 
 	};
 	auto DiscardLevel = std::make_unique<UndoLevelT>();
@@ -615,7 +626,7 @@ Serial::ReadErrorT AtomPartT::Deserialize(Serial::ReadObjectT &Object)
 	Object.Polymorph(TypeInfo.Tag, [this](std::string &&Type, Serial::ReadObjectT &Object) -> Serial::ReadErrorT
 	{
 		auto DiscardLevel = std::make_unique<UndoLevelT>();
-		return Core.Deserialize(DiscardLevel, Data, Type, Object);
+		return ((CoreReduction1T &)Core).Deserialize(DiscardLevel, Data, Type, Object);
 	});
 	return {};
 }
@@ -624,7 +635,7 @@ void AtomPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 {
 	//TRACE; 
 	/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus());
 	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
 	if (Data) Data->Serialize(Polymorph.Polymorph(TypeInfo.Tag)); 
 }
@@ -640,26 +651,26 @@ void AtomPartT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direct
 		switch (Direction)
 		{
 			case FocusDirectionT::FromAhead: 
-				Parent->FocusPrevious(Level); 
+				Parent()->FocusPrevious(Level); 
 				break;
 			case FocusDirectionT::FromBehind: 
 			case FocusDirectionT::Direct: 
-				Parent->FocusNext(Level); 
+				Parent()->FocusNext(Level); 
 				break;
 		}
 	}
 }
 
-void AtomPartT::FrameDepthAdjusted(OptionalT<size_t> Depth)
+void AtomPartT::ViewChanged(bool Framed, size_t Depth)
 {
-	if (Depth) Data->FrameDepthAdjusted(PartParent()->As<CompositeT>()->TypeInfo.Ellipsize ? *Depth + 1 : *Depth);
-	else Data->FrameDepthAdjusted({});
+	if (!Data) return;
+	Data->ViewChanged(Framed, PartParent()->As<CompositeT>()->TypeInfo.Ellipsize ? Depth + 1 : Depth);
 }
 	
 void AtomPartT::RegisterActions(void)
 {
 	TRACE;
-	Parent->RegisterActions();
+	Parent()->RegisterActions();
 }
 
 void AtomPartT::Defocus(std::unique_ptr<UndoLevelT> &Level) { TRACE; }
@@ -668,7 +679,7 @@ void AtomPartT::AssumeFocus(std::unique_ptr<UndoLevelT> &Level)
 {
 	TRACE; 
 	if (Data) Data->AssumeFocus(Level); 
-	else Parent->FocusNext(Level); 
+	else Parent()->FocusNext(Level); 
 }
 	
 void AtomPartT::LocationChanged(void)
@@ -683,9 +694,9 @@ void AtomPartT::Refresh(void)
 	Visual.Start();
 	
 	if (!Data) return;
-	if (Data.Nucleus == Core.Framed.Nucleus) return;
+	if (Data->IsFramed()) return;
 	
-	if (!IsPrecedent(Data, Data.Nucleus)) Visual.SetClass("flag-antiprecedent");
+	if (!IsPrecedent(Data, Data.Nucleus())) Visual.SetClass("flag-antiprecedent");
 	else Visual.UnsetClass("flag-antiprecedent");
 	
 	{
@@ -695,9 +706,9 @@ void AtomPartT::Refresh(void)
 	Visual.Add(Data->Visual);
 }
 
-void AtomPartT::FocusPrevious(std::unique_ptr<UndoLevelT> &Level) { TRACE; Parent->FocusPrevious(Level); }
+void AtomPartT::FocusPrevious(std::unique_ptr<UndoLevelT> &Level) { TRACE; Parent()->FocusPrevious(Level); }
 
-void AtomPartT::FocusNext(std::unique_ptr<UndoLevelT> &Level) { TRACE; Parent->FocusNext(Level); }
+void AtomPartT::FocusNext(std::unique_ptr<UndoLevelT> &Level) { TRACE; Parent()->FocusNext(Level); }
 	
 void AtomListPartTypeT::Serialize(Serial::WritePrepolymorphT &&Prepolymorph) const
 {
@@ -732,7 +743,7 @@ Serial::ReadErrorT AtomListPartT::Deserialize(Serial::ReadObjectT &Object)
 		{
 			auto DiscardLevel = std::make_unique<UndoLevelT>();
 			Add(DiscardLevel, Data.size(), nullptr, false);
-			return Core.Deserialize(DiscardLevel, Data.back()->Atom, Type, Object);
+			return ((CoreReduction1T &)Core).Deserialize(DiscardLevel, Data.back()->Atom, Type, Object);
 		});
 		return {};
 	});
@@ -743,7 +754,7 @@ void AtomListPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 {
 	//TRACE;
 	/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus());
 	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
 	auto Array = Polymorph.Array(TypeInfo.Tag);
 	for (auto &Atom : Data)
@@ -775,7 +786,7 @@ void AtomListPartT::AlignFocus(NucleusT *Child)
 	size_t Index = 0;
 	for (auto &Atom : Data)
 	{
-		if (Atom->Atom.Nucleus == Child)
+		if (Atom->Atom.Nucleus() == Child)
 		{
 			FocusIndex = Index;
 			return;
@@ -785,11 +796,11 @@ void AtomListPartT::AlignFocus(NucleusT *Child)
 	Assert(false);
 }
 
-void AtomListPartT::FrameDepthAdjusted(OptionalT<size_t> Depth)
+void AtomListPartT::ViewChanged(bool Framed, size_t Depth)
 {
+	bool ParentEllipsizes = PartParent()->As<CompositeT>()->TypeInfo.Ellipsize;
 	for (auto &Atom : Data)
-		if (Depth) Atom->Atom->FrameDepthAdjusted(PartParent()->As<CompositeT>()->TypeInfo.Ellipsize ? *Depth + 1 : *Depth);
-		else Atom->Atom->FrameDepthAdjusted({});
+		Atom->Atom->ViewChanged(Framed, ParentEllipsizes ? Depth + 1 : Depth);
 }
 	
 void AtomListPartT::RegisterActions(void)
@@ -873,12 +884,12 @@ void AtomListPartT::RegisterActions(void)
 				TRACE;
 				OptionalT<ProtoatomPartT *> ProtoatomPart;
 				{
-					auto Temp = Base.Core.Focused->As<ProtoatomPartT>();
+					auto Temp = Base.Core.Focused_->As<ProtoatomPartT>();
 					if (Temp) ProtoatomPart = Temp;
 				}
 				if (!ProtoatomPart)
 				{
-					auto Protoatom = Base.Core.Focused->As<ProtoatomT>();
+					auto Protoatom = Base.Core.Focused_->As<ProtoatomT>();
 					if (Protoatom) ProtoatomPart = Protoatom->GetProtoatomPart();
 				}
 				if (ProtoatomPart) ProtoatomPart->Finish(Level, {}, ProtoatomPart->Data);
@@ -901,7 +912,7 @@ void AtomListPartT::RegisterActions(void)
 	};
 	Core.RegisterAction(std::make_shared<DeleteT>(*this));
 
-	Parent->RegisterActions();
+	Parent()->RegisterActions();
 }
 
 void AtomListPartT::Defocus(std::unique_ptr<UndoLevelT> &Level) { TRACE; Assert(false); }
@@ -930,7 +941,7 @@ void AtomListPartT::Refresh(void)
 		Atom->Visual.Start();
 		if (Assert(Atom->Atom))
 		{
-			if (Atom->Atom.Nucleus == Core.Framed.Nucleus) return;
+			if (Atom->Atom->IsFramed()) return;
 			Atom->Visual.Add(Atom->Atom->Visual);
 		}
 		Visual.Add(Atom->Visual);
@@ -973,7 +984,7 @@ void AtomListPartT::Add(std::unique_ptr<UndoLevelT> &Level, size_t Position, Nuc
 void AtomListPartT::Remove(std::unique_ptr<UndoLevelT> &Level, size_t Position)
 {
 	TRACE;
-	Level->Add(std::make_unique<AddRemoveT>(*this, true, Position, Data[Position]->Atom.Nucleus));
+	Level->Add(std::make_unique<AddRemoveT>(*this, true, Position, Data[Position]->Atom.Nucleus()));
 	Assert(Position < Data.size());
 	Data.erase(Data.begin() + Position);
 	for (auto After = Position; After < Data.size(); ++After) 
@@ -986,14 +997,14 @@ AtomListPartT::AddRemoveT::AddRemoveT(AtomListPartT &Base, bool Add, size_t Posi
 void AtomListPartT::AddRemoveT::Apply(std::unique_ptr<UndoLevelT> &Level)
 {
 	TRACE;
-	if (Add) Base.Add(Level, Position, Nucleus.Nucleus, true);
+	if (Add) Base.Add(Level, Position, Nucleus.Nucleus(), true);
 	else Base.Remove(Level, Position);
 }
 
 void AtomListPartT::FocusPrevious(std::unique_ptr<UndoLevelT> &Level) 
 {
 	TRACE; 
-	if (FocusIndex == 0) Parent->FocusPrevious(Level);
+	if (FocusIndex == 0) Parent()->FocusPrevious(Level);
 	else 
 	{
 		FocusIndex -= 1;
@@ -1004,7 +1015,7 @@ void AtomListPartT::FocusPrevious(std::unique_ptr<UndoLevelT> &Level)
 void AtomListPartT::FocusNext(std::unique_ptr<UndoLevelT> &Level) 
 {
 	TRACE; 
-	if (FocusIndex + 1 == Data.size()) Parent->FocusNext(Level);
+	if (FocusIndex + 1 == Data.size()) Parent()->FocusNext(Level);
 	else 
 	{
 		FocusIndex += 1;
@@ -1053,7 +1064,7 @@ void StringPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 {
 	//TRACE; 
 	/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus());
 	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
 	Polymorph.String(TypeInfo.Tag, Data); 
 }
@@ -1063,7 +1074,7 @@ AtomTypeT const &StringPartT::GetTypeInfo(void) const { return TypeInfo; }
 void StringPartT::Focus(std::unique_ptr<UndoLevelT> &Level, FocusDirectionT Direction) 
 {
 	TRACE; 
-	if (Parent->As<CompositeT>()->Parts.size() == 1) Core.TextMode = true;
+	if (Parent()->As<CompositeT>()->Parts.size() == 1) Core.TextMode = true;
 	if (Core.TextMode)
 	{
 		if (Focused != FocusedT::Text)
@@ -1123,7 +1134,7 @@ void StringPartT::RegisterActions(void)
 				TRACE;
 				if (Base.Position == 0) 
 				{
-					Base.Parent->FocusPrevious(Level);
+					Base.Parent()->FocusPrevious(Level);
 				}
 				else
 				{
@@ -1143,7 +1154,7 @@ void StringPartT::RegisterActions(void)
 				TRACE;
 				if (Base.Position == Base.Data.size()) 
 				{
-					Base.Parent->FocusNext(Level);
+					Base.Parent()->FocusNext(Level);
 				}
 				else
 				{
@@ -1185,7 +1196,7 @@ void StringPartT::RegisterActions(void)
 		};
 		Core.RegisterAction(std::make_shared<DeleteT>(*this));
 
-		if (Parent->As<CompositeT>()->Parts.size() > 1)
+		if (Parent()->As<CompositeT>()->Parts.size() > 1)
 		{
 			struct ExitT : ActionT
 			{
@@ -1228,7 +1239,7 @@ void StringPartT::RegisterActions(void)
 		};
 		Core.RegisterAction(std::make_shared<EnterT>(*this));
 	}
-	Parent->RegisterActions();
+	Parent()->RegisterActions();
 }
 
 void StringPartT::Defocus(std::unique_ptr<UndoLevelT> &Level) 
@@ -1371,7 +1382,7 @@ void EnumPartT::Serialize(Serial::WritePolymorphT &Polymorph) const
 {
 	//TRACE; 
 	/*Polymorph.String(::StringT() << TypeInfo.Tag << "-this", ::StringT() << this);
-	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus);
+	Polymorph.String(::StringT() << TypeInfo.Tag << "-parent", ::StringT() << Parent.Nucleus());
 	Polymorph.String(::StringT() << TypeInfo.Tag << "-atom", ::StringT() << Atom);*/
 	if (Index >= TypeInfo.Values.size())
 	{
@@ -1425,7 +1436,7 @@ void EnumPartT::RegisterActions(void)
 		}
 	};
 	Core.RegisterAction(std::make_shared<AdvanceValueT>(*this));
-	Parent->RegisterActions();
+	Parent()->RegisterActions();
 }
 
 void EnumPartT::Defocus(std::unique_ptr<UndoLevelT> &Level)
